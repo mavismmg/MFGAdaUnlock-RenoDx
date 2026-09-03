@@ -53,6 +53,7 @@ inline std::atomic<unsigned int> g_catches{0};
 namespace internal {
 
 constexpr wchar_t kNeedle[] = L"nvngx_dlssg";
+constexpr wchar_t kOtaNeedle[] = L"\\models\\dlssg\\";
 constexpr wchar_t kInterposerNeedle[] = L"sl.interposer";
 
 inline bool NameContains(const wchar_t* path, const wchar_t* needle) {
@@ -74,7 +75,18 @@ inline bool NameContains(const wchar_t* path, const wchar_t* needle) {
 
 inline void Notify(HMODULE module, const wchar_t* path) {
   if (module == nullptr || path == nullptr) return;
-  if (g_on_dlssg_loaded != nullptr && NameContains(path, kNeedle)) {
+  // Driver OTA snippets are commonly mapped from ...\models\dlssg\... under
+  // opaque numeric .bin names. The loader call may receive only that basename,
+  // so also inspect the resolved module path after the mapping completes.
+  bool is_dlssg = NameContains(path, kNeedle) || NameContains(path, kOtaNeedle);
+  if (!is_dlssg) {
+    wchar_t resolved_path[32768] = {};
+    const DWORD length = GetModuleFileNameW(module, resolved_path, ARRAYSIZE(resolved_path));
+    if (length != 0 && length < ARRAYSIZE(resolved_path)) {
+      is_dlssg = NameContains(resolved_path, kNeedle) || NameContains(resolved_path, kOtaNeedle);
+    }
+  }
+  if (g_on_dlssg_loaded != nullptr && is_dlssg) {
     g_catches.fetch_add(1, std::memory_order_relaxed);
     g_on_dlssg_loaded(module);
   }

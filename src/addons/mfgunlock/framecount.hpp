@@ -1,5 +1,5 @@
 /*
- * Forcing the requested frame multiplier.
+ * Advertising and forcing the requested frame multiplier.
  * SPDX-License-Identifier: MIT
  *
  * ---------------------------------------------------------------------------
@@ -7,10 +7,12 @@
  *
  * Two different kinds of game need two different things.
  *
- * Cyberpunk 2077 and GTA V Enhanced have their own 2x/3x/4x selector. There the
- * runtime was refusing, and opening the arch gates was enough -- the game then
- * asks for 3x or 4x by itself. Forcing anything would override the player's own
- * choice, so this is OFF by default.
+ * Cyberpunk 2077 and GTA V Enhanced have their own 2x/3x/4x selector. Once the
+ * runtime reports the added capacity, the game asks for 3x or 4x by itself.
+ * Forcing anything would override the player's own choice, so this is OFF by
+ * default. STALKER 2 also has a native selector, but builds it from
+ * slDLSSGGetState::numFramesToGenerateMax. That return value is raised to the
+ * wrapper ceiling verified by addon.cpp so 3x/4x actually appear in its menu.
  *
  * Deep Rock Galactic (and anything else where frame generation is just a
  * on/off toggle) will only ever ask for 1 generated frame, no matter how
@@ -56,6 +58,18 @@ inline std::atomic<unsigned int> g_last_forced{0};
 inline std::atomic_bool g_declined_no_pacing{false};
 inline std::atomic<unsigned int> g_force_failed_for{0};
 inline std::atomic<unsigned int> g_last_result{0};
+inline std::atomic_bool g_native_request_seen{false};
+inline std::atomic<unsigned int> g_native_requested{0};
+inline std::atomic<unsigned int> g_native_result{0};
+
+// Published by addon.cpp only after the active Streamline wrapper's pacing and
+// hard ceiling have both been verified. Games such as STALKER 2 build their
+// native 2x/3x/4x selector from DLSSGState::numFramesToGenerateMax rather than
+// from the NGX parameter block, so the SetOptions hook alone cannot expose the
+// additional choices.
+inline std::atomic<unsigned int> g_advertised_max_generated{0};
+inline std::atomic_bool g_capacity_advertised{false};
+inline std::atomic<unsigned int> g_runtime_max_generated{0};
 
 // Whether to re-enable Streamline's OTA plugin loading at slInit.
 // OFF by default. GTA V Enhanced drops the OTA flags, and forcing them only
@@ -77,10 +91,13 @@ inline bool (*g_pacing_ready)() = nullptr;
 namespace internal {
 
 using SetOptionsFn = sl::Result (*)(const sl::ViewportHandle&, const sl::DLSSGOptions&);
+using GetStateFn =
+    sl::Result (*)(const sl::ViewportHandle&, sl::DLSSGState&, const sl::DLSSGOptions*);
 using GetFeatureFunctionFn = sl::Result (*)(sl::Feature, const char*, void*&);
 using InitFn = sl::Result (*)(const sl::Preferences&, uint64_t);
 
 inline SetOptionsFn g_real_set_options = nullptr;
+inline GetStateFn g_real_get_state = nullptr;
 inline GetFeatureFunctionFn g_real_get_feature_function = nullptr;
 inline InitFn g_real_init = nullptr;
 
@@ -136,7 +153,24 @@ inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
 
   const unsigned int multiplier = g_force_multiplier.load(std::memory_order_relaxed);
   if (multiplier < 2 || options.mode == sl::DLSSGMode::eOff) {
-    return g_real_set_options(viewport, options);
+    const sl::Result result = g_real_set_options(viewport, options);
+    if (options.mode != sl::DLSSGMode::eOff) {
+      const unsigned int requested = options.numFramesToGenerate;
+      const unsigned int previous = g_native_requested.exchange(requested, std::memory_order_relaxed);
+      const unsigned int raw_result = static_cast<unsigned int>(result);
+      const unsigned int previous_result =
+          g_native_result.exchange(raw_result, std::memory_order_relaxed);
+      const bool first = !g_native_request_seen.exchange(true, std::memory_order_relaxed);
+      if (first || previous != requested || previous_result != raw_result) {
+        std::stringstream s;
+        s << "mfgunlock: native slDLSSGSetOptions requested numFramesToGenerate=" << requested
+          << " (" << (requested + 1) << "x) and returned sl::Result " << raw_result << ".";
+        reshade::log::message(result == sl::Result::eOk ? reshade::log::level::info
+                                                       : reshade::log::level::warning,
+                              s.str().c_str());
+      }
+    }
+    return result;
   }
 
   const uint32_t desired = multiplier - 1;  // generated frames, not total
@@ -221,16 +255,47 @@ inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
   return result;
 }
 
+inline sl::Result HookedGetState(const sl::ViewportHandle& viewport, sl::DLSSGState& state,
+                                 const sl::DLSSGOptions* options) {
+  if (g_real_get_state == nullptr) return sl::Result::eErrorNotInitialized;
+
+  const sl::Result result = g_real_get_state(viewport, state, options);
+  if (result != sl::Result::eOk || state.structVersion < sl::kStructVersion2) return result;
+
+  const unsigned int reported = state.numFramesToGenerateMax;
+  g_runtime_max_generated.store(reported, std::memory_order_relaxed);
+
+  const unsigned int wanted = g_advertised_max_generated.load(std::memory_order_relaxed);
+  if (wanted < 2 || reported >= wanted) return result;
+
+  state.numFramesToGenerateMax = wanted;
+  if (!g_capacity_advertised.exchange(true, std::memory_order_relaxed)) {
+    std::stringstream s;
+    s << "mfgunlock: slDLSSGGetState reported a maximum of " << reported
+      << " generated frame(s); advertising the verified Streamline ceiling of " << wanted
+      << " so the game's native multiplier selector can expose up to " << (wanted + 1) << "x.";
+    reshade::log::message(reshade::log::level::info, s.str().c_str());
+  }
+  return result;
+}
+
 inline sl::Result HookedGetFeatureFunction(sl::Feature feature, const char* function_name,
                                            void*& function) {
   const sl::Result result = g_real_get_feature_function(feature, function_name, function);
   if (result != sl::Result::eOk || function_name == nullptr || function == nullptr) return result;
-  if (std::strcmp(function_name, "slDLSSGSetOptions") != 0) return result;
-
-  g_real_set_options = reinterpret_cast<SetOptionsFn>(function);
-  function = reinterpret_cast<void*>(&HookedSetOptions);
-  reshade::log::message(reshade::log::level::info,
-                        "mfgunlock: wrapped slDLSSGSetOptions; frame-multiplier override is live.");
+  if (std::strcmp(function_name, "slDLSSGSetOptions") == 0) {
+    g_real_set_options = reinterpret_cast<SetOptionsFn>(function);
+    function = reinterpret_cast<void*>(&HookedSetOptions);
+    reshade::log::message(
+        reshade::log::level::info,
+        "mfgunlock: wrapped slDLSSGSetOptions; frame-multiplier override is live.");
+  } else if (std::strcmp(function_name, "slDLSSGGetState") == 0) {
+    g_real_get_state = reinterpret_cast<GetStateFn>(function);
+    function = reinterpret_cast<void*>(&HookedGetState);
+    reshade::log::message(
+        reshade::log::level::info,
+        "mfgunlock: wrapped slDLSSGGetState; native multiplier-menu override is live.");
+  }
   return result;
 }
 

@@ -101,10 +101,13 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cwchar>
 #include <cstring>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <d3d11.h>
@@ -405,13 +408,17 @@ void TryBootstrapVTable() {
 // snippet from the driver's OTA store, and a game may stage it under another
 // path. The name is a fast path, not a contract.
 //
-// Fall back to identifying it by content -- the module carrying the
-// "dlfg_kernel" descriptor name is the DLSS-G snippet whatever it is called.
-// The scan walks every loaded module, so it is throttled: the fast path runs
-// every call, the scan only every kScanInterval attempts.
+// The game-folder DLL and the driver's ...\models\dlssg\... OTA path are
+// unambiguous. For renamed providers elsewhere, fall back to the NGX provider
+// export plus the older "dlfg_kernel" descriptor. This matters in STALKER 2,
+// whose active provider is an opaque .bin from the driver cache and whose
+// current build no longer contains that descriptor.
 
 constexpr char kDlssgMarker[] = "dlfg_kernel";
 constexpr int kScanInterval = 60;
+
+std::vector<HMODULE> g_inspected_modules;
+std::vector<HMODULE> g_dlssg_modules;
 
 bool ModuleContains(HMODULE mod, const char* needle, size_t needle_len) {
   auto* base = reinterpret_cast<unsigned char*>(mod);
@@ -435,26 +442,65 @@ bool ModuleContains(HMODULE mod, const char* needle, size_t needle_len) {
   return false;
 }
 
-HMODULE FindDlssgModule(int attempts) {
-  if (HMODULE fast = GetModuleHandleW(L"nvngx_dlssg.dll")) return fast;
-  if (attempts % kScanInterval != 0) return nullptr;
+void RememberDlssgModule(HMODULE mod) {
+  if (mod == nullptr || mod == g_self_module) return;
+  if (std::find(g_dlssg_modules.begin(), g_dlssg_modules.end(), mod) == g_dlssg_modules.end()) {
+    g_dlssg_modules.push_back(mod);
+  }
+}
+
+bool HasKnownDlssgPath(HMODULE mod) {
+  wchar_t module_path[32768] = {};
+  const DWORD length = GetModuleFileNameW(mod, module_path, ARRAYSIZE(module_path));
+  if (length == 0 || length >= ARRAYSIZE(module_path)) return false;
+  for (DWORD i = 0; i < length; ++i) {
+    if (module_path[i] >= L'A' && module_path[i] <= L'Z') {
+      module_path[i] = static_cast<wchar_t>(module_path[i] - L'A' + L'a');
+    }
+  }
+  return std::wcsstr(module_path, L"nvngx_dlssg") != nullptr ||
+         std::wcsstr(module_path, L"\\models\\dlssg\\") != nullptr;
+}
+
+bool IsDlssgProvider(HMODULE mod) {
+  // These paths are unambiguous and include NVIDIA's opaque OTA .bin, which
+  // does not carry the older "dlfg_kernel" marker in current driver builds.
+  if (HasKnownDlssgPath(mod)) return true;
+
+  // Retain content-based discovery for games that rename or relocate the
+  // snippet, but only scan modules exposing the NGX provider entry point.
+  if (GetProcAddress(mod, "NVSDK_NGX_D3D12_PopulateDeviceParameters_Impl") == nullptr) {
+    return false;
+  }
+  return ModuleContains(mod, kDlssgMarker, sizeof(kDlssgMarker) - 1);
+}
+
+// NGX may keep the game-folder nvngx_dlssg.dll mapped while executing a second
+// provider from the OTA cache under an opaque .bin name. Remember every
+// identified provider instead of returning the first match. Each unknown
+// module is inspected once, and only an NGX provider candidate gets the content
+// scan, so continuing discovery does not rescan the game executable.
+const std::vector<HMODULE>& FindDlssgModules(int attempts) {
+  if (HMODULE fast = GetModuleHandleW(L"nvngx_dlssg.dll")) RememberDlssgModule(fast);
+  if (attempts % kScanInterval != 0) return g_dlssg_modules;
 
   HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
-  if (snap == INVALID_HANDLE_VALUE) return nullptr;
-  HMODULE found = nullptr;
+  if (snap == INVALID_HANDLE_VALUE) return g_dlssg_modules;
   MODULEENTRY32W me = {};
   me.dwSize = sizeof(me);
   if (Module32FirstW(snap, &me)) {
     do {
       if (me.hModule == g_self_module) continue;
-      if (ModuleContains(me.hModule, kDlssgMarker, sizeof(kDlssgMarker) - 1)) {
-        found = me.hModule;
-        break;
+      if (std::find(g_inspected_modules.begin(), g_inspected_modules.end(), me.hModule) !=
+          g_inspected_modules.end()) {
+        continue;
       }
+      g_inspected_modules.push_back(me.hModule);
+      if (IsDlssgProvider(me.hModule)) RememberDlssgModule(me.hModule);
     } while (Module32NextW(snap, &me));
   }
   CloseHandle(snap);
-  return found;
+  return g_dlssg_modules;
 }
 
 constexpr unsigned char kArchOld = 0xB0;  // 0x1b0 GB20x
@@ -467,6 +513,8 @@ struct GateSite {
 
 std::atomic_bool g_gate_patched{false};
 std::vector<GateSite> g_gate_sites;
+std::vector<HMODULE> g_gate_modules;
+std::vector<HMODULE> g_gate_rejected_modules;
 int g_gate_attempts = 0;
 constexpr int kMaxGateAttempts = 200000;
 
@@ -474,8 +522,12 @@ constexpr int kMaxGateAttempts = 200000;
 // handle to. That path runs under the loader lock, where CreateToolhelp32Snapshot
 // (which FindDlssgModule uses) would deadlock -- so it must never scan.
 void PatchArchGatesInModule(HMODULE mod) {
-  if (g_gate_patched.load(std::memory_order_acquire)) return;
   if (mod == nullptr) return;
+  if (std::find(g_gate_modules.begin(), g_gate_modules.end(), mod) != g_gate_modules.end()) return;
+  if (std::find(g_gate_rejected_modules.begin(), g_gate_rejected_modules.end(), mod) !=
+      g_gate_rejected_modules.end()) {
+    return;
+  }
 
   auto* base = reinterpret_cast<unsigned char*>(mod);
   const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
@@ -507,16 +559,17 @@ void PatchArchGatesInModule(HMODULE mod) {
   }
 
   if (found.empty() || found.size() > 4) {
-    if (g_gate_attempts >= kMaxGateAttempts || found.size() > 4) {
-      std::stringstream s;
-      s << "mfgunlock: found " << found.size()
-        << " arch-gate comparisons in nvngx_dlssg.dll (expected 1-4); leaving it alone.";
-      reshade::log::message(reshade::log::level::warning, s.str().c_str());
-      g_gate_attempts = kMaxGateAttempts;
-    }
+    char module_path[MAX_PATH] = {};
+    GetModuleFileNameA(mod, module_path, MAX_PATH);
+    std::stringstream s;
+    s << "mfgunlock: found " << found.size() << " arch-gate comparisons in " << module_path
+      << " (expected 1-4); leaving this provider alone.";
+    reshade::log::message(reshade::log::level::warning, s.str().c_str());
+    g_gate_rejected_modules.push_back(mod);
     return;
   }
 
+  const size_t sites_before = g_gate_sites.size();
   for (unsigned char* site : found) {
     DWORD old_protect = 0;
     if (VirtualProtect(site, 1, PAGE_EXECUTE_READWRITE, &old_protect) == 0) continue;
@@ -527,29 +580,29 @@ void PatchArchGatesInModule(HMODULE mod) {
     FlushInstructionCache(GetCurrentProcess(), site, 1);
   }
 
-  if (g_gate_sites.empty()) {
+  const size_t sites_written = g_gate_sites.size() - sites_before;
+  if (sites_written == 0) {
     reshade::log::message(reshade::log::level::error,
                           "mfgunlock: could not make the nvngx_dlssg.dll arch gates writable.");
-    g_gate_attempts = kMaxGateAttempts;
+    g_gate_rejected_modules.push_back(mod);
     return;
   }
+  g_gate_modules.push_back(mod);
   g_gate_patched.store(true, std::memory_order_release);
 
   char module_path[MAX_PATH] = {};
   GetModuleFileNameA(mod, module_path, MAX_PATH);
   std::stringstream s;
-  s << "mfgunlock: rewrote " << g_gate_sites.size() << " arch gate(s) (0x1b0 -> 0x190) in "
+  s << "mfgunlock: rewrote " << sites_written << " arch gate(s) (0x1b0 -> 0x190) in "
     << module_path << "; multi-frame should report as supported AND generate.";
   reshade::log::message(reshade::log::level::info, s.str().c_str());
 }
 
 void TryPatchDlssgArchGate() {
-  if (g_gate_patched.load(std::memory_order_acquire)) return;
   if (g_gate_attempts >= kMaxGateAttempts) return;
-  HMODULE mod = FindDlssgModule(g_gate_attempts);
+  const auto& modules = FindDlssgModules(g_gate_attempts);
   ++g_gate_attempts;
-  if (mod == nullptr) return;
-  PatchArchGatesInModule(mod);
+  for (HMODULE mod : modules) PatchArchGatesInModule(mod);
 }
 
 void RestoreDlssgArchGate() {
@@ -564,6 +617,8 @@ void RestoreDlssgArchGate() {
     }
   }
   g_gate_sites.clear();
+  g_gate_modules.clear();
+  g_gate_rejected_modules.clear();
   g_gate_patched.store(false, std::memory_order_release);
 }
 
@@ -575,49 +630,66 @@ void RestoreDlssgArchGate() {
 // smoother than 2x despite double the counter. See midpoint.hpp.
 
 std::atomic_bool g_midpoint_patched{false};
-std::vector<mfgunlock::midpoint::Patch> g_midpoint_patches;
-void* g_midpoint_allocation = nullptr;
+struct MidpointModulePatch {
+  HMODULE module;
+  std::vector<mfgunlock::midpoint::Patch> patches;
+  void* allocation;
+};
+std::vector<MidpointModulePatch> g_midpoint_modules;
+std::vector<HMODULE> g_midpoint_rejected_modules;
 std::string g_midpoint_detail;
 int g_midpoint_attempts = 0;
 constexpr int kMaxMidpointAttempts = 200000;
 
 void PatchMidpointInModule(HMODULE mod) {
-  if (g_midpoint_patched.load(std::memory_order_acquire)) return;
   if (mod == nullptr) return;
+  const auto already_patched = std::find_if(
+      g_midpoint_modules.begin(), g_midpoint_modules.end(),
+      [mod](const MidpointModulePatch& patch) { return patch.module == mod; });
+  if (already_patched != g_midpoint_modules.end()) return;
+  if (std::find(g_midpoint_rejected_modules.begin(), g_midpoint_rejected_modules.end(), mod) !=
+      g_midpoint_rejected_modules.end()) {
+    return;
+  }
 
+  std::vector<mfgunlock::midpoint::Patch> patches;
+  void* allocation = nullptr;
   std::string detail;
-  if (!mfgunlock::midpoint::Apply(mod, g_midpoint_patches, g_midpoint_allocation, detail)) {
-    // One retry per frame is pointless if the module is present but the layout
-    // is not what we understand -- say so once and stop.
-    if (!detail.empty() && detail != "no dlfg_kernel descriptor found") {
-      std::stringstream s;
-      s << "mfgunlock: temporal fix not applied -- " << detail << ".";
-      reshade::log::message(reshade::log::level::warning, s.str().c_str());
-      g_midpoint_attempts = kMaxMidpointAttempts;
-    }
+  if (!mfgunlock::midpoint::Apply(mod, patches, allocation, detail)) {
+    char module_path[MAX_PATH] = {};
+    GetModuleFileNameA(mod, module_path, MAX_PATH);
+    std::stringstream s;
+    s << "mfgunlock: temporal fix not applied to " << module_path << " -- " << detail << ".";
+    reshade::log::message(reshade::log::level::warning, s.str().c_str());
+    g_midpoint_rejected_modules.push_back(mod);
     return;
   }
 
   g_midpoint_detail = detail;
+  g_midpoint_modules.push_back({mod, std::move(patches), allocation});
   g_midpoint_patched.store(true, std::memory_order_release);
+  char module_path[MAX_PATH] = {};
+  GetModuleFileNameA(mod, module_path, MAX_PATH);
   std::stringstream s;
-  s << "mfgunlock: temporal fix applied -- " << detail
+  s << "mfgunlock: temporal fix applied to " << module_path << " -- " << detail
     << "; generated frames should now land at their own time, not all at the midpoint.";
   reshade::log::message(reshade::log::level::info, s.str().c_str());
 }
 
 void TryPatchMidpoint() {
-  if (g_midpoint_patched.load(std::memory_order_acquire)) return;
   if (g_midpoint_attempts >= kMaxMidpointAttempts) return;
-  HMODULE mod = FindDlssgModule(g_midpoint_attempts);
+  const auto& modules = FindDlssgModules(g_midpoint_attempts);
   ++g_midpoint_attempts;
-  if (mod == nullptr) return;
-  PatchMidpointInModule(mod);
+  for (HMODULE mod : modules) PatchMidpointInModule(mod);
 }
 
 void RestoreMidpoint() {
   if (!g_midpoint_patched.load(std::memory_order_acquire)) return;
-  mfgunlock::midpoint::Restore(g_midpoint_patches, g_midpoint_allocation);
+  for (auto& module : g_midpoint_modules) {
+    mfgunlock::midpoint::Restore(module.patches, module.allocation);
+  }
+  g_midpoint_modules.clear();
+  g_midpoint_rejected_modules.clear();
   g_midpoint_patched.store(false, std::memory_order_release);
 }
 
@@ -700,28 +772,36 @@ bool ModuleImage(HMODULE mod, unsigned char** out_base, const IMAGE_NT_HEADERS64
 
 // ------------------------------------------- Streamline's own frame ceiling
 //
-// The plugin clamps the requested generated-frame count to its own maximum,
-// independently of anything the snippet advertises:
+// The plugin starts with its own compiled maximum, then lowers it to the value
+// reported by NGX:
 //
 //     BA 03 00 00 00   mov   edx, 3
 //     3B CA            cmp   ecx, edx
 //     0F 42 D1         cmovb edx, ecx      ; edx = min(count, 3)
 //
-// The immediate is the ceiling in GENERATED frames, so 3 == 4x and 5 == 6x.
-// Builds differ: the plugin GTA V Enhanced bundles (sl.dlss_g 2.9.1.0) clamps
-// at 3, while the OTA build Cyberpunk and Deep Rock Galactic load clamps at 5.
-// That is why forcing 5x/6x silently did nothing in GTA V Enhanced and worked
-// elsewhere -- the request was being clipped before it ever reached the
-// snippet.
+// `ecx` is the device maximum cached by the Streamline wrapper, not the game's
+// current request. Most games observe the rewritten NGX gates early enough for
+// it to be 5. STALKER 2 does not: its wrapper caches 1, so this CMOV reduces the
+// otherwise-valid compiled maximum back to one generated frame. The native UI
+// can then expose 3x/4x, but slDLSSGSetOptions rejects either with
+// eErrorInvalidState (38).
 //
-// Raise the immediate rather than NOP the cmovb: keeping the clamp means the
-// count is still bounded, just bounded where the newer plugin bounds it.
+// Turn the conditional move into `cmovb edx, edx` by changing only its ModRM
+// byte (D1 -> D2). This is an atomic one-byte code patch and leaves the
+// instruction boundary intact. The immediate stays in place as a hard bound:
+// old plugins remain capped at their compiled 3 generated frames (4x), while
+// newer plugins keep their compiled 5 (6x). The
+// opt-in RaiseFrameCeiling setting may still raise an old plugin's immediate,
+// but is deliberately separate because doing so is not safe in every game.
 
 constexpr unsigned char kCeilingTarget = 5;  // generated frames == 6x
 
 std::atomic_bool g_ceiling_patched{false};
 unsigned char* g_ceiling_site = nullptr;
 unsigned char g_ceiling_original = 0;
+unsigned char g_ceiling_cmov_original = 0;
+unsigned int g_ceiling_compiled = 0;
+unsigned int g_ceiling_effective = 0;
 
 void PatchFrameCountCeiling(HMODULE mod) {
   if (g_ceiling_patched.load(std::memory_order_acquire)) return;
@@ -745,63 +825,66 @@ void PatchFrameCountCeiling(HMODULE mod) {
       if (std::memcmp(start + off + 5, tail, sizeof(tail)) != 0) continue;
       const unsigned char ceiling = start[off + 1];
       if (ceiling == 0 || ceiling > 8) continue;
-      if (found == nullptr) found = start + off + 1;
+      if (found == nullptr) found = start + off;
       ++hits;
     }
   }
 
   if (hits != 1 || found == nullptr) {
-    if (hits > 1) {
-      std::stringstream s;
-      s << "mfgunlock: found " << hits
-        << " frame-count clamps in the DLSS-G plugin (expected 1); leaving them alone.";
-      reshade::log::message(reshade::log::level::warning, s.str().c_str());
-    }
-    return;
-  }
-
-  if (*found >= kCeilingTarget) {
-    // Already as permissive as we would make it -- nothing to do, and saying so
-    // is more useful than silence when someone wonders why there is no log line.
     std::stringstream s;
-    s << "mfgunlock: DLSS-G plugin already allows " << static_cast<unsigned int>(*found)
-      << " generated frame(s) (" << (static_cast<unsigned int>(*found) + 1)
-      << "x); leaving its ceiling alone.";
-    reshade::log::message(reshade::log::level::info, s.str().c_str());
-    g_ceiling_patched.store(true, std::memory_order_release);
+    s << "mfgunlock: found " << hits
+      << " frame-count clamps in the DLSS-G plugin (expected 1); leaving them alone.";
+    reshade::log::message(reshade::log::level::warning, s.str().c_str());
     return;
   }
 
   DWORD old_protect = 0;
-  if (VirtualProtect(found, 1, PAGE_EXECUTE_READWRITE, &old_protect) == 0) return;
-  g_ceiling_original = *found;
+  if (VirtualProtect(found, 10, PAGE_EXECUTE_READWRITE, &old_protect) == 0) return;
   g_ceiling_site = found;
-  *found = kCeilingTarget;
+  g_ceiling_original = found[1];
+  g_ceiling_cmov_original = found[9];
+  g_ceiling_compiled = found[1];
+  g_ceiling_effective = g_ceiling_compiled;
+  if (g_raise_ceiling.load(std::memory_order_relaxed) && found[1] < kCeilingTarget) {
+    found[1] = kCeilingTarget;
+    g_ceiling_effective = kCeilingTarget;
+  }
+  // cmovb edx, ecx -> cmovb edx, edx: same three-byte instruction, no lowering.
+  found[9] = 0xD2;
   DWORD ignored = 0;
-  VirtualProtect(found, 1, old_protect, &ignored);
-  FlushInstructionCache(GetCurrentProcess(), found, 1);
+  VirtualProtect(found, 10, old_protect, &ignored);
+  FlushInstructionCache(GetCurrentProcess(), found, 10);
   g_ceiling_patched.store(true, std::memory_order_release);
+  mfgunlock::framecount::g_advertised_max_generated.store(g_ceiling_effective,
+                                                           std::memory_order_release);
 
   std::stringstream s;
-  s << "mfgunlock: raised the DLSS-G plugin's frame-count ceiling from "
-    << static_cast<unsigned int>(g_ceiling_original) << " to "
-    << static_cast<unsigned int>(kCeilingTarget) << " generated frame(s) ("
-    << (static_cast<unsigned int>(g_ceiling_original) + 1) << "x -> "
-    << (static_cast<unsigned int>(kCeilingTarget) + 1) << "x).";
+  s << "mfgunlock: stopped the DLSS-G plugin from lowering its compiled ceiling of "
+    << g_ceiling_compiled << " generated frame(s) to the stale NGX device value";
+  if (g_ceiling_effective != g_ceiling_compiled) {
+    s << "; RaiseFrameCeiling also changed the hard bound to " << g_ceiling_effective;
+  }
+  s << " (effective maximum " << (g_ceiling_effective + 1) << "x).";
   reshade::log::message(reshade::log::level::info, s.str().c_str());
 }
 
 void RestoreFrameCountCeiling() {
   if (!g_ceiling_patched.load(std::memory_order_acquire)) return;
-  if (g_ceiling_site == nullptr || g_ceiling_original == 0) return;
+  if (g_ceiling_site == nullptr) return;
   DWORD old_protect = 0;
-  if (VirtualProtect(g_ceiling_site, 1, PAGE_EXECUTE_READWRITE, &old_protect) != 0) {
-    *g_ceiling_site = g_ceiling_original;
+  if (VirtualProtect(g_ceiling_site, 10, PAGE_EXECUTE_READWRITE, &old_protect) != 0) {
+    g_ceiling_site[9] = g_ceiling_cmov_original;
+    g_ceiling_site[1] = g_ceiling_original;
     DWORD ignored = 0;
-    VirtualProtect(g_ceiling_site, 1, old_protect, &ignored);
-    FlushInstructionCache(GetCurrentProcess(), g_ceiling_site, 1);
+    VirtualProtect(g_ceiling_site, 10, old_protect, &ignored);
+    FlushInstructionCache(GetCurrentProcess(), g_ceiling_site, 10);
   }
   g_ceiling_site = nullptr;
+  g_ceiling_original = 0;
+  g_ceiling_cmov_original = 0;
+  g_ceiling_compiled = 0;
+  g_ceiling_effective = 0;
+  mfgunlock::framecount::g_advertised_max_generated.store(0, std::memory_order_release);
   g_ceiling_patched.store(false, std::memory_order_release);
 }
 
@@ -970,7 +1053,7 @@ bool TryPatchFlipMeteringInModule(HMODULE mod) {
   reshade::log::message(reshade::log::level::info, s.str().c_str());
 
   // Same module, and by now we know it is the right one.
-  if (g_raise_ceiling.load(std::memory_order_relaxed)) PatchFrameCountCeiling(mod);
+  PatchFrameCountCeiling(mod);
   return true;
 }
 
@@ -1090,6 +1173,16 @@ void OnRegisterOverlay(reshade::api::effect_runtime* /*runtime*/) {
   } else {
     ImGui::TextDisabled("DLSS-G plugin not located yet -- turn frame generation on.");
   }
+  if (g_ceiling_patched.load(std::memory_order_acquire)) {
+    ImGui::Text("Streamline device-limit bypassed: compiled %ux, effective %ux.",
+                g_ceiling_compiled + 1, g_ceiling_effective + 1);
+  }
+  if (mfgunlock::framecount::g_capacity_advertised.load(std::memory_order_relaxed)) {
+    ImGui::Text("Native menu maximum: runtime %ux, advertised %ux.",
+                mfgunlock::framecount::g_runtime_max_generated.load(std::memory_order_relaxed) + 1,
+                mfgunlock::framecount::g_advertised_max_generated.load(
+                    std::memory_order_relaxed) + 1);
+  }
 
   int force = static_cast<int>(
       mfgunlock::framecount::g_force_multiplier.load(std::memory_order_relaxed));
@@ -1129,7 +1222,8 @@ void OnRegisterOverlay(reshade::api::effect_runtime* /*runtime*/) {
 
   ImGui::Separator();
   if (g_midpoint_patched.load(std::memory_order_acquire)) {
-    ImGui::TextWrapped("Temporal fix: %s.", g_midpoint_detail.c_str());
+    ImGui::TextWrapped("Temporal fix: %zu provider(s); last result: %s.",
+                       g_midpoint_modules.size(), g_midpoint_detail.c_str());
   } else {
     ImGui::TextDisabled("Temporal fix not applied yet (attempt %d).", g_midpoint_attempts);
   }
@@ -1144,7 +1238,8 @@ void OnRegisterOverlay(reshade::api::effect_runtime* /*runtime*/) {
 
   ImGui::Separator();
   if (g_gate_patched.load(std::memory_order_acquire)) {
-    ImGui::Text("nvngx_dlssg.dll arch gates rewritten: %zu site(s).", g_gate_sites.size());
+    ImGui::Text("DLSS-G arch gates rewritten: %zu provider(s), %zu site(s).",
+                g_gate_modules.size(), g_gate_sites.size());
   } else {
     ImGui::TextDisabled("DLSS-G snippet not located yet (attempt %d) -- enable frame generation.",
                         g_gate_attempts);
