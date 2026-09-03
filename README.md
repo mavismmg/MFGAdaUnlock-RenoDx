@@ -11,15 +11,43 @@ here.**
 
 ---
 
-## Status
+## Attribution
+
+This repository is a fork of the [original project](https://github.com/ImDreamt/MFGAdaUnlock-RenoDx)
+created by [Dreamt](https://github.com/ImDreamt). Full credit for the original
+implementation goes to Dreamt and the contributors already credited in this
+repository. This fork contains additional compatibility changes and fixes,
+including support and fixes for **S.T.A.L.K.E.R. 2: Heart of Chornobyl**.
+
+## Tested Games
+
+| Game | Status |
+|---|---|
+| S.T.A.L.K.E.R. 2: Heart of Chornobyl | Working |
+| God of War Ragnarök | Working |
+| Death Stranding 2: On the Beach | Working |
+| Clair Obscur: Expedition 33 | Working |
+| The Last of Us Part II Remastered | Working |
+| Resident Evil Requiem | Working |
+| Assassin's Creed IV: Black Flag | Working |
+| PRAGMATA | Working |
+| Cyberpunk 2077 | Working |
+
+These are the games personally tested with this fork; this is not a claim of
+universal compatibility. Results may vary with the game version, DLSS and
+Streamline versions, GPU, drivers, and configuration.
+
+## Known Multiplier Behavior
 
 | Game | Reaches | Notes |
 |---|---|---|
 | Cyberpunk 2077 | 6x | Has its own 2x/3x/4x selector; the addon can force beyond it |
 | Deep Rock Galactic | 6x | FG is on/off only, so the addon drives the count entirely. Needs a modern `nvngx_dlssg.dll` (see below) |
 | Grand Theft Auto V Enhanced | 4x | Genuine ceiling — its bundled `sl.dlss_g` 2.9.1.0 clamps to 3 generated frames |
+| S.T.A.L.K.E.R. 2: Heart of Chornobyl | 4x | Uses both a bundled snippet and an opaque NVIDIA OTA provider. The addon patches both, bypasses Streamline's stale Ada limit, and exposes 3x/4x through the native menu |
 
-Other titles are likely to work; these three are what has actually been tested.
+Other titles may work, but compatibility should be evaluated per game and
+runtime version.
 
 ## Requirements
 
@@ -28,6 +56,8 @@ Other titles are likely to work; these three are what has actually been tested.
 - A game shipping DLSS frame generation via Streamline, with a reasonably modern
   `nvngx_dlssg.dll` (310.x). Games still on the DLSS 3 snippet (3.5.x) contain no
   multi-frame code at all and need a newer one dropped in beside the executable.
+  When an update is needed, use the latest
+  [`nvngx_dlssg.dll` available from TechPowerUp](https://www.techpowerup.com/download/nvidia-dlss-3-frame-generation-dll/).
 
 ## Install
 
@@ -46,7 +76,7 @@ Written to your `ReShade.ini` under `[RenoDX.MFGUnlock]`:
 | `ForceFlipMeteringOff` | `1` | Required for 3x+ on Ada. Leave on |
 | `TemporalFix` | `1` | The interpolation correction. Leave on |
 | `ForceMultiplier` | `0` | `0` respects the game's own choice; `2`–`6` forces that multiplier |
-| `RaiseFrameCeiling` | `0` | Raises the Streamline plugin's internal clamp. Off by default because it breaks some games |
+| `RaiseFrameCeiling` | `0` | Raises an old Streamline plugin's compiled hard limit to 6x. Off by default because that breaks some games; the stale device-limit bypass needed by STALKER 2 is always applied |
 | `ForceOTAPlugins` | `0` | Asks Streamline to load the driver's OTA plugin set. Off by default; see notes |
 
 If a game has its own multiplier selector, leave `ForceMultiplier` at `0` and use
