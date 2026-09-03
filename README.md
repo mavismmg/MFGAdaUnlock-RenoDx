@@ -33,6 +33,10 @@ including support and fixes for **S.T.A.L.K.E.R. 2: Heart of Chornobyl**.
 | PRAGMATA | Working |
 | Cyberpunk 2077 | Working |
 | Alan Wake 2 | Working |
+| Dragon's Dogma 2 | Working |
+| The Blood of Dawnwalker | Working |
+| Starfield | Working |
+| Star Wars Outlaws | Working |
 
 These are the games personally tested with this fork; this is not a claim of
 universal compatibility. Results may vary with the game version, DLSS and
@@ -60,11 +64,21 @@ runtime version.
   When an update is needed, use the latest
   [`nvngx_dlssg.dll` available from TechPowerUp](https://www.techpowerup.com/download/nvidia-dlss-3-frame-generation-dll/).
 
-## Install
+## Usage
 
-1. Install ReShade into the game, with addon support enabled.
-2. Drop `renodx-mfgunlock.addon64` next to the game executable.
-3. Launch, open the ReShade overlay, and find **MFG Unlock** in the Add-ons tab.
+1. Install [ReShade](https://reshade.me/) with addon support, or install the
+   appropriate [RenoDX](https://github.com/clshortfuse/renodx) mod for the game.
+2. Download the [latest release from this fork](../../releases/latest).
+3. Place `renodx-mfgunlock.addon64` in the ReShade addon location used by the
+   game. This is commonly the directory containing the game executable, but a
+   game-specific RenoDX package may use its own addon folder.
+4. Use the latest
+   [`nvngx_dlssg.dll` available from TechPowerUp](https://www.techpowerup.com/download/nvidia-dlss-3-frame-generation-dll/).
+   Back up the DLL bundled with the game before replacing it.
+5. Launch the game and select the desired Multi Frame Generation multiplier
+   directly from the game's graphics settings. If the game only provides an
+   on/off Frame Generation option, use **Force frame multiplier** in the
+   ReShade **MFG Unlock** addon panel instead.
 
 ## Settings
 
