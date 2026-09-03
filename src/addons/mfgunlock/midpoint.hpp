@@ -18,7 +18,7 @@
  * Rewrite that kernel's PTX so the blend weight comes from the kernel's own
  * temporal parameter instead of a constant:
  *
- *     ld.param.f32 %f134, [main_kernel_param_0+32];   // t for this frame
+ *     ld.param.f32 %f134, [<temporal-kernel>_param_0+32]; // t for this frame
  *     mov.f32      %f135, 0f3F800000;                 // 1.0
  *     sub.ftz.f32  %f136, %f135, %f134;               // 1.0 - t
  *
@@ -43,6 +43,7 @@
 
 #include <windows.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <sstream>
@@ -60,10 +61,24 @@ constexpr uint32_t kPtxKind = 1;
 constexpr uint32_t kAdaArch = 89;
 constexpr uint64_t kUncompressedFlags = 0x41;
 
-// Structural expectations. These are cheap to check and catch a build we do not
-// understand far more usefully than a hash would: a mismatch tells us which
-// assumption broke.
-constexpr size_t kExpectedPtxBytes = 99362;
+// Structural expectations. NVIDIA renamed every kernel in 310.9, but the D157
+// temporal program itself is otherwise unchanged: the PTX grew by exactly the
+// accumulated symbol-name delta. Keep separate, exact profiles so an unrelated
+// provider cannot be admitted merely because it happens to contain a similar
+// midpoint sequence.
+struct TemporalProfile {
+  size_t ptx_bytes;
+  const char* entry_name;
+  const char* descriptor_name;
+  ptrdiff_t entry_name_offset;
+  ptrdiff_t descriptor_name_offset;
+};
+
+constexpr TemporalProfile kTemporalProfiles[] = {
+    {99362, "main_kernel", "dlfg_kernel", 0x10, 0x28},
+    {99626, "Kernel_EstimateIntermMvecsScatter", "EstimateIntermMvecsScatter", 0x10, -0x08},
+};
+
 constexpr size_t kExpectedMidpoints = 104;
 
 constexpr char kJoinLabel[] = "$L__BB0_3:";
@@ -71,16 +86,6 @@ constexpr char kMidpointBits[] = "0f3F000000";
 constexpr char kMulPrefix[] = "mul.ftz.f32 ";
 constexpr char kCurrToPrev[] = "%f136";
 constexpr char kPrevToCurr[] = "%f134";
-constexpr char kTemporalInput[] =
-    "ld.param.f32 %f134, [main_kernel_param_0+32];\r\n"
-    "mov.f32 %f135, 0f3F800000;\r\n"
-    "sub.ftz.f32 %f136, %f135, %f134;\r\n";
-
-constexpr char kDescriptorName[] = "dlfg_kernel";
-constexpr char kEntryName[] = "main_kernel";
-constexpr size_t kEntryNameOffset = 0x10;
-constexpr size_t kDescriptorNameOffset = 0x28;
-
 inline uint16_t ReadU16(const uint8_t* p) {
   uint16_t v = 0;
   std::memcpy(&v, p, sizeof(v));
@@ -166,6 +171,7 @@ inline bool FindAdaPtxEntry(const uint8_t* fat, size_t fat_size, size_t& entry_o
 // Decompress the Ada PTX, rewrite the blend weights, and re-emit a truncated
 // fatbin that ends after it.
 inline bool BuildTemporalFatbin(const uint8_t* fat, size_t fat_size,
+                                const TemporalProfile& profile,
                                 std::vector<uint8_t>& out, std::string& why) {
   size_t entry = 0;
   if (!FindAdaPtxEntry(fat, fat_size, entry)) {
@@ -180,9 +186,9 @@ inline bool BuildTemporalFatbin(const uint8_t* fat, size_t fat_size,
     why = "PTX entry is not compressed as expected";
     return false;
   }
-  if (raw != kExpectedPtxBytes) {
+  if (raw != profile.ptx_bytes) {
     std::stringstream s;
-    s << "PTX is " << raw << " bytes, expected " << kExpectedPtxBytes;
+    s << "PTX is " << raw << " bytes, expected " << profile.ptx_bytes;
     why = s.str();
     return false;
   }
@@ -190,6 +196,18 @@ inline bool BuildTemporalFatbin(const uint8_t* fat, size_t fat_size,
   std::vector<uint8_t> ptx(static_cast<size_t>(raw));
   if (!Lz4BlockDecompress(fat + entry + hdr, compressed, ptx.data(), ptx.size())) {
     why = "LZ4 decompression failed";
+    return false;
+  }
+
+  const std::string entry_signature = std::string(".entry ") + profile.entry_name + "(";
+  const std::string parameter_name = std::string(profile.entry_name) + "_param_0";
+  const std::string parameter_signature =
+      std::string(".param .align 8 .b8 ") + parameter_name + "[144]";
+  const std::string ptx_text(reinterpret_cast<const char*>(ptx.data()), ptx.size());
+  if (ptx_text.find(entry_signature) == std::string::npos ||
+      ptx_text.find(parameter_signature) == std::string::npos ||
+      ptx_text.find(".reg .f32 %f<1362>;") == std::string::npos) {
+    why = "temporal kernel signature changed";
     return false;
   }
 
@@ -243,14 +261,19 @@ inline bool BuildTemporalFatbin(const uint8_t* fat, size_t fat_size,
     return false;
   }
 
+  const std::string temporal_input =
+      "ld.param.f32 %f134, [" + parameter_name + "+32];\r\n"
+      "mov.f32 %f135, 0f3F800000;\r\n"
+      "sub.ftz.f32 %f136, %f135, %f134;\r\n";
+
   std::vector<uint8_t> patched;
-  patched.reserve(n + sizeof(kTemporalInput));
+  patched.reserve(n + temporal_input.size());
   auto append = [&patched](const void* p, size_t bytes) {
     const auto* b = static_cast<const uint8_t*>(p);
     patched.insert(patched.end(), b, b + bytes);
   };
   append(ptx.data(), insertion);
-  append(kTemporalInput, sizeof(kTemporalInput) - 1);
+  append(temporal_input.data(), temporal_input.size());
   size_t src = insertion;
   const size_t half = kExpectedMidpoints / 2;
   for (size_t i = 0; i < marks.size(); ++i) {
@@ -280,15 +303,18 @@ inline bool BuildTemporalFatbin(const uint8_t* fat, size_t fat_size,
   return true;
 }
 
-// Every kernel in these tables is named dlfg_kernel/main_kernel -- 25 of them
-// per table, distinguished only by an id field. So the names confirm we are
-// looking at a kernel descriptor, but they do NOT pick out the temporal one.
-// Identify it by its payload instead: the fatbin whose sm_89 PTX decompresses
-// to the size we know how to rewrite.
-inline bool IsTemporalFatbin(const uint8_t* fat, size_t fat_size) {
+// Kernel names confirm that a slot belongs to the expected descriptor family,
+// but do not uniquely identify its temporal program. Identify that program by
+// the exact sm_89 PTX size as well, then validate its internal signatures before
+// rebuilding it.
+inline const TemporalProfile* FindTemporalProfile(const uint8_t* fat, size_t fat_size) {
   size_t entry = 0;
-  if (!FindAdaPtxEntry(fat, fat_size, entry)) return false;
-  return ReadU64(fat + entry + 56) == kExpectedPtxBytes;
+  if (!FindAdaPtxEntry(fat, fat_size, entry)) return nullptr;
+  const uint64_t raw = ReadU64(fat + entry + 56);
+  for (const auto& profile : kTemporalProfiles) {
+    if (raw == profile.ptx_bytes) return &profile;
+  }
+  return nullptr;
 }
 
 inline bool PointsToCString(const uint8_t* base, size_t image_size, uint64_t value,
@@ -299,6 +325,26 @@ inline bool PointsToCString(const uint8_t* base, size_t image_size, uint64_t val
   const size_t len = std::strlen(expected);
   if (value + len + 1 > start + image_size) return false;
   return std::memcmp(s, expected, len + 1) == 0;
+}
+
+inline bool ReadRelativePointer(const uint8_t* base, size_t image_size, const uint8_t* slot,
+                                ptrdiff_t displacement, uint64_t& value) {
+  const uintptr_t start = reinterpret_cast<uintptr_t>(base);
+  const uintptr_t end = start + image_size;
+  const uintptr_t address = reinterpret_cast<uintptr_t>(slot);
+  uintptr_t field = address;
+  if (displacement >= 0) {
+    const auto distance = static_cast<uintptr_t>(displacement);
+    if (distance > UINTPTR_MAX - address) return false;
+    field = address + distance;
+  } else {
+    const auto distance = static_cast<uintptr_t>(-(displacement + 1)) + 1;
+    if (distance > address) return false;
+    field = address - distance;
+  }
+  if (field < start || field > end || sizeof(value) > end - field) return false;
+  std::memcpy(&value, reinterpret_cast<const void*>(field), sizeof(value));
+  return true;
 }
 
 }  // namespace internal
@@ -321,11 +367,12 @@ inline bool Apply(HMODULE module, std::vector<Patch>& patches, void*& allocation
   const size_t image_size = nt->OptionalHeader.SizeOfImage;
   const auto start = reinterpret_cast<uintptr_t>(base);
 
-  // Find descriptor slots: an 8-byte pointer to a fatbin, with the dlfg and
-  // main_kernel names at the expected offsets behind it.
+  // Find descriptor slots: an 8-byte pointer to a fatbin, with the profile's
+  // exact entry and descriptor names at its version-specific relative offsets.
   std::vector<uint64_t*> slots;
   const uint8_t* fat = nullptr;
   size_t fat_size = 0;
+  const internal::TemporalProfile* selected_profile = nullptr;
 
   const auto* section = IMAGE_FIRST_SECTION(nt);
   for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
@@ -333,31 +380,41 @@ inline bool Apply(HMODULE module, std::vector<Patch>& patches, void*& allocation
     if ((section->Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0) continue;
     uint8_t* sec = base + section->VirtualAddress;
     const size_t size = section->Misc.VirtualSize;
-    if (size < internal::kDescriptorNameOffset + 8) continue;
-    for (size_t off = 0; off + internal::kDescriptorNameOffset + 8 <= size; off += 8) {
+    for (size_t off = 0; off + sizeof(uint64_t) <= size; off += sizeof(uint64_t)) {
       uint64_t value = 0;
       std::memcpy(&value, sec + off, sizeof(value));
       if (value < start || value >= start + image_size) continue;
       const auto* candidate = reinterpret_cast<const uint8_t*>(value);
       if (internal::ReadU32(candidate) != internal::kFatbinMagic) continue;
 
-      uint64_t entry_name = 0;
-      uint64_t desc_name = 0;
-      std::memcpy(&entry_name, sec + off + internal::kEntryNameOffset, sizeof(entry_name));
-      std::memcpy(&desc_name, sec + off + internal::kDescriptorNameOffset, sizeof(desc_name));
-      if (!internal::PointsToCString(base, image_size, entry_name, internal::kEntryName)) continue;
-      if (!internal::PointsToCString(base, image_size, desc_name, internal::kDescriptorName)) {
-        continue;
+      const internal::TemporalProfile* name_profile = nullptr;
+      for (const auto& profile : internal::kTemporalProfiles) {
+        uint64_t entry_name = 0;
+        uint64_t desc_name = 0;
+        if (!internal::ReadRelativePointer(base, image_size, sec + off,
+                                           profile.entry_name_offset, entry_name) ||
+            !internal::ReadRelativePointer(base, image_size, sec + off,
+                                           profile.descriptor_name_offset, desc_name)) {
+          continue;
+        }
+        if (internal::PointsToCString(base, image_size, entry_name, profile.entry_name) &&
+            internal::PointsToCString(base, image_size, desc_name, profile.descriptor_name)) {
+          name_profile = &profile;
+          break;
+        }
       }
+      if (name_profile == nullptr) continue;
 
       const uint64_t declared = internal::ReadU64(candidate + 8);
       const size_t total = static_cast<size_t>(declared) + internal::kOuterHeader;
       if (total < 1024 || total > (16u << 20)) continue;
       if (value + total > start + image_size) continue;
-      if (!internal::IsTemporalFatbin(candidate, total)) continue;
+      const auto* fat_profile = internal::FindTemporalProfile(candidate, total);
+      if (fat_profile == nullptr || fat_profile != name_profile) continue;
       if (fat == nullptr) {
         fat = candidate;
         fat_size = total;
+        selected_profile = fat_profile;
       } else if (candidate != fat) {
         continue;  // a second temporal-looking kernel; leave it alone
       }
@@ -365,14 +422,14 @@ inline bool Apply(HMODULE module, std::vector<Patch>& patches, void*& allocation
     }
   }
 
-  if (fat == nullptr || slots.empty()) {
-    detail = "no dlfg_kernel descriptor found";
+  if (fat == nullptr || slots.empty() || selected_profile == nullptr) {
+    detail = "no supported temporal-kernel descriptor found";
     return false;
   }
 
   std::vector<uint8_t> rebuilt;
   std::string why;
-  if (!internal::BuildTemporalFatbin(fat, fat_size, rebuilt, why)) {
+  if (!internal::BuildTemporalFatbin(fat, fat_size, *selected_profile, rebuilt, why)) {
     detail = why;
     return false;
   }
@@ -401,8 +458,9 @@ inline bool Apply(HMODULE module, std::vector<Patch>& patches, void*& allocation
 
   allocation = mem;
   std::stringstream s;
-  s << "redirected " << patches.size() << " dlfg_kernel descriptor(s) from a " << fat_size
-    << "-byte fatbin to a " << rebuilt.size() << "-byte temporal-corrected rebuild";
+  s << "redirected " << patches.size() << " " << selected_profile->descriptor_name
+    << " descriptor(s) from a " << fat_size << "-byte fatbin to a " << rebuilt.size()
+    << "-byte temporal-corrected rebuild";
   detail = s.str();
   return true;
 }
