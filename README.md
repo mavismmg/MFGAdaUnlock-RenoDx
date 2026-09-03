@@ -41,6 +41,7 @@ including support and fixes for **S.T.A.L.K.E.R. 2: Heart of Chornobyl**.
 | Mortal Shell II | Working |
 | Resonance: A Plague Tale Legacy | Working |
 | Black Myth: Wukong | Working |
+| Assetto Corsa Rally | Working |
 
 These are the games personally tested with this fork; this is not a claim of
 universal compatibility. Results may vary with the game version, DLSS and
