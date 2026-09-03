@@ -32,6 +32,7 @@ including support and fixes for **S.T.A.L.K.E.R. 2: Heart of Chornobyl**.
 | Assassin's Creed IV: Black Flag | Working |
 | PRAGMATA | Working |
 | Cyberpunk 2077 | Working |
+| Alan Wake 2 | Working |
 
 These are the games personally tested with this fork; this is not a claim of
 universal compatibility. Results may vary with the game version, DLSS and
