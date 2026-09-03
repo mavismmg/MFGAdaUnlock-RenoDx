@@ -37,6 +37,10 @@ including support and fixes for **S.T.A.L.K.E.R. 2: Heart of Chornobyl**.
 | The Blood of Dawnwalker | Working |
 | Starfield | Working |
 | Star Wars Outlaws | Working |
+| Marvel's Spider-Man 2 | Working |
+| Mortal Shell II | Working |
+| Resonance: A Plague Tale Legacy | Working |
+| Black Myth: Wukong | Working |
 
 These are the games personally tested with this fork; this is not a claim of
 universal compatibility. Results may vary with the game version, DLSS and
