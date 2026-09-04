@@ -18,10 +18,21 @@ here.**
 
 ## Attribution
 
-This repository is a fork of the [original project](https://github.com/ImDreamt/MFGAdaUnlock-RenoDx)
-created by [Dreamt](https://github.com/ImDreamt). Full credit for the original
-implementation goes to Dreamt and the contributors already credited in this
-repository.
+This repository is a fork of the
+[original ReShade/RenoDX addon project](https://github.com/ImDreamt/MFGAdaUnlock-RenoDx)
+created by [Dreamt](https://github.com/ImDreamt). Full credit for that original
+addon implementation goes to Dreamt and the contributors already credited in
+this repository.
+
+The underlying technical approach originates from
+[dashdogy's RTX40MFG-Unlock](https://github.com/dashdogy/RTX40MFG-Unlock).
+Dashdogy identified Ada's higher-multiplier midpoint compaction problem and
+developed the original ASI implementation that verifies the active Streamline
+wrapper and NGX provider, intercepts `slGetFeatureFunction`, adjusts
+`slDLSSGSetOptions`, observes real presentation counts through
+`slDLSSGGetState`, and applies the corrected slot-9 temporal program entirely
+in mapped process memory. Dreamt then adapted this work into the ReShade/RenoDX
+addon on which this fork is based.
 
 This fork expands the original project with broader game and runtime
 compatibility work. Its additions include:
@@ -42,8 +53,8 @@ compatibility work. Its additions include:
 - Compatibility testing and documentation across the games and runtime
   combinations listed below.
 
-These additions extend Dreamt's work; they do not replace or claim authorship
-of the original implementation.
+These additions extend Dreamt's addon and dashdogy's research; they do not
+replace or claim authorship of either original contribution.
 
 ## Contents
 
@@ -143,6 +154,11 @@ versions, games, or load orders.
 |---|---|---|
 | Streamline 2.12.129 with the corresponding 310.7.129 NVIDIA DLLs | Working together and individually | Known-good user report |
 | Streamline 2.14.0 with 310.9 NVIDIA DLLs | Severe menu slowdown reported in STALKER 2 and Cyberpunk 2077 when both addons were loaded | Under investigation; not confirmed universal |
+
+Special thanks to [mugensc](https://next.nexusmods.com/profile/mugensc) for
+reproducing the combined-addon issue, testing both addons separately, and
+identifying the 2.12.129 / 310.7.129 combination as a working solution. That
+careful isolation is the basis for the compatibility guidance in this section.
 
 The report above establishes a useful workaround, but it does not prove that
 Streamline 2.14.0 or the 310.9 provider is independently defective. The cause
@@ -339,11 +355,21 @@ Prebuilt binaries are attached to [Releases](../../releases).
 
 ## Credits
 
-- The midpoint diagnosis, the injected PTX, and the fatbin truncation trick come
-  from [dashdogy/RTX40MFG-Unlock](https://github.com/dashdogy/RTX40MFG-Unlock).
-  That project ships no licence, so nothing here is copied from it — `midpoint.hpp`
-  is an independent implementation of the same idea, verified by reproducing its
-  published output digest byte-for-byte.
+- [dashdogy/RTX40MFG-Unlock](https://github.com/dashdogy/RTX40MFG-Unlock)
+  provided the foundational reverse engineering and original working ASI
+  implementation. Dashdogy diagnosed the midpoint compaction bug, demonstrated
+  the corrected slot-9 temporal program, established the verified
+  Streamline/NGX interception strategy, and showed how to apply the fix only to
+  mapped process memory without modifying NVIDIA DLLs on disk.
+- Dashdogy's project is published under the
+  [MIT License](https://github.com/dashdogy/RTX40MFG-Unlock/blob/main/LICENSE).
+  The implementation in `midpoint.hpp` remains independently written for the
+  ReShade-addon format and was verified by reproducing the original patcher's
+  output digest byte-for-byte.
+- [Dreamt](https://github.com/ImDreamt) created the original ReShade/RenoDX addon
+  adaptation and repository from which this project is forked.
+- Special thanks to [mugensc](https://next.nexusmods.com/profile/mugensc) for the
+  RenoDX DLSS5 compatibility testing and known-good runtime combination.
 - Built on [RenoDX](https://github.com/clshortfuse/renodx) by clshortfuse, and
   [ReShade](https://github.com/crosire/reshade) by crosire.
 
