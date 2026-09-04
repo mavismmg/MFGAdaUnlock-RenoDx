@@ -93,7 +93,7 @@ replace or claim authorship of either original contribution.
 | Resonance: A Plague Tale Legacy | Working |
 | Black Myth: Wukong | Working |
 | Assetto Corsa Rally | Working |
-| Indiana Jones and the Great Circle | Working |
+| Indiana Jones and the Great Circle | Working — launch with `+r_allowBlackListedLayers 1` so ReShade can load through Vulkan |
 | Hell Is Us | Working |
 
 These are the games personally tested with this fork; this is not a claim of
