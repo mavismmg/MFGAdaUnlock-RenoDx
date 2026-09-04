@@ -143,6 +143,31 @@ std::atomic_bool g_temporal_fix{true};
 // able to cope. Off by default; updating the plugin is the sound fix.
 std::atomic_bool g_raise_ceiling{false};
 
+enum class DetectedRenderApi : unsigned int {
+  kUnknown,
+  kD3D11,
+  kD3D12,
+  kVulkan,
+  kOther,
+};
+
+std::atomic<DetectedRenderApi> g_render_api{DetectedRenderApi::kUnknown};
+
+const char* RenderApiName(DetectedRenderApi api) {
+  switch (api) {
+    case DetectedRenderApi::kD3D11:
+      return "Direct3D 11";
+    case DetectedRenderApi::kD3D12:
+      return "Direct3D 12";
+    case DetectedRenderApi::kVulkan:
+      return "Vulkan";
+    case DetectedRenderApi::kOther:
+      return "unsupported/other";
+    default:
+      return "not detected yet";
+  }
+}
+
 // Our own image. Both marker scans look for strings that are, necessarily,
 // string literals inside this very DLL -- so without excluding ourselves the
 // scan happily identifies the addon as the DLSS-G plugin and then fails to
@@ -464,15 +489,22 @@ bool HasKnownDlssgPath(HMODULE mod) {
 }
 
 bool IsDlssgProvider(HMODULE mod) {
+  // A renamed provider may expose either graphics backend. Streamline's
+  // slDLSSGSetOptions/slDLSSGGetState interface is renderer-independent, so
+  // discovery must not discard Vulkan snippets before the shared patch path
+  // gets a chance to inspect them.
+  const bool has_d3d12_entry =
+      GetProcAddress(mod, "NVSDK_NGX_D3D12_PopulateDeviceParameters_Impl") != nullptr;
+  const bool has_vulkan_entry =
+      GetProcAddress(mod, "NVSDK_NGX_VULKAN_PopulateDeviceParameters_Impl") != nullptr;
+
   // These paths are unambiguous and include NVIDIA's opaque OTA .bin, which
   // does not carry the older "dlfg_kernel" marker in current driver builds.
   if (HasKnownDlssgPath(mod)) return true;
 
   // Retain content-based discovery for games that rename or relocate the
-  // snippet, but only scan modules exposing the NGX provider entry point.
-  if (GetProcAddress(mod, "NVSDK_NGX_D3D12_PopulateDeviceParameters_Impl") == nullptr) {
-    return false;
-  }
+  // snippet, but only scan modules exposing an NGX provider entry point.
+  if (!has_d3d12_entry && !has_vulkan_entry) return false;
   return ModuleContains(mod, kDlssgMarker, sizeof(kDlssgMarker) - 1);
 }
 
@@ -1208,9 +1240,39 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
   StartDiscoveryWorker();
 }
 
-// These remain immediate, finite retries during D3D initialization. They do
+// These remain immediate, finite retries during graphics-device initialization. They do
 // not start a thread and therefore cannot keep a temporary addon instance alive.
-void OnInitDevice(reshade::api::device* /*device*/) {
+void OnInitDevice(reshade::api::device* device) {
+  if (device != nullptr) {
+    DetectedRenderApi detected = DetectedRenderApi::kOther;
+    switch (device->get_api()) {
+      case reshade::api::device_api::d3d11:
+        detected = DetectedRenderApi::kD3D11;
+        break;
+      case reshade::api::device_api::d3d12:
+        detected = DetectedRenderApi::kD3D12;
+        break;
+      case reshade::api::device_api::vulkan:
+        detected = DetectedRenderApi::kVulkan;
+        break;
+      default:
+        break;
+    }
+
+    const DetectedRenderApi previous =
+        g_render_api.exchange(detected, std::memory_order_relaxed);
+    if (previous != detected) {
+      std::stringstream s;
+      s << "mfgunlock: ReShade initialized a " << RenderApiName(detected) << " device";
+      if (detected == DetectedRenderApi::kVulkan) {
+        s << "; enabling the experimental Vulkan provider-discovery path.";
+      } else {
+        s << ".";
+      }
+      reshade::log::message(reshade::log::level::info, s.str().c_str());
+    }
+  }
+
   RunProviderMaintenance();
   if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
   mfgunlock::framecount::TryInstall();
@@ -1244,6 +1306,10 @@ void OnRegisterOverlay(reshade::api::effect_runtime* /*runtime*/) {
   ImGui::TextDisabled(
       "Takes effect when DLSS-G next queries the runtime -- toggle frame\n"
       "generation off and on in the game if the option does not appear.");
+
+  const DetectedRenderApi render_api = g_render_api.load(std::memory_order_relaxed);
+  ImGui::Text("Renderer detected by ReShade: %s%s", RenderApiName(render_api),
+              render_api == DetectedRenderApi::kVulkan ? " (experimental)" : "");
 
   bool flip_off = g_force_flip_meter_off.load(std::memory_order_relaxed);
   if (ImGui::Checkbox("Force legacy software flip pacing (compatibility)", &flip_off)) {
@@ -1283,9 +1349,22 @@ void OnRegisterOverlay(reshade::api::effect_runtime* /*runtime*/) {
                     std::memory_order_relaxed) + 1);
   }
   if (mfgunlock::framecount::g_state_seen.load(std::memory_order_relaxed)) {
+    const unsigned int status =
+        mfgunlock::framecount::g_dlssg_status.load(std::memory_order_relaxed);
     ImGui::Text("Actual presentations since last state query: %u (samples: %llu).",
                 mfgunlock::framecount::g_actual_frames_presented.load(std::memory_order_relaxed),
                 mfgunlock::framecount::g_state_samples.load(std::memory_order_relaxed));
+    if (status != 0) {
+      ImGui::Text("DLSS-G runtime status: failure flags 0x%x.", status);
+    } else {
+      const unsigned int observed =
+          mfgunlock::framecount::g_max_actual_frames_presented.load(std::memory_order_relaxed);
+      if (observed > 1) {
+        ImGui::Text("MFG validation: active; observed up to %u actual presentations.", observed);
+      } else {
+        ImGui::TextDisabled("DLSS-G status is OK; generated output has not been confirmed yet.");
+      }
+    }
   } else {
     ImGui::TextDisabled("No successful slDLSSGGetState telemetry sample yet (last result: %u).",
                         mfgunlock::framecount::g_state_result.load(std::memory_order_relaxed));

@@ -63,7 +63,9 @@ inline std::atomic<unsigned int> g_native_requested{0};
 inline std::atomic<unsigned int> g_native_result{0};
 inline std::atomic_bool g_state_seen{false};
 inline std::atomic<unsigned int> g_state_result{0};
+inline std::atomic<unsigned int> g_dlssg_status{0};
 inline std::atomic<unsigned int> g_actual_frames_presented{0};
+inline std::atomic<unsigned int> g_max_actual_frames_presented{0};
 inline std::atomic<unsigned long long> g_state_samples{0};
 inline std::atomic<unsigned int> g_seen_present_counts{0};
 
@@ -268,11 +270,27 @@ inline sl::Result HookedGetState(const sl::ViewportHandle& viewport, sl::DLSSGSt
   const unsigned int raw_result = static_cast<unsigned int>(result);
   g_state_result.store(raw_result, std::memory_order_relaxed);
   if (result == sl::Result::eOk) {
+    const unsigned int status = static_cast<unsigned int>(state.status);
+    const unsigned int previous_status =
+        g_dlssg_status.exchange(status, std::memory_order_relaxed);
     const unsigned int presented = state.numFramesActuallyPresented;
     const unsigned int previous =
         g_actual_frames_presented.exchange(presented, std::memory_order_relaxed);
+    unsigned int observed_max = g_max_actual_frames_presented.load(std::memory_order_relaxed);
+    while (presented > observed_max &&
+           !g_max_actual_frames_presented.compare_exchange_weak(
+               observed_max, presented, std::memory_order_relaxed)) {
+    }
     g_state_samples.fetch_add(1, std::memory_order_relaxed);
     const bool first = !g_state_seen.exchange(true, std::memory_order_relaxed);
+    if (first || previous_status != status) {
+      std::stringstream s;
+      s << "mfgunlock: slDLSSGGetState runtime status is 0x" << std::hex << status << std::dec
+        << (status == 0 ? " (OK)." : " (DLSS-G reported one or more failure flags).");
+      reshade::log::message(status == 0 ? reshade::log::level::info
+                                        : reshade::log::level::warning,
+                            s.str().c_str());
+    }
     if (first || previous != presented) {
       const unsigned int bit = presented < 32 ? (1u << presented) : 0u;
       const unsigned int seen =
