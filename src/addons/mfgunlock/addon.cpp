@@ -1171,6 +1171,7 @@ DWORD WINAPI DiscoveryWorkerEntry(LPVOID pinned_module) {
 }
 
 void StartDiscoveryWorker() {
+  if (g_discovery_worker_started.load(std::memory_order_acquire)) return;
   bool expected = false;
   if (!g_discovery_worker_started.compare_exchange_strong(
           expected, true, std::memory_order_acq_rel)) {
@@ -1193,14 +1194,27 @@ void StartDiscoveryWorker() {
   CloseHandle(thread);
 }
 
-// These callbacks start the bounded off-Present fallback after D3D
-// initialization, outside the loader lock held during process attach.
+// ReShade may unload and reload addons while it probes temporary D3D devices.
+// Starting a self-pinned worker from those callbacks keeps the first addon
+// instance alive and makes its eventual worker exit unregister the instance
+// ReShade adopted. The first real Present happens after that probe cycle. It
+// only launches the worker; discovery and patching remain on the worker thread.
+void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
+                             reshade::api::swapchain* /*swapchain*/,
+                             const reshade::api::rect* /*source_rect*/,
+                             const reshade::api::rect* /*dest_rect*/,
+                             uint32_t /*dirty_rect_count*/,
+                             const reshade::api::rect* /*dirty_rects*/) {
+  StartDiscoveryWorker();
+}
+
+// These remain immediate, finite retries during D3D initialization. They do
+// not start a thread and therefore cannot keep a temporary addon instance alive.
 void OnInitDevice(reshade::api::device* /*device*/) {
   RunProviderMaintenance();
   if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
   mfgunlock::framecount::TryInstall();
   mfgunlock::loadhook::TryInstall();
-  StartDiscoveryWorker();
 }
 
 void OnInitCommandQueue(reshade::api::command_queue* /*queue*/) {
@@ -1208,7 +1222,6 @@ void OnInitCommandQueue(reshade::api::command_queue* /*queue*/) {
   if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
   mfgunlock::framecount::TryInstall();
   mfgunlock::loadhook::TryInstall();
-  StartDiscoveryWorker();
 }
 
 // ---------------------------------------------------------------- overlay
@@ -1418,8 +1431,10 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID /*lpv_reserved*
       reshade::register_overlay("MFG Unlock", OnRegisterOverlay);
       reshade::register_event<reshade::addon_event::init_device>(OnInitDevice);
       reshade::register_event<reshade::addon_event::init_command_queue>(OnInitCommandQueue);
+      reshade::register_event<reshade::addon_event::present>(OnPresentStartDiscovery);
       break;
     case DLL_PROCESS_DETACH:
+      reshade::unregister_event<reshade::addon_event::present>(OnPresentStartDiscovery);
       reshade::unregister_event<reshade::addon_event::init_command_queue>(OnInitCommandQueue);
       reshade::unregister_event<reshade::addon_event::init_device>(OnInitDevice);
       reshade::unregister_overlay("MFG Unlock", OnRegisterOverlay);
