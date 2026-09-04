@@ -93,6 +93,8 @@ replace or claim authorship of either original contribution.
 | Resonance: A Plague Tale Legacy | Working |
 | Black Myth: Wukong | Working |
 | Assetto Corsa Rally | Working |
+| Indiana Jones and the Great Circle | Working |
+| Hell Is Us | Working |
 
 These are the games personally tested with this fork; this is not a claim of
 universal compatibility. Results may vary with the game version, DLSS and
@@ -226,6 +228,18 @@ Streamline DLSS-G. Vulkan support has not yet completed the same game matrix as
 Direct3D 12 and should not be considered stable or universal. When testing,
 confirm that the overlay reports **Vulkan (experimental)** and use the
 verification checklist above.
+
+### Indiana Jones and the Great Circle
+
+Vulkan MFG Unlock support has been tested successfully. ReShade requires the
+following game launch option so its Vulkan layer is allowed to load:
+
+```text
++r_allowBlackListedLayers 1
+```
+
+Without this option, ReShade—and therefore the addon—may not initialize in the
+game.
 
 ## Settings
 
