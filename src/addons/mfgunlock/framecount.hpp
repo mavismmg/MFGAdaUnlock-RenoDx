@@ -65,7 +65,7 @@ inline std::atomic_bool g_state_seen{false};
 inline std::atomic<unsigned int> g_state_result{0};
 inline std::atomic<unsigned int> g_dlssg_status{0};
 inline std::atomic_bool g_status_ok_logged{false};
-inline std::atomic<unsigned int> g_seen_status_flags{0};
+inline std::atomic_bool g_failure_status_logged{false};
 inline std::atomic<unsigned int> g_actual_frames_presented{0};
 inline std::atomic<unsigned int> g_max_actual_frames_presented{0};
 inline std::atomic<unsigned long long> g_state_samples{0};
@@ -288,9 +288,7 @@ inline sl::Result HookedGetState(const sl::ViewportHandle& viewport, sl::DLSSGSt
     if (status == 0) {
       log_status = !g_status_ok_logged.exchange(true, std::memory_order_relaxed);
     } else {
-      const unsigned int previously_seen =
-          g_seen_status_flags.fetch_or(status, std::memory_order_relaxed);
-      log_status = (previously_seen & status) != status;
+      log_status = !g_failure_status_logged.exchange(true, std::memory_order_relaxed);
     }
     if (log_status) {
       std::stringstream s;
