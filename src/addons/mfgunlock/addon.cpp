@@ -136,7 +136,7 @@ constexpr unsigned int kMaxCount = 5;
 
 std::atomic_bool g_enabled{true};
 std::atomic<unsigned int> g_max_count{4};
-std::atomic_bool g_force_flip_meter_off{true};
+std::atomic_bool g_force_flip_meter_off{false};
 std::atomic_bool g_temporal_fix{true};
 // Raising the plugin's own clamp broke GTA V Enhanced -- its 2.9.1.0 plugin was
 // only ever shipped bounded at 3, and lifting that is not the same as it being
@@ -415,10 +415,11 @@ void TryBootstrapVTable() {
 // current build no longer contains that descriptor.
 
 constexpr char kDlssgMarker[] = "dlfg_kernel";
-constexpr int kScanInterval = 60;
 
 std::vector<HMODULE> g_inspected_modules;
 std::vector<HMODULE> g_dlssg_modules;
+SRWLOCK g_provider_maintenance_lock = SRWLOCK_INIT;
+std::atomic_bool g_provider_rescan_requested{false};
 
 bool ModuleContains(HMODULE mod, const char* needle, size_t needle_len) {
   auto* base = reinterpret_cast<unsigned char*>(mod);
@@ -475,14 +476,11 @@ bool IsDlssgProvider(HMODULE mod) {
   return ModuleContains(mod, kDlssgMarker, sizeof(kDlssgMarker) - 1);
 }
 
-// NGX may keep the game-folder nvngx_dlssg.dll mapped while executing a second
-// provider from the OTA cache under an opaque .bin name. Remember every
-// identified provider instead of returning the first match. Each unknown
-// module is inspected once, and only an NGX provider candidate gets the content
-// scan, so continuing discovery does not rescan the game executable.
-const std::vector<HMODULE>& FindDlssgModules(int attempts) {
+// Perform one shared bootstrap pass for providers that were mapped before this
+// addon. Providers mapped later are handled directly by the loader hook, so
+// module enumeration never has to run from the presentation thread.
+const std::vector<HMODULE>& DiscoverDlssgModules() {
   if (HMODULE fast = GetModuleHandleW(L"nvngx_dlssg.dll")) RememberDlssgModule(fast);
-  if (attempts % kScanInterval != 0) return g_dlssg_modules;
 
   HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
   if (snap == INVALID_HANDLE_VALUE) return g_dlssg_modules;
@@ -516,7 +514,6 @@ std::vector<GateSite> g_gate_sites;
 std::vector<HMODULE> g_gate_modules;
 std::vector<HMODULE> g_gate_rejected_modules;
 int g_gate_attempts = 0;
-constexpr int kMaxGateAttempts = 200000;
 
 // Split out so the load-time trigger can patch a module it already holds a
 // handle to. That path runs under the loader lock, where CreateToolhelp32Snapshot
@@ -599,10 +596,8 @@ void PatchArchGatesInModule(HMODULE mod) {
 }
 
 void TryPatchDlssgArchGate() {
-  if (g_gate_attempts >= kMaxGateAttempts) return;
-  const auto& modules = FindDlssgModules(g_gate_attempts);
   ++g_gate_attempts;
-  for (HMODULE mod : modules) PatchArchGatesInModule(mod);
+  for (HMODULE mod : g_dlssg_modules) PatchArchGatesInModule(mod);
 }
 
 void RestoreDlssgArchGate() {
@@ -639,7 +634,6 @@ std::vector<MidpointModulePatch> g_midpoint_modules;
 std::vector<HMODULE> g_midpoint_rejected_modules;
 std::string g_midpoint_detail;
 int g_midpoint_attempts = 0;
-constexpr int kMaxMidpointAttempts = 200000;
 
 void PatchMidpointInModule(HMODULE mod) {
   if (mod == nullptr) return;
@@ -677,10 +671,32 @@ void PatchMidpointInModule(HMODULE mod) {
 }
 
 void TryPatchMidpoint() {
-  if (g_midpoint_attempts >= kMaxMidpointAttempts) return;
-  const auto& modules = FindDlssgModules(g_midpoint_attempts);
   ++g_midpoint_attempts;
-  for (HMODULE mod : modules) PatchMidpointInModule(mod);
+  for (HMODULE mod : g_dlssg_modules) PatchMidpointInModule(mod);
+}
+
+// Provider state is normally updated synchronously by the loader hook. The
+// bounded fallback worker below may inspect the process at the same time, so
+// serialize vector updates and patch bookkeeping. A loader callback must not
+// wait here: if maintenance is already in progress it requests another pass
+// and returns, avoiding a lock-order inversion with the Windows loader lock.
+void ProcessLoadedDlssgModule(HMODULE mod) {
+  if (!TryAcquireSRWLockExclusive(&g_provider_maintenance_lock)) {
+    g_provider_rescan_requested.store(true, std::memory_order_release);
+    return;
+  }
+  RememberDlssgModule(mod);
+  if (g_enabled.load(std::memory_order_relaxed)) PatchArchGatesInModule(mod);
+  if (g_temporal_fix.load(std::memory_order_relaxed)) PatchMidpointInModule(mod);
+  ReleaseSRWLockExclusive(&g_provider_maintenance_lock);
+}
+
+void RunProviderMaintenance() {
+  AcquireSRWLockExclusive(&g_provider_maintenance_lock);
+  DiscoverDlssgModules();
+  if (g_enabled.load(std::memory_order_relaxed)) TryPatchDlssgArchGate();
+  if (g_temporal_fix.load(std::memory_order_relaxed)) TryPatchMidpoint();
+  ReleaseSRWLockExclusive(&g_provider_maintenance_lock);
 }
 
 void RestoreMidpoint() {
@@ -1090,41 +1106,109 @@ void RestoreFlipMetering() {
   g_flip_meter_patched.store(false, std::memory_order_release);
 }
 
-void OnPresent(reshade::api::command_queue* /*queue*/,
-               reshade::api::swapchain* /*swapchain*/,
-               const reshade::api::rect* /*source_rect*/,
-               const reshade::api::rect* /*dest_rect*/,
-               uint32_t /*dirty_rect_count*/,
-               const reshade::api::rect* /*dirty_rects*/) {
-  TryInstallHooks();
-  TryBootstrapVTable();
-  if (g_enabled.load(std::memory_order_relaxed)) TryPatchDlssgArchGate();
-  if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
-  if (g_temporal_fix.load(std::memory_order_relaxed)) TryPatchMidpoint();
-  mfgunlock::framecount::TryInstall();
-  mfgunlock::loadhook::TryInstall();
+// Keep compatibility retries away from Present. The load-time hook remains the
+// primary path; this short-lived worker only covers unusual loaders, hook
+// conflicts, and modules that appear during startup through an unobserved API.
+// Once the required pieces have been verified it exits and performs no further
+// work for the rest of the session.
+constexpr DWORD kDiscoveryRetryIntervalMs = 250;
+constexpr unsigned int kDiscoveryRetryLimit = 40;
+std::atomic_bool g_discovery_worker_started{false};
+std::atomic_bool g_discovery_worker_running{false};
+std::atomic_bool g_discovery_worker_finished{false};
+std::atomic<unsigned int> g_discovery_worker_passes{0};
+
+bool DiscoveryRequirementsMet() {
+  const bool provider_ready =
+      (!g_enabled.load(std::memory_order_relaxed) ||
+       g_gate_patched.load(std::memory_order_acquire)) &&
+      (!g_temporal_fix.load(std::memory_order_relaxed) ||
+       g_midpoint_patched.load(std::memory_order_acquire));
+  const bool pacing_ready =
+      !g_force_flip_meter_off.load(std::memory_order_relaxed) ||
+      g_flip_meter_patched.load(std::memory_order_acquire) ||
+      g_flip_meter_attempts >= kMaxFlipMeterAttempts;
+  return provider_ready && pacing_ready &&
+         mfgunlock::loadhook::g_hooked.load(std::memory_order_acquire) &&
+         mfgunlock::framecount::g_hooked.load(std::memory_order_acquire);
 }
 
-// The capability is computed once, early. Present is far too late: Streamline
-// came up 6.5s before our first present in testing, so the gate had already
-// been evaluated and the answer cached before we touched it. These fire as soon
-// as the game creates D3D objects, which is the earliest a ReShade addon can
-// act -- roughly 4.4s sooner. The patch itself is just a memory scan, so
-// running it on every one of these is cheap and idempotent.
+void RunBoundedDiscoveryWorker() {
+  g_discovery_worker_running.store(true, std::memory_order_release);
+  unsigned int quiet_ready_passes = 0;
+  for (unsigned int pass = 1; pass <= kDiscoveryRetryLimit; ++pass) {
+    Sleep(kDiscoveryRetryIntervalMs);
+    g_provider_rescan_requested.store(false, std::memory_order_release);
+    RunProviderMaintenance();
+    if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
+    mfgunlock::framecount::TryInstall();
+    mfgunlock::loadhook::TryInstall();
+    g_discovery_worker_passes.store(pass, std::memory_order_relaxed);
+
+    if (DiscoveryRequirementsMet() &&
+        !g_provider_rescan_requested.load(std::memory_order_acquire)) {
+      // A short quiet period closes the race where another module is loaded as
+      // the first successful pass finishes.
+      if (++quiet_ready_passes >= 4) break;
+    } else {
+      quiet_ready_passes = 0;
+    }
+  }
+
+  const bool ready = DiscoveryRequirementsMet();
+  g_discovery_worker_running.store(false, std::memory_order_release);
+  g_discovery_worker_finished.store(true, std::memory_order_release);
+  reshade::log::message(
+      ready ? reshade::log::level::info : reshade::log::level::warning,
+      ready ? "mfgunlock: bounded startup discovery completed; no Present polling is active."
+            : "mfgunlock: bounded startup discovery ended without verifying every component; "
+              "the load-time trigger remains armed for late modules.");
+}
+
+DWORD WINAPI DiscoveryWorkerEntry(LPVOID pinned_module) {
+  RunBoundedDiscoveryWorker();
+  FreeLibraryAndExitThread(static_cast<HMODULE>(pinned_module), 0);
+}
+
+void StartDiscoveryWorker() {
+  bool expected = false;
+  if (!g_discovery_worker_started.compare_exchange_strong(
+          expected, true, std::memory_order_acq_rel)) {
+    return;
+  }
+
+  HMODULE pinned_module = nullptr;
+  if (!GetModuleHandleExW(
+          GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+          reinterpret_cast<LPCWSTR>(&DiscoveryWorkerEntry), &pinned_module)) {
+    g_discovery_worker_started.store(false, std::memory_order_release);
+    return;
+  }
+  HANDLE thread = CreateThread(nullptr, 0, DiscoveryWorkerEntry, pinned_module, 0, nullptr);
+  if (thread == nullptr) {
+    FreeLibrary(pinned_module);
+    g_discovery_worker_started.store(false, std::memory_order_release);
+    return;
+  }
+  CloseHandle(thread);
+}
+
+// These callbacks start the bounded off-Present fallback after D3D
+// initialization, outside the loader lock held during process attach.
 void OnInitDevice(reshade::api::device* /*device*/) {
-  if (g_enabled.load(std::memory_order_relaxed)) TryPatchDlssgArchGate();
+  RunProviderMaintenance();
   if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
-  if (g_temporal_fix.load(std::memory_order_relaxed)) TryPatchMidpoint();
   mfgunlock::framecount::TryInstall();
   mfgunlock::loadhook::TryInstall();
+  StartDiscoveryWorker();
 }
 
 void OnInitCommandQueue(reshade::api::command_queue* /*queue*/) {
-  if (g_enabled.load(std::memory_order_relaxed)) TryPatchDlssgArchGate();
+  RunProviderMaintenance();
   if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
-  if (g_temporal_fix.load(std::memory_order_relaxed)) TryPatchMidpoint();
   mfgunlock::framecount::TryInstall();
   mfgunlock::loadhook::TryInstall();
+  StartDiscoveryWorker();
 }
 
 // ---------------------------------------------------------------- overlay
@@ -1149,11 +1233,13 @@ void OnRegisterOverlay(reshade::api::effect_runtime* /*runtime*/) {
       "generation off and on in the game if the option does not appear.");
 
   bool flip_off = g_force_flip_meter_off.load(std::memory_order_relaxed);
-  if (ImGui::Checkbox("Force flip-metering off (needed for 3x/4x on Ada)", &flip_off)) {
+  if (ImGui::Checkbox("Force legacy software flip pacing (compatibility)", &flip_off)) {
     g_force_flip_meter_off.store(flip_off, std::memory_order_relaxed);
     reshade::set_config_value(nullptr, kConfigSection, "ForceFlipMeteringOff", flip_off ? 1 : 0);
   }
-  ImGui::TextDisabled("Applied once per session at load; restart the game to change it.");
+  ImGui::TextDisabled(
+      "Leave off with current Streamline builds. Enable only if 3x/4x freezes;\n"
+      "applied once per session, so restart the game after changing it.");
 
   ImGui::Separator();
   if (g_flip_meter_patched.load(std::memory_order_acquire)) {
@@ -1182,6 +1268,14 @@ void OnRegisterOverlay(reshade::api::effect_runtime* /*runtime*/) {
                 mfgunlock::framecount::g_runtime_max_generated.load(std::memory_order_relaxed) + 1,
                 mfgunlock::framecount::g_advertised_max_generated.load(
                     std::memory_order_relaxed) + 1);
+  }
+  if (mfgunlock::framecount::g_state_seen.load(std::memory_order_relaxed)) {
+    ImGui::Text("Actual presentations since last state query: %u (samples: %llu).",
+                mfgunlock::framecount::g_actual_frames_presented.load(std::memory_order_relaxed),
+                mfgunlock::framecount::g_state_samples.load(std::memory_order_relaxed));
+  } else {
+    ImGui::TextDisabled("No successful slDLSSGGetState telemetry sample yet (last result: %u).",
+                        mfgunlock::framecount::g_state_result.load(std::memory_order_relaxed));
   }
 
   int force = static_cast<int>(
@@ -1235,6 +1329,17 @@ void OnRegisterOverlay(reshade::api::effect_runtime* /*runtime*/) {
   } else {
     ImGui::TextDisabled("Load-time trigger not installed.");
   }
+  if (g_discovery_worker_running.load(std::memory_order_acquire)) {
+    ImGui::TextDisabled("Bounded fallback discovery running (%u/%u passes; no Present polling).",
+                        g_discovery_worker_passes.load(std::memory_order_relaxed),
+                        kDiscoveryRetryLimit);
+  } else if (g_discovery_worker_finished.load(std::memory_order_acquire)) {
+    if (DiscoveryRequirementsMet()) {
+      ImGui::TextDisabled("Bounded fallback discovery complete; no Present polling is active.");
+    } else {
+      ImGui::TextDisabled("Bounded fallback discovery finished; waiting on load-time triggers.");
+    }
+  }
 
   ImGui::Separator();
   if (g_gate_patched.load(std::memory_order_acquire)) {
@@ -1246,20 +1351,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* /*runtime*/) {
   }
 
   ImGui::Separator();
-  if (!g_hooked.load(std::memory_order_acquire)) {
-    ImGui::Text("NGX loader: not hooked yet (attempt %d of %d)", g_hook_attempts,
-                kMaxHookAttempts);
-  } else if (!g_vtable_patched.load(std::memory_order_acquire)) {
-    ImGui::Text("NGX loader hooked; waiting for a parameter block.");
-  } else {
-    ImGui::Text("Parameter vtable patched. Overrides served: %u",
-                g_override_hits.load(std::memory_order_relaxed));
-    if (g_override_reported.load(std::memory_order_relaxed)) {
-      ImGui::Text("Runtime reported: %u", g_runtime_reported_value.load(std::memory_order_relaxed));
-    } else {
-      ImGui::TextDisabled("DLSS-G has not queried %s yet.", kParamName);
-    }
-  }
+  ImGui::TextDisabled("Legacy NGX parameter-vtable override disabled; using verified code gates.");
 }
 
 void LoadConfig() {
@@ -1303,12 +1395,6 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID /*lpv_reserved*
       g_self_module = h_module;
       if (!reshade::register_addon(h_module)) return FALSE;
       LoadConfig();
-      // Earliest possible attempt: if NGX already pulled the snippet in before
-      // ReShade got to us, this is the only shot we have at beating the
-      // capability query.
-      if (g_enabled.load(std::memory_order_relaxed)) TryPatchDlssgArchGate();
-      if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
-      if (g_temporal_fix.load(std::memory_order_relaxed)) TryPatchMidpoint();
 
       // The frame-count override must never ask for more generated frames than
       // the pacing can deliver, and it is the only code that runs at a moment
@@ -1318,42 +1404,31 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID /*lpv_reserved*
       mfgunlock::framecount::g_pacing_ready = []() {
         return g_flip_meter_patched.load(std::memory_order_acquire);
       };
-      mfgunlock::framecount::TryInstall();
-  mfgunlock::loadhook::TryInstall();
 
-      // Additional, earlier trigger: catch the snippet as it is mapped, before
-      // NGX can populate its capabilities. Purely additive -- the present/init
-      // paths below are unchanged, and if this fails to install the games that
-      // already work are unaffected.
+      // Install load-time discovery before the bootstrap scan. Already mapped
+      // providers are found by that one shared scan; anything mapped later is
+      // patched directly here without enumerating modules from Present.
       mfgunlock::loadhook::g_on_interposer_loaded = []() { mfgunlock::framecount::TryInstall(); };
-      mfgunlock::loadhook::g_on_dlssg_loaded = [](HMODULE mod) {
-        if (g_enabled.load(std::memory_order_relaxed)) PatchArchGatesInModule(mod);
-        if (g_temporal_fix.load(std::memory_order_relaxed)) PatchMidpointInModule(mod);
-      };
+      mfgunlock::loadhook::g_on_dlssg_loaded = ProcessLoadedDlssgModule;
       mfgunlock::loadhook::TryInstall();
+      RunProviderMaintenance();
+      if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
+      mfgunlock::framecount::TryInstall();
 
       reshade::register_overlay("MFG Unlock", OnRegisterOverlay);
       reshade::register_event<reshade::addon_event::init_device>(OnInitDevice);
       reshade::register_event<reshade::addon_event::init_command_queue>(OnInitCommandQueue);
-      reshade::register_event<reshade::addon_event::present>(OnPresent);
       break;
     case DLL_PROCESS_DETACH:
-      reshade::unregister_event<reshade::addon_event::present>(OnPresent);
       reshade::unregister_event<reshade::addon_event::init_command_queue>(OnInitCommandQueue);
       reshade::unregister_event<reshade::addon_event::init_device>(OnInitDevice);
       reshade::unregister_overlay("MFG Unlock", OnRegisterOverlay);
-      // Order matters: the vtable points into this image, so restore it before
-      // the module can be unloaded, then take the entry points back.
-      RestoreParameterVTable();
       mfgunlock::loadhook::Uninstall();
       mfgunlock::framecount::Uninstall();
       RestoreMidpoint();
       RestoreDlssgArchGate();
       RestoreFrameCountCeiling();
       RestoreFlipMetering();
-      if (g_hooked.load(std::memory_order_acquire)) {
-        mfgunlock::hook::Uninstall(kNgxHooks);
-      }
       reshade::unregister_addon(h_module);
       break;
     default:

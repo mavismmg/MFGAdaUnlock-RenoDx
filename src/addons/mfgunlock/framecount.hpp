@@ -61,6 +61,11 @@ inline std::atomic<unsigned int> g_last_result{0};
 inline std::atomic_bool g_native_request_seen{false};
 inline std::atomic<unsigned int> g_native_requested{0};
 inline std::atomic<unsigned int> g_native_result{0};
+inline std::atomic_bool g_state_seen{false};
+inline std::atomic<unsigned int> g_state_result{0};
+inline std::atomic<unsigned int> g_actual_frames_presented{0};
+inline std::atomic<unsigned long long> g_state_samples{0};
+inline std::atomic<unsigned int> g_seen_present_counts{0};
 
 // Published by addon.cpp only after the active Streamline wrapper's pacing and
 // hard ceiling have both been verified. Games such as STALKER 2 build their
@@ -260,6 +265,26 @@ inline sl::Result HookedGetState(const sl::ViewportHandle& viewport, sl::DLSSGSt
   if (g_real_get_state == nullptr) return sl::Result::eErrorNotInitialized;
 
   const sl::Result result = g_real_get_state(viewport, state, options);
+  const unsigned int raw_result = static_cast<unsigned int>(result);
+  g_state_result.store(raw_result, std::memory_order_relaxed);
+  if (result == sl::Result::eOk) {
+    const unsigned int presented = state.numFramesActuallyPresented;
+    const unsigned int previous =
+        g_actual_frames_presented.exchange(presented, std::memory_order_relaxed);
+    g_state_samples.fetch_add(1, std::memory_order_relaxed);
+    const bool first = !g_state_seen.exchange(true, std::memory_order_relaxed);
+    if (first || previous != presented) {
+      const unsigned int bit = presented < 32 ? (1u << presented) : 0u;
+      const unsigned int seen =
+          bit == 0 ? ~0u : g_seen_present_counts.fetch_or(bit, std::memory_order_relaxed);
+      if (first || (seen & bit) == 0) {
+        std::stringstream s;
+        s << "mfgunlock: slDLSSGGetState reports " << presented
+          << " frame(s) actually presented since its previous call.";
+        reshade::log::message(reshade::log::level::info, s.str().c_str());
+      }
+    }
+  }
   if (result != sl::Result::eOk || state.structVersion < sl::kStructVersion2) return result;
 
   const unsigned int reported = state.numFramesToGenerateMax;

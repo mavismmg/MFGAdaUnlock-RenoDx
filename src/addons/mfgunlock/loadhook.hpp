@@ -17,9 +17,9 @@
  *                    gates get rewritten correctly, but the capability was
  *                    already computed and cached as 1.
  *
- * So catch the module as it is mapped. This is an ADDITIONAL trigger: the
- * present/init paths remain exactly as they were, and if these hooks fail to
- * install nothing changes for the games that already work.
+ * So catch the module as it is mapped. A single bootstrap scan covers providers
+ * that predate the addon; this trigger covers later providers without polling
+ * or enumerating modules from the presentation thread.
  *
  * LOADER LOCK: this callback runs inside LoadLibrary, holding the loader lock.
  * It must never call anything that takes that lock again --
