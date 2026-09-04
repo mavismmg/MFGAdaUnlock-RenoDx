@@ -9,6 +9,11 @@ Nothing on disk is modified. Every patch is applied to the mapped image at
 runtime and reverted when the addon unloads. **No NVIDIA files are redistributed
 here.**
 
+> [!NOTE]
+> The `develop` branch contains experimental work, including the first Vulkan
+> compatibility path and additional runtime diagnostics. For the stable build,
+> use the latest published release from `main`.
+
 ---
 
 ## Attribution
@@ -18,6 +23,20 @@ created by [Dreamt](https://github.com/ImDreamt). Full credit for the original
 implementation goes to Dreamt and the contributors already credited in this
 repository. This fork contains additional compatibility changes and fixes,
 including support and fixes for **S.T.A.L.K.E.R. 2: Heart of Chornobyl**.
+
+## Contents
+
+- [Tested Games](#tested-games)
+- [Requirements](#requirements)
+- [Usage](#usage)
+- [Using with RenoDX DLSS5](#using-with-renodx-dlss5)
+- [Verifying Operation](#verifying-operation)
+- [Experimental Vulkan Support](#experimental-vulkan-support)
+- [Settings](#settings)
+- [Troubleshooting](#troubleshooting)
+- [How it works](#how-it-works)
+- [Building](#building)
+- [Credits](#credits)
 
 ## Tested Games
 
@@ -85,6 +104,92 @@ runtime version.
    on/off Frame Generation option, use **Force frame multiplier** in the
    ReShade **MFG Unlock** addon panel instead.
 
+The latest `nvngx_dlssg.dll` is the normal recommendation when this addon is
+used by itself. When using it together with RenoDX DLSS5, first read the
+version-specific guidance below instead of mixing individual DLLs from
+different packages.
+
+## Using with RenoDX DLSS5
+
+MFG Unlock and the RenoDX DLSS5 addon can work together, but compatibility may
+depend on the complete Streamline and NVIDIA NGX/DLSS runtime combination.
+Their coexistence should not yet be treated as universal across runtime
+versions, games, or load orders.
+
+### Currently reported combinations
+
+| Configuration | Result | Confidence |
+|---|---|---|
+| Streamline 2.12.129 with the corresponding 310.7.129 NVIDIA DLLs | Working together and individually | Known-good user report |
+| Streamline 2.14.0 with 310.9 NVIDIA DLLs | Severe menu slowdown reported in STALKER 2 and Cyberpunk 2077 when both addons were loaded | Under investigation; not confirmed universal |
+
+The report above establishes a useful workaround, but it does not prove that
+Streamline 2.14.0 or the 310.9 provider is independently defective. The cause
+may involve runtime changes, hook/load order, a local-versus-OTA provider
+selection, or an interaction that only occurs when both addons are active.
+
+### Recommended combined setup
+
+1. Follow the RenoDX DLSS5 installation and early-loading instructions. The
+   RenoDX documentation may require its DLSS addon to be listed under
+   `[ADDON] LoadFromDllMain` in `ReShade.ini`.
+2. Keep all Streamline files from one package together. Keep the NVIDIA
+   NGX/DLSS DLLs on the matching build; do not update only one DLL in the set.
+3. Restart the game after every addon, Streamline, or NVIDIA DLL change.
+4. Test MFG Unlock alone, RenoDX DLSS5 alone, and then both together.
+5. If the combined configuration falls into single-digit framerates, use the
+   known-good 2.12.129 / 310.7.129 set while the newer combination is being
+   investigated.
+
+`ForceOTAPlugins=0` means this addon does not force OTA loading. It does not
+prevent the game itself from requesting an OTA provider. Check the ReShade and
+Streamline logs to confirm the actual loaded module paths and versions rather
+than assuming the DLL beside the executable was selected.
+
+Useful information for a compatibility report:
+
+- Game name and version.
+- GPU and driver version.
+- MFG Unlock and RenoDX DLSS5 addon versions.
+- Versions and paths of `sl.interposer.dll`, `sl.dlss_g.dll`,
+  `nvngx_dlssg.dll`, and `nvngx_dlssnr.dll` actually loaded by the process.
+- Selected multiplier and whether the problem also occurs at native 2x.
+- ReShade and Streamline/DLSS-G logs from the same run.
+
+See the current
+[RenoDX installation notes](https://github.com/clshortfuse/renodx/wiki/Mods)
+for its addon-specific loading requirements.
+
+## Verifying Operation
+
+Open ReShade, select the **Add-ons** tab, and open **MFG Unlock**. With DLSS
+Frame Generation enabled in the game, check the following:
+
+- The expected renderer is detected.
+- The DLSS-G provider was found and its architecture gates were rewritten.
+- The temporal fix was applied.
+- `slDLSSGSetOptions` and `slDLSSGGetState` were intercepted.
+- The DLSS-G runtime status is OK.
+- Actual presentation telemetry rises above one when generated frames are
+  active.
+
+The presentation count comes from NVIDIA Streamline's `slDLSSGGetState`. For
+frame-pacing analysis, use NVIDIA FrameView and inspect
+`MsBetweenDisplayChange`; ordinary Present-based counters may not represent the
+final display timing used by DLSS-G.
+
+## Experimental Vulkan Support
+
+The `develop` branch includes an experimental Vulkan compatibility path. It
+recognizes Vulkan NGX providers while keeping the existing renderer-independent
+Streamline `slDLSSGSetOptions` and `slDLSSGGetState` integration.
+
+This does **not** add Frame Generation to games that do not already integrate
+Streamline DLSS-G. Vulkan support has not yet completed the same game matrix as
+Direct3D 12 and should not be considered stable or universal. When testing,
+confirm that the overlay reports **Vulkan (experimental)** and use the
+verification checklist above.
+
 ## Settings
 
 Written to your `ReShade.ini` under `[RenoDX.MFGUnlock]`:
@@ -93,7 +198,7 @@ Written to your `ReShade.ini` under `[RenoDX.MFGUnlock]`:
 |---|---|---|
 | `Enabled` | `1` | Master switch for the whole addon |
 | `MaxCount` | `4` | The `DLSSG.MultiFrameCountMax` value reported to the runtime |
-| `ForceFlipMeteringOff` | `1` | Required for 3x+ on Ada. Leave on |
+| `ForceFlipMeteringOff` | `0` | Normally leave off. Enable only if 3x/4x freezes; this forces Streamline's legacy software pacing fallback and requires a game restart |
 | `TemporalFix` | `1` | The interpolation correction. Leave on |
 | `ForceMultiplier` | `0` | `0` respects the game's own choice; `2`–`6` forces that multiplier |
 | `RaiseFrameCeiling` | `0` | Raises an old Streamline plugin's compiled hard limit to 6x. Off by default because that breaks some games; the stale device-limit bypass needed by STALKER 2 is always applied |
@@ -101,6 +206,46 @@ Written to your `ReShade.ini` under `[RenoDX.MFGUnlock]`:
 
 If a game has its own multiplier selector, leave `ForceMultiplier` at `0` and use
 the game's setting.
+
+## Troubleshooting
+
+### The addon does not appear in ReShade
+
+- Confirm that ReShade was installed with full addon support.
+- Confirm that the `.addon64` file is in the addon location used by that game.
+- Check the ReShade log for an addon loading or API-version error.
+
+### Only Automatic or 2x appears
+
+- Toggle Frame Generation off and on after the game reaches its graphics menu.
+- Confirm that the DLSS-G provider and Streamline hooks are shown as active in
+  the MFG Unlock panel.
+- Confirm that the game is loading the expected `nvngx_dlssg.dll`, including
+  its full path and version in the log.
+
+### 3x/4x appears but generated frames are not confirmed
+
+- Check the `slDLSSGGetState` result and DLSS-G status displayed in the addon.
+- Check whether actual presentation telemetry exceeds one.
+- Look for Streamline or NGX errors before changing the forced multiplier.
+
+### The image freezes or pacing becomes unusable at 3x/4x
+
+- First leave **Force legacy software flip pacing** disabled with current
+  Streamline builds.
+- If the image freezes specifically at higher multipliers, enable the
+  compatibility option and fully restart the game.
+- Measure final presentation pacing with FrameView rather than relying only on
+  a Present-based overlay graph.
+
+### Performance collapses when RenoDX DLSS5 is also installed
+
+- Follow the [Using with RenoDX DLSS5](#using-with-renodx-dlss5) section.
+- Test each addon individually and restart between tests.
+- Use a complete matched runtime set; do not replace only one Streamline or
+  NVIDIA DLL.
+- Record the actual loaded module paths because an OTA provider may override a
+  local DLL.
 
 ## How it works
 
@@ -127,9 +272,12 @@ not get smoother. The addon decompresses the kernel's PTX, rewrites the blend
 weight to come from the kernel's own temporal parameter, and re-emits the fatbin
 so the driver JITs the corrected version.
 
-Blackwell paces multi-frame output with hardware flip metering Ada does not have;
-left enabled it freezes the presented image. Streamline already ships a software
-fallback, so the addon forces the plugin down it.
+DLSS-G owns frame generation and presentation pacing; this addon does not
+implement a separate frame scheduler or issue generated-frame presents. With
+current Streamline builds, pacing is normally left to the runtime. The optional
+legacy compatibility setting disables the plugin's flip-metering path and
+forces its existing software fallback only when higher multipliers otherwise
+freeze presentation.
 
 Each source file documents its own area in detail — start with the header comment
 in [`addon.cpp`](src/addons/mfgunlock/addon.cpp).
