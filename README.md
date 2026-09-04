@@ -21,8 +21,29 @@ here.**
 This repository is a fork of the [original project](https://github.com/ImDreamt/MFGAdaUnlock-RenoDx)
 created by [Dreamt](https://github.com/ImDreamt). Full credit for the original
 implementation goes to Dreamt and the contributors already credited in this
-repository. This fork contains additional compatibility changes and fixes,
-including support and fixes for **S.T.A.L.K.E.R. 2: Heart of Chornobyl**.
+repository.
+
+This fork expands the original project with broader game and runtime
+compatibility work. Its additions include:
+
+- Support and fixes for **S.T.A.L.K.E.R. 2: Heart of Chornobyl**, including its
+  native 3x/4x selector and bundled/OTA provider handling.
+- Temporal-patch compatibility with newer 310.9 DLSS-G providers.
+- Safer ReShade addon lifecycle handling across temporary device probing and
+  addon reloads.
+- Bounded background provider discovery, removing continuous module enumeration
+  from the active `Present` path.
+- Additional compatibility controls for Streamline flip metering and software
+  pacing fallback behavior.
+- Runtime diagnostics using `slDLSSGSetOptions` and `slDLSSGGetState`, including
+  requested multipliers, DLSS-G status, and actual presentation telemetry.
+- Experimental Vulkan renderer and NGX provider discovery on the `develop`
+  branch.
+- Compatibility testing and documentation across the games and runtime
+  combinations listed below.
+
+These additions extend Dreamt's work; they do not replace or claim authorship
+of the original implementation.
 
 ## Contents
 
