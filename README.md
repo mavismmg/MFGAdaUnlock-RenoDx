@@ -96,6 +96,7 @@ replace or claim authorship of either original contribution.
 | Hell Is Us | Working |
 | Silent Hill 2 | Working |
 | Forza Horizon 6 | Working |
+| Assassin's Creed Shadows | Working |
 
 These are the games personally tested with this fork; this is not a claim of
 universal compatibility. Results may vary with the game version, DLSS and
