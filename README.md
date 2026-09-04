@@ -34,7 +34,7 @@ including support and fixes for **S.T.A.L.K.E.R. 2: Heart of Chornobyl**.
 | Cyberpunk 2077 | Working |
 | Alan Wake 2 | Working |
 | Dragon's Dogma 2 | Working |
-| The Blood of Dawnwalker | Working |
+| The Blood of Dawnwalker | Maybe |
 | Starfield | Working |
 | Star Wars Outlaws | Working |
 | Marvel's Spider-Man 2 | Working |
