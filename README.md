@@ -10,9 +10,9 @@ runtime and reverted when the addon unloads. **No NVIDIA files are redistributed
 here.**
 
 > [!NOTE]
-> The `develop` branch contains experimental work, including the first Vulkan
-> compatibility path and additional runtime diagnostics. For the stable build,
-> use the latest published release from `main`.
+> Vulkan support is new in version 0.6 and remains experimental while its game
+> compatibility matrix grows. Direct3D 12 behavior remains the established
+> path.
 
 ---
 
@@ -48,8 +48,7 @@ compatibility work. Its additions include:
   pacing fallback behavior.
 - Runtime diagnostics using `slDLSSGSetOptions` and `slDLSSGGetState`, including
   requested multipliers, DLSS-G status, and actual presentation telemetry.
-- Experimental Vulkan renderer and NGX provider discovery on the `develop`
-  branch.
+- Experimental Vulkan renderer and NGX provider discovery.
 - Compatibility testing and documentation across the games and runtime
   combinations listed below.
 
@@ -219,9 +218,9 @@ final display timing used by DLSS-G.
 
 ## Experimental Vulkan Support
 
-The `develop` branch includes an experimental Vulkan compatibility path. It
-recognizes Vulkan NGX providers while keeping the existing renderer-independent
-Streamline `slDLSSGSetOptions` and `slDLSSGGetState` integration.
+Version 0.6 introduces an experimental Vulkan compatibility path. It recognizes
+Vulkan NGX providers while keeping the existing renderer-independent Streamline
+`slDLSSGSetOptions` and `slDLSSGGetState` integration.
 
 This does **not** add Frame Generation to games that do not already integrate
 Streamline DLSS-G. Vulkan support has not yet completed the same game matrix as
