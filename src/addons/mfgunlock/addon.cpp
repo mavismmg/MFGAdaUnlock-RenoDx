@@ -489,6 +489,10 @@ bool HasKnownDlssgPath(HMODULE mod) {
 }
 
 bool IsDlssgProvider(HMODULE mod) {
+  // Keep the established D3D/OTA path as the fast path. Vulkan-specific export
+  // checks are only needed when a game has renamed or relocated the provider.
+  if (HasKnownDlssgPath(mod)) return true;
+
   // A renamed provider may expose either graphics backend. Streamline's
   // slDLSSGSetOptions/slDLSSGGetState interface is renderer-independent, so
   // discovery must not discard Vulkan snippets before the shared patch path
@@ -497,10 +501,6 @@ bool IsDlssgProvider(HMODULE mod) {
       GetProcAddress(mod, "NVSDK_NGX_D3D12_PopulateDeviceParameters_Impl") != nullptr;
   const bool has_vulkan_entry =
       GetProcAddress(mod, "NVSDK_NGX_VULKAN_PopulateDeviceParameters_Impl") != nullptr;
-
-  // These paths are unambiguous and include NVIDIA's opaque OTA .bin, which
-  // does not carry the older "dlfg_kernel" marker in current driver builds.
-  if (HasKnownDlssgPath(mod)) return true;
 
   // Retain content-based discovery for games that rename or relocate the
   // snippet, but only scan modules exposing an NGX provider entry point.

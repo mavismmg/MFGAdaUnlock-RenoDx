@@ -64,6 +64,8 @@ inline std::atomic<unsigned int> g_native_result{0};
 inline std::atomic_bool g_state_seen{false};
 inline std::atomic<unsigned int> g_state_result{0};
 inline std::atomic<unsigned int> g_dlssg_status{0};
+inline std::atomic_bool g_status_ok_logged{false};
+inline std::atomic<unsigned int> g_seen_status_flags{0};
 inline std::atomic<unsigned int> g_actual_frames_presented{0};
 inline std::atomic<unsigned int> g_max_actual_frames_presented{0};
 inline std::atomic<unsigned long long> g_state_samples{0};
@@ -271,8 +273,7 @@ inline sl::Result HookedGetState(const sl::ViewportHandle& viewport, sl::DLSSGSt
   g_state_result.store(raw_result, std::memory_order_relaxed);
   if (result == sl::Result::eOk) {
     const unsigned int status = static_cast<unsigned int>(state.status);
-    const unsigned int previous_status =
-        g_dlssg_status.exchange(status, std::memory_order_relaxed);
+    g_dlssg_status.store(status, std::memory_order_relaxed);
     const unsigned int presented = state.numFramesActuallyPresented;
     const unsigned int previous =
         g_actual_frames_presented.exchange(presented, std::memory_order_relaxed);
@@ -283,7 +284,15 @@ inline sl::Result HookedGetState(const sl::ViewportHandle& viewport, sl::DLSSGSt
     }
     g_state_samples.fetch_add(1, std::memory_order_relaxed);
     const bool first = !g_state_seen.exchange(true, std::memory_order_relaxed);
-    if (first || previous_status != status) {
+    bool log_status = false;
+    if (status == 0) {
+      log_status = !g_status_ok_logged.exchange(true, std::memory_order_relaxed);
+    } else {
+      const unsigned int previously_seen =
+          g_seen_status_flags.fetch_or(status, std::memory_order_relaxed);
+      log_status = (previously_seen & status) != status;
+    }
+    if (log_status) {
       std::stringstream s;
       s << "mfgunlock: slDLSSGGetState runtime status is 0x" << std::hex << status << std::dec
         << (status == 0 ? " (OK)." : " (DLSS-G reported one or more failure flags).");
