@@ -97,6 +97,10 @@ replace or claim authorship of either original contribution.
 | Silent Hill 2 | Working |
 | Forza Horizon 6 | Working |
 | Assassin's Creed Shadows | Working |
+| Stellar Blade | Working |
+| Doom the Dark Ages | Working — launch with `+r_allowBlackListedLayers 1` so ReShade can load through Vulkan |
+| Horizon Forbidden West | Working |
+| 007 The First Light | Working |
 
 These are the games personally tested with this fork; this is not a claim of
 universal compatibility. Results may vary with the game version, DLSS and
