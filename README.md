@@ -105,6 +105,7 @@ replace or claim authorship of either original contribution.
 | Borderlands 4 | Working |
 | Payday 3 | Working |
 | Ghost of Tsushima | Working |
+| Crimson Desert | Maybe |
 
 These are the games personally tested with this fork; this is not a claim of
 universal compatibility. Results may vary with the game version, DLSS and
