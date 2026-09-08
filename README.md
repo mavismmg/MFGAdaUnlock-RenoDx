@@ -104,6 +104,7 @@ replace or claim authorship of either original contribution.
 | Avatar: Frontiers of Pandora | Working |
 | Borderlands 4 | Working |
 | Payday 3 | Working |
+| Ghost of Tsushima | Working |
 
 These are the games personally tested with this fork; this is not a claim of
 universal compatibility. Results may vary with the game version, DLSS and
