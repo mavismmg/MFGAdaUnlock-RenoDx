@@ -133,7 +133,8 @@ runtime version.
 
 ## Requirements
 
-- **GeForce RTX 40-series.** See [Why not 30-series?](#why-not-30-series) below.
+- **GeForce RTX 40-series.** For the separate RTX 30-series solution, see
+  [RTX 30-series support](#rtx-30-series-support) below.
 - ReShade with addon support (this is an `.addon64`, not an effect).
 - A game shipping DLSS frame generation via Streamline, with a reasonably modern
   `nvngx_dlssg.dll` (310.x). Games still on the DLSS 3 snippet (3.5.x) contain no
@@ -385,21 +386,21 @@ freeze presentation.
 Each source file documents its own area in detail — start with the header comment
 in [`addon.cpp`](src/addons/mfgunlock/addon.cpp).
 
-## Why not 30-series?
+## RTX 30-series support
 
-Not because of the gates — those are just constants. Because the DLSS 4 snippet
-ships **no Ampere machine code**. Its 70 fatbins carry `PTX sm_89` ×70,
-`PTX sm_120` ×31 and `cubin sm_89` ×31, and nothing for sm_80/sm_86. PTX is
-forward-compatible only, so sm_89 PTX cannot be JIT-compiled down to sm_86; the
-module load fails outright.
+RTX 30-series support is now available through
+[sdli1995's separate `dlssg_for_sm86` project](https://github.com/sdli1995/dlssg_for_sm86).
+It provides a dedicated SM86 backend and proxy runtime instead of relying on the
+Ada/Blackwell kernels shipped in the standard DLSS-G runtime.
 
-Retargeting is *theoretically* open — the kernels use only
-`mma.sync m16n8k16/m16n8k8` FP16 and `ldmatrix`, with zero instructions newer
-than sm_86 (no FP8, no wgmma, no TMA), and the old hardware optical-flow
-dependency is gone in DLSS 4. But frame generation costs roughly a fixed amount
-per generated frame, and Ampere has far less FP16 tensor throughput per SM, so
-the generation pass would likely cost more than the frame it saves. It was
-investigated and deliberately dropped.
+The project's first milestone documents validation on an RTX 3080 Ti with
+Direct3D 12, including native 2x/4x operation in Black Myth: Wukong and
+Cyberpunk 2077. Follow that repository's installation, compatibility, and
+runtime-version instructions for RTX 30-series use.
+
+`dlssg_for_sm86` is an independent implementation and is not bundled with or
+maintained by this fork. MFG Unlock itself remains targeted at RTX 40-series
+GPUs.
 
 ## Building
 
@@ -439,6 +440,10 @@ They are developer tools and are not required for normal use.
   output digest byte-for-byte.
 - [Dreamt](https://github.com/ImDreamt) created the original ReShade/RenoDX addon
   adaptation and repository from which this project is forked.
+- [sdli1995](https://github.com/sdli1995) developed the separate
+  [`dlssg_for_sm86`](https://github.com/sdli1995/dlssg_for_sm86) implementation
+  that brings DLSS-G multi-frame generation to supported RTX 30-series/SM86
+  configurations.
 - Special thanks to [mugensc](https://next.nexusmods.com/profile/mugensc) for the
   RenoDX DLSS5 compatibility testing and known-good runtime combination.
 - Special thanks to Artur from DLSS Enabler for the valuable debugging insights
