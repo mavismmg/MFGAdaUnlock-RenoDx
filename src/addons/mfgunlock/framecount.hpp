@@ -36,16 +36,24 @@
 
 #include <windows.h>
 
+#include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstring>
+#include <limits>
 #include <sstream>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 #include <sl.h>
 #include <sl_dlss_g.h>
 
 #include <include/reshade.hpp>
 
+#include "./hdr_compat.hpp"
 #include "./ngx_hook.hpp"
+#include "./quality_guard.hpp"
 
 namespace mfgunlock::framecount {
 
@@ -70,6 +78,40 @@ inline std::atomic<unsigned int> g_actual_frames_presented{0};
 inline std::atomic<unsigned int> g_max_actual_frames_presented{0};
 inline std::atomic<unsigned long long> g_state_samples{0};
 inline std::atomic<unsigned int> g_seen_present_counts{0};
+
+// Some games submit HUD-less/UI resources in a color space which does not
+// match their final HDR color buffer. The resulting invalid separation mask
+// can create halos, ghosting and edge artifacts in every generated frame.
+// Quality Guard is the conservative default. In HDR it uses final color rather
+// than an untrusted optional HUD split. In SDR it suppresses the optional split
+// only when dimensions, format or resource metadata prove it invalid. Required
+// color, depth and motion-vector inputs and frame pacing are never rewritten.
+enum class HdrCompatibilityMode : unsigned int {
+  kNative = 0,
+  kUiRecomposition = 1,
+  kFinalColorFallback = 2,
+};
+inline std::atomic<unsigned int> g_hdr_compatibility_mode{
+    static_cast<unsigned int>(HdrCompatibilityMode::kFinalColorFallback)};
+inline std::atomic_bool g_hdr_active{false};
+inline std::atomic_bool g_ui_recomposition_applied{false};
+inline std::atomic_bool g_ui_recomposition_fell_back{false};
+inline std::atomic<unsigned int> g_ui_recomposition_source_version{0};
+inline std::atomic<unsigned int> g_ui_recomposition_result{0};
+inline std::atomic_bool g_hud_inputs_suppressed{false};
+inline std::atomic<unsigned long long> g_hud_suppression_calls{0};
+inline std::atomic<uint32_t> g_quality_issue_mask{0};
+inline std::atomic<unsigned long long> g_quality_resets_requested{0};
+inline std::atomic<unsigned long long> g_quality_resets_injected{0};
+inline std::atomic_bool g_hdr_state_seen{false};
+inline std::atomic_bool g_quality_reset_logged{false};
+// Optional DLSS-G depth-discontinuity tuning. NVIDIA's documented default is
+// 40.0; smaller values can help when the game's linear depth is compressed.
+// It is disabled by default because the best value is integration-specific.
+inline std::atomic<unsigned int> g_depth_edge_guard_level{0};
+inline std::atomic_bool g_depth_edge_override_applied{false};
+inline std::atomic_bool g_depth_edge_override_logged{false};
+inline std::atomic<float> g_last_native_depth_separation{0.0f};
 
 // Published by addon.cpp only after the active Streamline wrapper's pacing and
 // hard ceiling have both been verified. Games such as STALKER 2 build their
@@ -104,11 +146,349 @@ using GetStateFn =
     sl::Result (*)(const sl::ViewportHandle&, sl::DLSSGState&, const sl::DLSSGOptions*);
 using GetFeatureFunctionFn = sl::Result (*)(sl::Feature, const char*, void*&);
 using InitFn = sl::Result (*)(const sl::Preferences&, uint64_t);
+using SetTagFn = sl::Result (*)(const sl::ViewportHandle&, const sl::ResourceTag*, uint32_t,
+                               sl::CommandBuffer*);
+using SetTagForFrameFn = PFun_slSetTagForFrame*;
+using SetConstantsFn = PFun_slSetConstants*;
 
 inline SetOptionsFn g_real_set_options = nullptr;
 inline GetStateFn g_real_get_state = nullptr;
 inline GetFeatureFunctionFn g_real_get_feature_function = nullptr;
 inline InitFn g_real_init = nullptr;
+inline SetTagFn g_real_set_tag = nullptr;
+inline SetTagForFrameFn g_real_set_tag_for_frame = nullptr;
+inline SetConstantsFn g_real_set_constants = nullptr;
+
+constexpr uint32_t kUnusedViewport = (std::numeric_limits<uint32_t>::max)();
+struct QualityViewportState {
+  std::atomic<uint32_t> key{kUnusedViewport};
+  std::atomic_bool options_seen{false};
+  std::atomic<uint32_t> mode{0};
+  std::atomic<uint32_t> generated_frames{0};
+  std::atomic<uint32_t> flags{0};
+  std::atomic<uint32_t> color_width{0};
+  std::atomic<uint32_t> color_height{0};
+  std::atomic<uint32_t> color_format{0};
+  std::atomic<uint32_t> mvec_width{0};
+  std::atomic<uint32_t> mvec_height{0};
+  std::atomic<uint32_t> backbuffer_width{0};
+  std::atomic<uint32_t> backbuffer_height{0};
+  std::atomic<uint32_t> backbuffer_format{0};
+  std::atomic_bool hud_separation_seen{false};
+  std::atomic_bool hud_separation_suppressed{false};
+  std::atomic<uint64_t> reset_requested{0};
+  std::atomic<uint64_t> reset_applied{0};
+};
+inline std::array<QualityViewportState, 8> g_quality_viewports{};
+
+inline QualityViewportState* GetQualityState(const sl::ViewportHandle& viewport) {
+  const uint32_t key = static_cast<uint32_t>(viewport);
+  for (auto& state : g_quality_viewports) {
+    if (state.key.load(std::memory_order_acquire) == key) return &state;
+  }
+  for (auto& state : g_quality_viewports) {
+    uint32_t unused = kUnusedViewport;
+    if (state.key.compare_exchange_strong(unused, key, std::memory_order_acq_rel))
+      return &state;
+    if (unused == key) return &state;
+  }
+  return nullptr;
+}
+
+inline void RequestReset(QualityViewportState* state) {
+  if (state == nullptr) return;
+  state->reset_requested.fetch_add(1, std::memory_order_release);
+  g_quality_resets_requested.fetch_add(1, std::memory_order_relaxed);
+}
+
+inline void RequestAllResets() {
+  for (auto& state : g_quality_viewports) {
+    if (state.key.load(std::memory_order_acquire) != kUnusedViewport)
+      RequestReset(&state);
+  }
+}
+
+inline void ForgetOutputDescriptions() {
+  for (auto& state : g_quality_viewports) {
+    state.backbuffer_width.store(0, std::memory_order_relaxed);
+    state.backbuffer_height.store(0, std::memory_order_relaxed);
+    state.backbuffer_format.store(0, std::memory_order_relaxed);
+    state.hud_separation_seen.store(false, std::memory_order_relaxed);
+    state.hud_separation_suppressed.store(false, std::memory_order_relaxed);
+  }
+}
+
+inline void ObserveOptionsTransition(const sl::ViewportHandle& viewport,
+                                     const sl::DLSSGOptions& options,
+                                     uint32_t generated_frames) {
+  QualityViewportState* state = GetQualityState(viewport);
+  if (state == nullptr) return;
+
+  const uint32_t mode = static_cast<uint32_t>(options.mode);
+  const uint32_t flags = static_cast<uint32_t>(options.flags);
+  const bool changed = state->options_seen.load(std::memory_order_acquire) &&
+      (state->mode.load(std::memory_order_relaxed) != mode ||
+       state->generated_frames.load(std::memory_order_relaxed) != generated_frames ||
+       state->flags.load(std::memory_order_relaxed) != flags ||
+       state->color_width.load(std::memory_order_relaxed) != options.colorWidth ||
+       state->color_height.load(std::memory_order_relaxed) != options.colorHeight ||
+       state->color_format.load(std::memory_order_relaxed) != options.colorBufferFormat ||
+       state->mvec_width.load(std::memory_order_relaxed) != options.mvecDepthWidth ||
+       state->mvec_height.load(std::memory_order_relaxed) != options.mvecDepthHeight);
+
+  state->mode.store(mode, std::memory_order_relaxed);
+  state->generated_frames.store(generated_frames, std::memory_order_relaxed);
+  state->flags.store(flags, std::memory_order_relaxed);
+  state->color_width.store(options.colorWidth, std::memory_order_relaxed);
+  state->color_height.store(options.colorHeight, std::memory_order_relaxed);
+  state->color_format.store(options.colorBufferFormat, std::memory_order_relaxed);
+  state->mvec_width.store(options.mvecDepthWidth, std::memory_order_relaxed);
+  state->mvec_height.store(options.mvecDepthHeight, std::memory_order_relaxed);
+  state->options_seen.store(true, std::memory_order_release);
+  if (changed &&
+      g_hdr_compatibility_mode.load(std::memory_order_relaxed) ==
+          static_cast<unsigned int>(HdrCompatibilityMode::kFinalColorFallback)) {
+    RequestReset(state);
+  }
+}
+
+inline qualityguard::OutputDescription ExpectedOutput(const QualityViewportState* state) {
+  if (state == nullptr) return {};
+  qualityguard::OutputDescription result{
+      state->backbuffer_width.load(std::memory_order_relaxed),
+      state->backbuffer_height.load(std::memory_order_relaxed),
+      state->backbuffer_format.load(std::memory_order_relaxed)};
+  if (!result.HasDimensions()) {
+    result.width = state->color_width.load(std::memory_order_relaxed);
+    result.height = state->color_height.load(std::memory_order_relaxed);
+  }
+  if (!result.HasFormat())
+    result.format = state->color_format.load(std::memory_order_relaxed);
+  return result;
+}
+
+inline float DepthSeparationForLevel(unsigned int level) {
+  switch (level) {
+    case 1:
+      return 20.0f;
+    case 2:
+      return 10.0f;
+    case 3:
+      return 4.0f;
+    case 4:
+      return 1.0f;
+    default:
+      return 0.0f;
+  }
+}
+
+inline sl::Result CallSetOptions(const sl::ViewportHandle& viewport,
+                                 const sl::DLSSGOptions& options,
+                                 uint32_t generated_frames = 0,
+                                 bool override_generated_frames = false) {
+  ObserveOptionsTransition(viewport, options,
+                           override_generated_frames ? generated_frames
+                                                     : options.numFramesToGenerate);
+  const bool recompose =
+                         g_hdr_compatibility_mode.load(std::memory_order_relaxed) ==
+                             static_cast<unsigned int>(HdrCompatibilityMode::kUiRecomposition) &&
+                         g_hdr_active.load(std::memory_order_relaxed) &&
+                         options.mode != sl::DLSSGMode::eOff;
+
+  if (recompose) {
+    sl::DLSSGOptions forwarded{};
+    if (hdrcompat::BuildUiRecompositionOptions(
+            options, forwarded, generated_frames, override_generated_frames)) {
+      g_ui_recomposition_source_version.store(
+          static_cast<unsigned int>(options.structVersion), std::memory_order_relaxed);
+      const sl::Result result = g_real_set_options(viewport, forwarded);
+      g_ui_recomposition_result.store(static_cast<unsigned int>(result),
+                                      std::memory_order_relaxed);
+      if (result == sl::Result::eOk) {
+        if (!g_ui_recomposition_applied.exchange(true, std::memory_order_relaxed)) {
+          std::stringstream s;
+          s << "mfgunlock: HDR UI recomposition enabled; promoted DLSSGOptions v"
+            << options.structVersion << " to v" << forwarded.structVersion
+            << " while preserving the game's " << forwarded.numFramesToGenerate
+            << " generated-frame request.";
+          reshade::log::message(reshade::log::level::info, s.str().c_str());
+        }
+        return result;
+      }
+
+      if (!g_ui_recomposition_fell_back.exchange(true, std::memory_order_relaxed)) {
+        std::stringstream s;
+        s << "mfgunlock: HDR UI recomposition was rejected with sl::Result "
+          << static_cast<unsigned int>(result)
+          << "; retrying the original options so native frame generation remains available.";
+        reshade::log::message(reshade::log::level::warning, s.str().c_str());
+      }
+    }
+  }
+
+  if (!override_generated_frames) return g_real_set_options(viewport, options);
+
+  auto& mutable_options = const_cast<sl::DLSSGOptions&>(options);
+  const uint32_t original = mutable_options.numFramesToGenerate;
+  mutable_options.numFramesToGenerate = generated_frames;
+  const sl::Result result = g_real_set_options(viewport, options);
+  mutable_options.numFramesToGenerate = original;
+  return result;
+}
+
+template <typename Forward>
+inline sl::Result FilterHudSeparationTags(const sl::ViewportHandle& viewport,
+                                          const sl::ResourceTag* tags, uint32_t count,
+                                          Forward&& forward) {
+  const bool filter =
+      g_hdr_compatibility_mode.load(std::memory_order_relaxed) ==
+          static_cast<unsigned int>(HdrCompatibilityMode::kFinalColorFallback);
+  if (!filter || tags == nullptr || count == 0 || count > 64)
+    return forward(tags);
+
+  QualityViewportState* state = GetQualityState(viewport);
+  const qualityguard::Assessment assessment = qualityguard::AssessTags(
+      tags, count, g_hdr_active.load(std::memory_order_relaxed), ExpectedOutput(state));
+  if (state != nullptr) {
+    bool output_changed = false;
+    if (assessment.observed_backbuffer.HasDimensions()) {
+      const uint32_t previous_width =
+          state->backbuffer_width.load(std::memory_order_relaxed);
+      const uint32_t previous_height =
+          state->backbuffer_height.load(std::memory_order_relaxed);
+      output_changed = (previous_width != 0 && previous_height != 0) &&
+                       (previous_width != assessment.observed_backbuffer.width ||
+                        previous_height != assessment.observed_backbuffer.height);
+      state->backbuffer_width.store(assessment.observed_backbuffer.width,
+                                    std::memory_order_relaxed);
+      state->backbuffer_height.store(assessment.observed_backbuffer.height,
+                                     std::memory_order_relaxed);
+    }
+    if (assessment.observed_backbuffer.HasFormat()) {
+      const uint32_t previous_format =
+          state->backbuffer_format.load(std::memory_order_relaxed);
+      output_changed = output_changed ||
+                       (previous_format != 0 &&
+                        previous_format != assessment.observed_backbuffer.format);
+      state->backbuffer_format.store(assessment.observed_backbuffer.format,
+                                     std::memory_order_relaxed);
+    }
+    if (output_changed) RequestReset(state);
+
+    // Changing between an optional HUD split and final-color input invalidates
+    // the temporal history just as a resolution change does. Only observe tag
+    // calls that actually contain HUD/UI resources because games may submit
+    // required resources in separate batches.
+    if (assessment.has_hud_separation) {
+      const bool was_seen =
+          state->hud_separation_seen.exchange(true, std::memory_order_acq_rel);
+      const bool was_suppressed = state->hud_separation_suppressed.exchange(
+          assessment.suppress_hud_separation, std::memory_order_acq_rel);
+      if ((!was_seen && assessment.suppress_hud_separation) ||
+          (was_seen && was_suppressed != assessment.suppress_hud_separation)) {
+        RequestReset(state);
+      }
+    }
+  }
+  if (!assessment.suppress_hud_separation) return forward(tags);
+
+  static_assert(std::is_trivially_copyable_v<sl::ResourceTag>);
+  alignas(sl::ResourceTag)
+      std::array<std::byte, sizeof(sl::ResourceTag) * 64> storage;
+  std::memcpy(storage.data(), tags, sizeof(sl::ResourceTag) * count);
+  auto* forwarded = reinterpret_cast<sl::ResourceTag*>(storage.data());
+  const uint32_t suppressed = hdrcompat::SuppressHudSeparationResources(forwarded, count);
+  if (suppressed == 0) return forward(tags);
+
+  g_hud_suppression_calls.fetch_add(1, std::memory_order_relaxed);
+  const uint32_t previous_issues =
+      g_quality_issue_mask.fetch_or(assessment.issues, std::memory_order_relaxed);
+  if (!g_hud_inputs_suppressed.exchange(true, std::memory_order_relaxed)) {
+    reshade::log::message(
+        reshade::log::level::info,
+        "mfgunlock: Quality Guard is active; incompatible optional HUD-less/UI tags are cleared before Streamline while color, depth, motion vectors, multiplier and pacing are preserved.");
+  }
+  if ((assessment.issues & ~previous_issues) != 0) {
+    std::stringstream s;
+    s << "mfgunlock: Quality Guard observed new optional-input issue mask 0x"
+      << std::hex << assessment.issues << std::dec
+      << "; using final color for this tag submission.";
+    reshade::log::message(reshade::log::level::info, s.str().c_str());
+  }
+  return forward(forwarded);
+}
+
+inline sl::Result HookedSetTag(const sl::ViewportHandle& viewport,
+                               const sl::ResourceTag* tags, uint32_t count,
+                               sl::CommandBuffer* command_buffer) {
+  if (g_real_set_tag == nullptr) return sl::Result::eErrorNotInitialized;
+  return FilterHudSeparationTags(viewport, tags, count, [&](const sl::ResourceTag* forwarded) {
+    return g_real_set_tag(viewport, forwarded, count, command_buffer);
+  });
+}
+
+inline sl::Result HookedSetTagForFrame(const sl::FrameToken& frame,
+                                       const sl::ViewportHandle& viewport,
+                                       const sl::ResourceTag* tags, uint32_t count,
+                                       sl::CommandBuffer* command_buffer) {
+  if (g_real_set_tag_for_frame == nullptr) return sl::Result::eErrorNotInitialized;
+  return FilterHudSeparationTags(viewport, tags, count, [&](const sl::ResourceTag* forwarded) {
+    return g_real_set_tag_for_frame(frame, viewport, forwarded, count, command_buffer);
+  });
+}
+
+inline sl::Result HookedSetConstants(const sl::Constants& values,
+                                     const sl::FrameToken& frame,
+                                     const sl::ViewportHandle& viewport) {
+  if (g_real_set_constants == nullptr) return sl::Result::eErrorNotInitialized;
+
+  QualityViewportState* state = GetQualityState(viewport);
+  if (state == nullptr || !state->options_seen.load(std::memory_order_acquire) ||
+      state->mode.load(std::memory_order_relaxed) ==
+          static_cast<uint32_t>(sl::DLSSGMode::eOff)) {
+    return g_real_set_constants(values, frame, viewport);
+  }
+  const uint64_t requested = state->reset_requested.load(std::memory_order_acquire);
+  const bool reset_pending =
+      requested != state->reset_applied.load(std::memory_order_relaxed);
+  const float depth_override = DepthSeparationForLevel(
+      g_depth_edge_guard_level.load(std::memory_order_relaxed));
+  const bool override_depth = values.structVersion >= sl::kStructVersion2 &&
+                              depth_override > 0.0f;
+  if (!reset_pending && !override_depth)
+    return g_real_set_constants(values, frame, viewport);
+
+  alignas(sl::Constants) std::array<std::byte, sizeof(sl::Constants)> storage{};
+  if (!qualityguard::CopyConstantsWithQualityOverrides(
+          values, storage.data(), storage.size(),
+          reset_pending && values.reset != sl::Boolean::eTrue, depth_override)) {
+    return g_real_set_constants(values, frame, viewport);
+  }
+  const sl::Result result = g_real_set_constants(
+      *reinterpret_cast<const sl::Constants*>(storage.data()), frame, viewport);
+  if (result == sl::Result::eOk && override_depth) {
+    g_last_native_depth_separation.store(
+        values.minRelativeLinearDepthObjectSeparation, std::memory_order_relaxed);
+    g_depth_edge_override_applied.store(true, std::memory_order_relaxed);
+    if (!g_depth_edge_override_logged.exchange(true, std::memory_order_relaxed)) {
+      std::stringstream s;
+      s << "mfgunlock: optional DLSS-G depth-edge guard is active (game "
+        << values.minRelativeLinearDepthObjectSeparation << ", forwarded "
+        << depth_override << ").";
+      reshade::log::message(reshade::log::level::info, s.str().c_str());
+    }
+  }
+  if (result == sl::Result::eOk && reset_pending) {
+    state->reset_applied.store(requested, std::memory_order_release);
+    g_quality_resets_injected.fetch_add(1, std::memory_order_relaxed);
+    if (!g_quality_reset_logged.exchange(true, std::memory_order_relaxed)) {
+      reshade::log::message(
+          reshade::log::level::info,
+          "mfgunlock: Quality Guard synchronized Streamline temporal history after an HDR, swapchain, resolution or multiplier transition.");
+    }
+  }
+  return result;
+}
 
 // Which sl.dlss_g the game ends up using is decided here, not on disk.
 //
@@ -162,7 +542,7 @@ inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
 
   const unsigned int multiplier = g_force_multiplier.load(std::memory_order_relaxed);
   if (multiplier < 2 || options.mode == sl::DLSSGMode::eOff) {
-    const sl::Result result = g_real_set_options(viewport, options);
+    const sl::Result result = CallSetOptions(viewport, options);
     if (options.mode != sl::DLSSGMode::eOff) {
       const unsigned int requested = options.numFramesToGenerate;
       const unsigned int previous = g_native_requested.exchange(requested, std::memory_order_relaxed);
@@ -185,7 +565,7 @@ inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
   const uint32_t desired = multiplier - 1;  // generated frames, not total
   const uint32_t requested = options.numFramesToGenerate;
   g_last_requested.store(requested, std::memory_order_relaxed);
-  if (requested >= desired) return g_real_set_options(viewport, options);
+  if (requested >= desired) return CallSetOptions(viewport, options);
 
   // More than one generated frame needs software pacing. The plugin is loaded
   // by now, so this is our last and best chance to patch it.
@@ -201,17 +581,14 @@ inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
             "asking for more than one generated frame without software pacing freezes "
             "presentation. Leaving the game's own request alone.");
       }
-      return g_real_set_options(viewport, options);
+      return CallSetOptions(viewport, options);
     }
   }
 
-  // Raise it for the duration of the call, then restore. The caller owns this
-  // struct and may well reuse it; leaving it modified would be a side effect
-  // nobody asked for.
-  auto& mutable_options = const_cast<sl::DLSSGOptions&>(options);
-  mutable_options.numFramesToGenerate = desired;
-  sl::Result result = g_real_set_options(viewport, options);
-  mutable_options.numFramesToGenerate = requested;
+  // Forward through a local upgraded structure when HDR recomposition is
+  // active. The native fallback temporarily changes only the requested count
+  // and restores the game-owned structure before returning.
+  sl::Result result = CallSetOptions(viewport, options, desired, true);
 
   // A rejected call means frame generation just stays off, which looks exactly
   // like "the mod broke FG". Never leave the game worse than we found it: if
@@ -223,9 +600,7 @@ inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
     // count: if that succeeds the first failure was transient state, and
     // dropping straight back to the game's request would have silently given up
     // a working 4x. Only if the retry fails too is the count really refused.
-    mutable_options.numFramesToGenerate = desired;
-    const sl::Result retry = g_real_set_options(viewport, options);
-    mutable_options.numFramesToGenerate = requested;
+    const sl::Result retry = CallSetOptions(viewport, options, desired, true);
 
     if (retry == sl::Result::eOk) {
       if (!g_intercepted.exchange(true, std::memory_order_relaxed)) {
@@ -249,7 +624,7 @@ inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
       reshade::log::message(reshade::log::level::warning, s.str().c_str());
     }
     g_last_result.store(static_cast<unsigned int>(retry), std::memory_order_relaxed);
-    return g_real_set_options(viewport, options);
+    return CallSetOptions(viewport, options);
   }
 
   if (!g_intercepted.exchange(true, std::memory_order_relaxed)) {
@@ -349,43 +724,97 @@ inline sl::Result HookedGetFeatureFunction(sl::Feature feature, const char* func
   return result;
 }
 
-inline const std::vector<hook::HookItem> kInterposerHooks = {
-    {"slGetFeatureFunction", reinterpret_cast<void**>(&g_real_get_feature_function),
-     reinterpret_cast<void*>(&HookedGetFeatureFunction)},
-};
-
-// slInit is only detoured when the OTA override is actually wanted -- an unused
-// hook on a game's init path is risk for nothing.
-inline const std::vector<hook::HookItem> kInterposerHooksWithOta = {
-    {"slGetFeatureFunction", reinterpret_cast<void**>(&g_real_get_feature_function),
-     reinterpret_cast<void*>(&HookedGetFeatureFunction)},
-    {"slInit", reinterpret_cast<void**>(&g_real_init), reinterpret_cast<void*>(&HookedInit)},
-};
-
-inline const std::vector<hook::HookItem>* g_installed_hooks = nullptr;
+inline std::vector<hook::HookItem> g_installed_hooks;
+inline std::atomic_bool g_installing{false};
 
 }  // namespace internal
+
+// A temporal reset is only requested after a state transition. It is consumed
+// once by HookedSetConstants and never injected continuously, so normal frame
+// pacing and the game's steady-state temporal history remain untouched.
+inline void NotifyHdrState(bool hdr) {
+  const bool previous = g_hdr_active.exchange(hdr, std::memory_order_relaxed);
+  const bool seen = g_hdr_state_seen.exchange(true, std::memory_order_acq_rel);
+  if (seen && previous != hdr &&
+      g_hdr_compatibility_mode.load(std::memory_order_relaxed) ==
+          static_cast<unsigned int>(HdrCompatibilityMode::kFinalColorFallback)) {
+    internal::RequestAllResets();
+  }
+}
+
+inline void NotifySwapchainTransition() {
+  internal::ForgetOutputDescriptions();
+  if (g_hdr_compatibility_mode.load(std::memory_order_relaxed) ==
+      static_cast<unsigned int>(HdrCompatibilityMode::kFinalColorFallback)) {
+    internal::RequestAllResets();
+  }
+}
+
+inline void NotifyQualityModeChanged() {
+  internal::ForgetOutputDescriptions();
+  internal::RequestAllResets();
+}
+
+inline void NotifyDepthEdgeTuningChanged() {
+  g_depth_edge_override_applied.store(false, std::memory_order_relaxed);
+  g_depth_edge_override_logged.store(false, std::memory_order_relaxed);
+  internal::RequestAllResets();
+}
 
 // Must land before the game asks for the function pointer, which it does once
 // during DLSS-G setup -- hence installing from the earliest event we get rather
 // than waiting for a present.
 inline void TryInstall() {
   if (g_hooked.load(std::memory_order_acquire)) return;
+  bool expected = false;
+  if (!internal::g_installing.compare_exchange_strong(
+          expected, true, std::memory_order_acq_rel)) {
+    return;
+  }
   HMODULE interposer = GetModuleHandleW(L"sl.interposer.dll");
-  if (interposer == nullptr) return;
-  if (GetProcAddress(interposer, "slGetFeatureFunction") == nullptr) return;
-  const auto* hooks = g_force_ota.load(std::memory_order_relaxed)
-                          ? &internal::kInterposerHooksWithOta
-                          : &internal::kInterposerHooks;
-  if (!hook::Install(interposer, *hooks, "sl.interposer.dll")) return;
-  internal::g_installed_hooks = hooks;
+  if (interposer == nullptr ||
+      GetProcAddress(interposer, "slGetFeatureFunction") == nullptr) {
+    internal::g_installing.store(false, std::memory_order_release);
+    return;
+  }
+
+  std::vector<hook::HookItem> hooks = {
+      {"slGetFeatureFunction", reinterpret_cast<void**>(&internal::g_real_get_feature_function),
+       reinterpret_cast<void*>(&internal::HookedGetFeatureFunction)}};
+  if (GetProcAddress(interposer, "slSetTag") != nullptr) {
+    hooks.push_back(
+        {"slSetTag", reinterpret_cast<void**>(&internal::g_real_set_tag),
+         reinterpret_cast<void*>(&internal::HookedSetTag)});
+  }
+  if (GetProcAddress(interposer, "slSetTagForFrame") != nullptr) {
+    hooks.push_back(
+        {"slSetTagForFrame", reinterpret_cast<void**>(&internal::g_real_set_tag_for_frame),
+         reinterpret_cast<void*>(&internal::HookedSetTagForFrame)});
+  }
+  if (GetProcAddress(interposer, "slSetConstants") != nullptr) {
+    hooks.push_back(
+        {"slSetConstants", reinterpret_cast<void**>(&internal::g_real_set_constants),
+         reinterpret_cast<void*>(&internal::HookedSetConstants)});
+  }
+  // slInit is only detoured when the OTA override is actually wanted.
+  if (g_force_ota.load(std::memory_order_relaxed)) {
+    hooks.push_back(
+        {"slInit", reinterpret_cast<void**>(&internal::g_real_init),
+         reinterpret_cast<void*>(&internal::HookedInit)});
+  }
+  if (!hook::Install(interposer, hooks, "sl.interposer.dll")) {
+    internal::g_installing.store(false, std::memory_order_release);
+    return;
+  }
+  internal::g_installed_hooks = std::move(hooks);
   g_hooked.store(true, std::memory_order_release);
+  internal::g_installing.store(false, std::memory_order_release);
 }
 
 inline void Uninstall() {
   if (!g_hooked.load(std::memory_order_acquire)) return;
-  if (internal::g_installed_hooks != nullptr) hook::Uninstall(*internal::g_installed_hooks);
-  internal::g_installed_hooks = nullptr;
+  if (!internal::g_installed_hooks.empty()) hook::Uninstall(internal::g_installed_hooks);
+  internal::g_installed_hooks.clear();
   g_hooked.store(false, std::memory_order_release);
 }
 

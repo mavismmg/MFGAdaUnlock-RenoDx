@@ -1232,12 +1232,23 @@ void StartDiscoveryWorker() {
 // ReShade adopted. The first real Present happens after that probe cycle. It
 // only launches the worker; discovery and patching remain on the worker thread.
 void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
-                             reshade::api::swapchain* /*swapchain*/,
+                             reshade::api::swapchain* swapchain,
                              const reshade::api::rect* /*source_rect*/,
                              const reshade::api::rect* /*dest_rect*/,
                              uint32_t /*dirty_rect_count*/,
                              const reshade::api::rect* /*dirty_rects*/) {
+  if (swapchain != nullptr) {
+    const auto color_space = swapchain->get_color_space();
+    const bool hdr = color_space == reshade::api::color_space::scrgb ||
+                     color_space == reshade::api::color_space::hdr10_pq ||
+                     color_space == reshade::api::color_space::hdr10_hlg;
+    mfgunlock::framecount::NotifyHdrState(hdr);
+  }
   StartDiscoveryWorker();
+}
+
+void OnInitSwapchain(reshade::api::swapchain* /*swapchain*/, bool /*resize*/) {
+  mfgunlock::framecount::NotifySwapchainTransition();
 }
 
 // These remain immediate, finite retries during graphics-device initialization. They do
@@ -1370,6 +1381,98 @@ void OnRegisterOverlay(reshade::api::effect_runtime* /*runtime*/) {
                         mfgunlock::framecount::g_state_result.load(std::memory_order_relaxed));
   }
 
+  ImGui::Separator();
+  constexpr const char* kHdrModes[] = {
+      "Native - pass the game's tags unchanged",
+      "UI recomposition - experimental",
+      "Automatic Quality Guard (recommended)"};
+  int hdr_mode = static_cast<int>(
+      mfgunlock::framecount::g_hdr_compatibility_mode.load(std::memory_order_relaxed));
+  if (ImGui::Combo("Frame-generation input quality", &hdr_mode, kHdrModes,
+                   static_cast<int>(std::size(kHdrModes)))) {
+    mfgunlock::framecount::g_hdr_compatibility_mode.store(
+        static_cast<unsigned int>(hdr_mode), std::memory_order_relaxed);
+    mfgunlock::framecount::g_ui_recomposition_applied.store(false,
+                                                            std::memory_order_relaxed);
+    mfgunlock::framecount::g_ui_recomposition_fell_back.store(false,
+                                                              std::memory_order_relaxed);
+    mfgunlock::framecount::g_hud_inputs_suppressed.store(false,
+                                                         std::memory_order_relaxed);
+    mfgunlock::framecount::NotifyQualityModeChanged();
+    reshade::set_config_value(nullptr, kConfigSection, "HDRCompatibilityMode", hdr_mode);
+  }
+  if (hdr_mode == static_cast<int>(
+                      mfgunlock::framecount::HdrCompatibilityMode::kNative)) {
+    ImGui::TextDisabled("Passes the game's HUD-less and UI tags through unchanged.");
+  } else if (hdr_mode == static_cast<int>(
+                             mfgunlock::framecount::HdrCompatibilityMode::kUiRecomposition)) {
+    ImGui::TextDisabled(
+        "Asks Streamline to process the scene and UI separately. This requires\n"
+        "the game to provide correctly matched buffers and color spaces.");
+  } else {
+    ImGui::TextDisabled(
+        "Uses final color in HDR; in SDR it rejects optional HUD/UI inputs only\n"
+        "when their metadata is invalid. It also resets temporal history once\n"
+        "after HDR, swapchain, resolution, option or multiplier transitions.");
+  }
+  ImGui::TextDisabled(
+      "Color, depth, motion vectors, temporal kernel and frame pacing are not rewritten.");
+  ImGui::Text("HDR output detected: %s.",
+              mfgunlock::framecount::g_hdr_active.load(std::memory_order_relaxed)
+                  ? "yes" : "no");
+  if (mfgunlock::framecount::g_ui_recomposition_applied.load(std::memory_order_relaxed)) {
+    ImGui::Text("UI recomposition accepted (source options v%u).",
+                mfgunlock::framecount::g_ui_recomposition_source_version.load(
+                    std::memory_order_relaxed));
+  } else if (mfgunlock::framecount::g_ui_recomposition_fell_back.load(
+                 std::memory_order_relaxed)) {
+    ImGui::Text("UI recomposition rejected (result %u); native fallback is active.",
+                mfgunlock::framecount::g_ui_recomposition_result.load(
+                    std::memory_order_relaxed));
+  } else {
+    ImGui::TextDisabled("UI recomposition has not been submitted yet.");
+  }
+  if (mfgunlock::framecount::g_hud_inputs_suppressed.load(std::memory_order_relaxed)) {
+    ImGui::Text("Quality Guard filtered optional HUD/UI input (%llu tag calls).",
+                mfgunlock::framecount::g_hud_suppression_calls.load(
+                    std::memory_order_relaxed));
+    ImGui::TextDisabled("Observed issue mask: 0x%X.",
+                        mfgunlock::framecount::g_quality_issue_mask.load(
+                            std::memory_order_relaxed));
+  }
+  const auto reset_count = mfgunlock::framecount::g_quality_resets_injected.load(
+      std::memory_order_relaxed);
+  if (reset_count != 0) {
+    ImGui::Text("Quality Guard synchronized temporal history %llu time(s).", reset_count);
+  }
+
+  constexpr const char* kDepthEdgeModes[] = {
+      "Off - game value",
+      "Mild (20.0)",
+      "Balanced (10.0)",
+      "Strong (4.0)",
+      "Aggressive (1.0)"};
+  int depth_edge_level = static_cast<int>(
+      mfgunlock::framecount::g_depth_edge_guard_level.load(std::memory_order_relaxed));
+  if (ImGui::Combo("Optional depth-edge guard", &depth_edge_level,
+                   kDepthEdgeModes,
+                   static_cast<int>(std::size(kDepthEdgeModes)))) {
+    mfgunlock::framecount::g_depth_edge_guard_level.store(
+        static_cast<unsigned int>(depth_edge_level), std::memory_order_relaxed);
+    mfgunlock::framecount::NotifyDepthEdgeTuningChanged();
+    reshade::set_config_value(nullptr, kConfigSection, "DepthEdgeGuardLevel",
+                              depth_edge_level);
+  }
+  ImGui::TextDisabled(
+      "Lower values can improve nearby object/lower-screen edge separation.\n"
+      "This does not perform camera-turn resets or modify frame pacing.");
+  if (mfgunlock::framecount::g_depth_edge_override_applied.load(
+          std::memory_order_relaxed)) {
+    ImGui::Text("Depth-edge override active; game supplied %.3f.",
+                mfgunlock::framecount::g_last_native_depth_separation.load(
+                    std::memory_order_relaxed));
+  }
+
   int force = static_cast<int>(
       mfgunlock::framecount::g_force_multiplier.load(std::memory_order_relaxed));
   // 6x == numFramesToGenerate 5, which is the Streamline plugin's own hard
@@ -1473,6 +1576,35 @@ void LoadConfig() {
     mfgunlock::framecount::g_force_multiplier.store(static_cast<unsigned int>(value),
                                                     std::memory_order_relaxed);
   }
+  if (reshade::get_config_value(nullptr, kConfigSection, "HDRCompatibilityMode", value)) {
+    if (value < static_cast<int>(mfgunlock::framecount::HdrCompatibilityMode::kNative) ||
+        value > static_cast<int>(
+                    mfgunlock::framecount::HdrCompatibilityMode::kFinalColorFallback)) {
+      value = static_cast<int>(
+          mfgunlock::framecount::HdrCompatibilityMode::kFinalColorFallback);
+    }
+    mfgunlock::framecount::g_hdr_compatibility_mode.store(
+        static_cast<unsigned int>(value), std::memory_order_relaxed);
+  } else if (reshade::get_config_value(nullptr, kConfigSection,
+                                       "HDRUIRecomposition", value)) {
+    mfgunlock::framecount::g_hdr_compatibility_mode.store(
+        static_cast<unsigned int>(
+            value != 0 ? mfgunlock::framecount::HdrCompatibilityMode::kUiRecomposition
+                       : mfgunlock::framecount::HdrCompatibilityMode::kNative),
+        std::memory_order_relaxed);
+  }
+  if (reshade::get_config_value(nullptr, kConfigSection, "DepthEdgeGuardLevel", value)) {
+    if (value < 0 || value > 4) value = 0;
+    mfgunlock::framecount::g_depth_edge_guard_level.store(
+        static_cast<unsigned int>(value), std::memory_order_relaxed);
+  } else if (reshade::get_config_value(nullptr, kConfigSection,
+                                       "DisocclusionGuardLevel", value)) {
+    // Preserve the selection made by the earlier experimental build while the
+    // renamed key makes its purpose clearer going forward.
+    if (value < 0 || value > 4) value = 0;
+    mfgunlock::framecount::g_depth_edge_guard_level.store(
+        static_cast<unsigned int>(value), std::memory_order_relaxed);
+  }
 }
 
 }  // namespace
@@ -1509,12 +1641,14 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID /*lpv_reserved*
 
       reshade::register_overlay("MFG Unlock", OnRegisterOverlay);
       reshade::register_event<reshade::addon_event::init_device>(OnInitDevice);
+      reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
       reshade::register_event<reshade::addon_event::init_command_queue>(OnInitCommandQueue);
       reshade::register_event<reshade::addon_event::present>(OnPresentStartDiscovery);
       break;
     case DLL_PROCESS_DETACH:
       reshade::unregister_event<reshade::addon_event::present>(OnPresentStartDiscovery);
       reshade::unregister_event<reshade::addon_event::init_command_queue>(OnInitCommandQueue);
+      reshade::unregister_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
       reshade::unregister_event<reshade::addon_event::init_device>(OnInitDevice);
       reshade::unregister_overlay("MFG Unlock", OnRegisterOverlay);
       mfgunlock::loadhook::Uninstall();
