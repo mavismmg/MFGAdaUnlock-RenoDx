@@ -25,3 +25,15 @@ _nvngx*
 *.user
 Thumbs.db
 desktop.ini
+
+# Local diagnostics and capture output
+/captures/
+/benchmarks/
+/MFGBenchmarks/
+presentmon*.csv
+*.dmp
+*.etl
+*.nsys-rep
+*.qdrep
+ReShade.log
+sl.log

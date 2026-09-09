@@ -48,6 +48,13 @@ compatibility work. Its additions include:
   pacing fallback behavior.
 - Runtime diagnostics using `slDLSSGSetOptions` and `slDLSSGGetState`, including
   requested multipliers, DLSS-G status, and actual presentation telemetry.
+- A conservative Streamline input Quality Guard that avoids incompatible
+  optional HUD/UI separation resources, including the HDR mismatch confirmed
+  during Hogwarts Legacy testing.
+- One-shot temporal-history synchronization after real HDR, swapchain,
+  resolution, option, multiplier, or quality-mode transitions.
+- Optional depth-edge tuning for integrations whose native linear-depth
+  separation produces visible disocclusion artifacts. It is off by default.
 - Experimental Vulkan renderer and NGX provider discovery.
 - Compatibility testing and documentation across the games and runtime
   combinations listed below.
@@ -63,6 +70,7 @@ replace or claim authorship of either original contribution.
 - [Using with RenoDX DLSS5](#using-with-renodx-dlss5)
 - [Verifying Operation](#verifying-operation)
 - [Experimental Vulkan Support](#experimental-vulkan-support)
+- [Frame-generation Input Quality](#frame-generation-input-quality)
 - [Settings](#settings)
 - [Troubleshooting](#troubleshooting)
 - [How it works](#how-it-works)
@@ -252,6 +260,26 @@ following game launch option so its Vulkan layer is allowed to load:
 Without this option, ReShade—and therefore the addon—may not initialize in the
 game.
 
+## Frame-generation Input Quality
+
+**Automatic Quality Guard** is the default. In HDR, it makes DLSS-G use the
+game's final color instead of optional HUD-less/UI resources whose color-space
+mismatch can produce halos, ghosting, or bright-edge artifacts. In SDR, those
+optional resources are preserved unless their metadata, dimensions, or format
+prove incompatible. Color, depth, motion vectors, exposure, the temporal
+kernel, multiplier, and presentation pacing are not rewritten by this mode.
+
+The guard also requests one Streamline temporal reset after a real output or
+option transition. It does not inject continuous resets. **UI recomposition** is
+available only as an experimental comparison mode because it requires the game
+to provide correctly matched scene and UI buffers.
+
+The optional **depth-edge guard** changes Streamline's existing minimum relative
+linear-depth separation value. Lower values may improve disocclusion around
+nearby objects or screen edges in some games, but the best value is
+integration-specific. It is disabled by default and does not add camera-turn
+resets or a separate pacing path.
+
 ## Settings
 
 Written to your `ReShade.ini` under `[RenoDX.MFGUnlock]`:
@@ -265,6 +293,8 @@ Written to your `ReShade.ini` under `[RenoDX.MFGUnlock]`:
 | `ForceMultiplier` | `0` | `0` respects the game's own choice; `2`–`6` forces that multiplier |
 | `RaiseFrameCeiling` | `0` | Raises an old Streamline plugin's compiled hard limit to 6x. Off by default because that breaks some games; the stale device-limit bypass needed by STALKER 2 is always applied |
 | `ForceOTAPlugins` | `0` | Asks Streamline to load the driver's OTA plugin set. Off by default; see notes |
+| `HDRCompatibilityMode` | `2` | `0` passes native tags, `1` requests experimental UI recomposition, and `2` enables Automatic Quality Guard |
+| `DepthEdgeGuardLevel` | `0` | Optional depth-edge tuning: `0` keeps the game value; `1`-`4` select progressively lower separation thresholds |
 
 If a game has its own multiplier selector, leave `ForceMultiplier` at `0` and use
 the game's setting.
@@ -308,6 +338,17 @@ the game's setting.
   NVIDIA DLL.
 - Record the actual loaded module paths because an OTA provider may override a
   local DLL.
+
+### Ghosting, flicker, or edge artifacts remain
+
+- First compare native 2x with the addon completely removed and restart the
+  game. Artifacts that remain are part of the game's native DLSS-G integration.
+- Keep **Automatic Quality Guard** selected. Use **Native** only as an A/B
+  control.
+- Test the optional depth-edge levels one at a time and fully recheck pacing;
+  leave the setting off if it does not produce a repeatable visual improvement.
+- The addon cannot reconstruct missing or incorrect motion vectors, depth,
+  exposure, distortion data, or camera matrices supplied by the game.
 
 ## How it works
 
@@ -378,6 +419,11 @@ is `build.vs/Release/renodx-mfgunlock.addon64`.
 
 Prebuilt binaries are attached to [Releases](../../releases).
 
+The separate, read-only diagnostic addon and capture tools used for Streamline
+input and PresentMon analysis are documented in
+[`src/addons/mfgdiagnostics/README.md`](src/addons/mfgdiagnostics/README.md).
+They are developer tools and are not required for normal use.
+
 ## Credits
 
 - [dashdogy/RTX40MFG-Unlock](https://github.com/dashdogy/RTX40MFG-Unlock)
@@ -395,6 +441,9 @@ Prebuilt binaries are attached to [Releases](../../releases).
   adaptation and repository from which this project is forked.
 - Special thanks to [mugensc](https://next.nexusmods.com/profile/mugensc) for the
   RenoDX DLSS5 compatibility testing and known-good runtime combination.
+- Special thanks to Artur from DLSS Enabler for the valuable debugging insights
+  during the investigation of the Hogwarts Legacy HDR + Frame Generation issue,
+  which helped lead to the fix included in this fork.
 - Built on [RenoDX](https://github.com/clshortfuse/renodx) by clshortfuse, and
   [ReShade](https://github.com/crosire/reshade) by crosire.
 
