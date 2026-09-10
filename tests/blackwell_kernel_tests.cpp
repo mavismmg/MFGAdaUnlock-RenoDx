@@ -36,4 +36,3 @@ int main() {
   std::cout << "blackwell kernel tests passed\n";
   return EXIT_SUCCESS;
 }
-

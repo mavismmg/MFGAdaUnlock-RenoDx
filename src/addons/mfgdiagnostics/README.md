@@ -148,6 +148,11 @@ before and after the run. Start the game, load a repeatable save and then run:
 .\Capture-Performance.ps1 -Label native-2x-hdr -ProcessName GameExecutable
 ```
 
+It also writes `capture-metadata.json` with the test label, notes, GPU/driver
+inventory, and versions plus SHA-256 hashes for relevant Streamline, NGX,
+ReShade and addon modules mapped at capture start. The inventory identifies
+candidates and does not by itself prove which OTA/provider module executed.
+
 By default the script looks below `Documents\Tooling\PresentMon` and
 `Documents\Tooling\NVIDIA`. Pass `-PresentMonPath` and `-NvapiProbePath` when
 the tools are installed elsewhere.
@@ -177,6 +182,23 @@ conclusions.
 For kernel or queue-level conclusions, take a short Nsight Systems or Nsight
 Graphics trace separately. Profiling overhead makes those traces unsuitable for
 the PresentMon FPS comparison itself.
+
+For the 0.8 release gate, use the dedicated STALKER 2 wrapper. It standardizes
+case names, uses a 45-second default and displays the restart/configuration
+checklist before capture:
+
+```powershell
+.\Capture-STALKER2-FramePacing.ps1 -Case native-no-addon-2x -Run 1
+.\Capture-STALKER2-FramePacing.ps1 -Case addon-native-2x -Run 1
+.\Capture-STALKER2-FramePacing.ps1 -Case addon-3x -Run 1
+.\Capture-STALKER2-FramePacing.ps1 -Case addon-4x -Run 1
+```
+
+Repeat each case with `-Run 2` and `-Run 3`. Use `-ConfigurationNotes` to record
+the game build, resolution, HDR, cap, VSync/G-SYNC state and save/route. Do not
+publish a conclusion until all cases use the same driver/runtime hashes and the
+three runs agree closely enough to rule out a one-off traversal or shader-cache
+event.
 
 References: [NVIDIA DLSS-G integration](https://github.com/NVIDIA-RTX/Streamline/blob/main/docs/ProgrammingGuideDLSS_G.md),
 [common constants](https://github.com/NVIDIA-RTX/Streamline/blob/main/include/sl_consts.h),

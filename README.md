@@ -5,9 +5,15 @@ A [ReShade](https://reshade.me/) addon that enables **DLSS multi-frame generatio
 RTX 50-series only — and corrects the frame interpolation so the extra frames
 carry new motion instead of repeats.
 
-Nothing on disk is modified. Every patch is applied to the mapped image at
-runtime and reverted when the addon unloads. **No NVIDIA files are redistributed
-here.**
+The recommended first-install mode is **Automatic Guard + UI Composition
+(Recommended)**. It keeps the game's required color, depth and motion-vector
+inputs intact, rejects optional HUD/UI inputs when they cannot be trusted, and
+uses Streamline UI Composition only where the addon can validate the inputs it
+can actually observe.
+
+Nothing in the game installation is modified. Every patch is applied to the
+mapped image at runtime and reverted when the addon unloads. **No complete
+NVIDIA DLL or provider package is redistributed here.**
 
 > [!NOTE]
 > Vulkan support is new in version 0.6 and remains experimental while its game
@@ -34,8 +40,9 @@ wrapper and NGX provider, intercepts `slGetFeatureFunction`, adjusts
 in mapped process memory. Dreamt then adapted this work into the ReShade/RenoDX
 addon on which this fork is based.
 
-This fork expands the original project with broader game and runtime
-compatibility work. Its additions include:
+Work implemented and maintained by [mavismmg](https://github.com/mavismmg) in
+this fork expands the original project with broader game and runtime
+compatibility. The repository history and current code attribute these additions:
 
 - Support and fixes for **S.T.A.L.K.E.R. 2: Heart of Chornobyl**, including its
   native 3x/4x selector and bundled/OTA provider handling.
@@ -51,8 +58,15 @@ compatibility work. Its additions include:
 - A conservative Streamline input Quality Guard that avoids incompatible
   optional HUD/UI separation resources, including the HDR mismatch confirmed
   during Hogwarts Legacy testing.
-- One-shot temporal-history synchronization after real HDR, swapchain,
-  resolution, option, multiplier, or quality-mode transitions.
+- **Automatic Guard + UI Composition**, including HUD-less/UI validation,
+  conservative HDR final-color fallback, transition-safe split-tag handling,
+  and one-shot temporal-history synchronization.
+- HDR + Frame Generation investigation and compatibility work based on captures
+  from Hogwarts Legacy, with related diagnostic tooling intended for comparison
+  against other integrations such as Jedi Survivor.
+- Native NVIDIA Dynamic MFG integration through `DLSSGMode::eDynamic`, including
+  exact release-stack checks, proactive capability validation for older games,
+  correct VSync target semantics, bounded retries, and fixed-MFG fallback.
 - Optional depth-edge tuning for integrations whose native linear-depth
   separation produces visible disocclusion artifacts. It is off by default.
 - Experimental Vulkan renderer and NGX provider discovery.
@@ -68,12 +82,16 @@ replace or claim authorship of either original contribution.
 - [Requirements](#requirements)
 - [Usage](#usage)
 - [Using with RenoDX DLSS5](#using-with-renodx-dlss5)
+- [Selecting the Streamline Runtime](#selecting-the-streamline-runtime)
 - [Verifying Operation](#verifying-operation)
 - [Experimental Vulkan Support](#experimental-vulkan-support)
 - [Frame-generation Input Quality](#frame-generation-input-quality)
+- [Dynamic Multi Frame Generation](#dynamic-multi-frame-generation)
+- [Version Matrix and Advanced Runtime Setup](#version-matrix-and-advanced-runtime-setup)
 - [Settings](#settings)
 - [Troubleshooting](#troubleshooting)
 - [How it works](#how-it-works)
+- [Release Validation](#release-validation)
 - [Building](#building)
 - [Credits](#credits)
 
@@ -163,6 +181,10 @@ used by itself. When using it together with RenoDX DLSS5, first read the
 version-specific guidance below instead of mixing individual DLLs from
 different packages.
 
+For NVIDIA Dynamic MFG, replacing only `nvngx_dlssg.dll` is not sufficient.
+The game must load a complete Streamline runtime that implements Dynamic MFG;
+VSync and frame-limiter support for Dynamic MFG was added in Streamline 2.14.1.
+
 ## Using with RenoDX DLSS5
 
 MFG Unlock and the RenoDX DLSS5 addon can work together, but compatibility may
@@ -200,10 +222,9 @@ selection, or an interaction that only occurs when both addons are active.
    known-good 2.12.129 / 310.7.129 set while the newer combination is being
    investigated.
 
-`ForceOTAPlugins=0` means this addon does not force OTA loading. It does not
-prevent the game itself from requesting an OTA provider. Check the ReShade and
-Streamline logs to confirm the actual loaded module paths and versions rather
-than assuming the DLL beside the executable was selected.
+The default runtime-selection mode preserves the game's own OTA policy. Check
+the ReShade and Streamline logs to confirm the actual loaded module paths and
+versions rather than assuming the DLL beside the executable was selected.
 
 Useful information for a compatibility report:
 
@@ -219,6 +240,30 @@ See the current
 [RenoDX installation notes](https://github.com/clshortfuse/renodx/wiki/Mods)
 for its addon-specific loading requirements.
 
+## Selecting the Streamline Runtime
+
+The **Streamline runtime selection** control changes only NVIDIA's documented
+`slInit` OTA flags and requires a full game restart:
+
+- **Game default** preserves the game's request and is recommended for normal
+  use.
+- **Prefer local runtime** disables OTA download and downloaded-plugin loading,
+  allowing a complete game-folder runtime to be tested.
+- **Force NVIDIA OTA runtime** enables both OTA flags.
+
+Some games, including Cyberpunk 2077, can call `slInit` before ReShade performs
+its normal addon scan. If the panel says the selected policy did not reach
+`slInit`, use **Enable early addon loading for next restart** and restart the
+game. This adds the currently loaded addon filename to
+`[ADDON] LoadFromDllMain`; it does not replace any DLL. The log must confirm
+that the policy reached `slInit` and must report the version actually loaded.
+
+Use a complete, version-matched Streamline package. A lone
+`nvngx_dlssg.dll` does not update `sl.interposer.dll`, `sl.common.dll`, or
+`sl.dlss_g.dll`, and mixing those versions can cause missing capabilities,
+startup failures, severe slowdowns, or misleading test results. The addon does
+not bypass Streamline's signature or compatibility validation.
+
 ## Verifying Operation
 
 Open ReShade, select the **Add-ons** tab, and open **MFG Unlock**. With DLSS
@@ -229,12 +274,14 @@ Frame Generation enabled in the game, check the following:
 - The temporal fix was applied.
 - `slDLSSGSetOptions` and `slDLSSGGetState` were intercepted.
 - The DLSS-G runtime status is OK.
-- Actual presentation telemetry rises above one when generated frames are
-  active.
+- `slDLSSGGetState` telemetry is being sampled without an error. Its
+  `numFramesActuallyPresented` value is the count since the game's previous
+  state query, not a direct multiplier readout.
 
-The presentation count comes from NVIDIA Streamline's `slDLSSGGetState`. For
-frame-pacing analysis, use NVIDIA FrameView and inspect
-`MsBetweenDisplayChange`; ordinary Present-based counters may not represent the
+The presentation count comes from NVIDIA Streamline's `slDLSSGGetState`. Use the
+read-only diagnostic NVAPI snapshot or an external presentation trace to
+corroborate the active multiplier. For frame-pacing analysis, inspect actual
+display intervals; ordinary application-Present counters may not represent the
 final display timing used by DLSS-G.
 
 ## Experimental Vulkan Support
@@ -263,17 +310,41 @@ game.
 
 ## Frame-generation Input Quality
 
-**Automatic Quality Guard** is the default. In HDR, it makes DLSS-G use the
-game's final color instead of optional HUD-less/UI resources whose color-space
-mismatch can produce halos, ghosting, or bright-edge artifacts. In SDR, those
-optional resources are preserved unless their metadata, dimensions, or format
-prove incompatible. Color, depth, motion vectors, exposure, the temporal
-kernel, multiplier, and presentation pacing are not rewritten by this mode.
+The default is **Automatic Guard + UI Composition (Recommended)**.
 
-The guard also requests one Streamline temporal reset after a real output or
-option transition. It does not inject continuous resets. **UI recomposition** is
-available only as an experimental comparison mode because it requires the game
-to provide correctly matched scene and UI buffers.
+DLSS-G can receive an optional HUD-less scene plus a UI color/alpha mask so it
+does not interpolate the interface as ordinary world geometry. This works only
+when those resources obey Streamline's contract: matching output extents,
+compatible formats, sufficient alpha precision, premultiplied UI color, and the
+same color space/post-processing as final color.
+
+The recommended mode validates the metadata the addon can observe. Once the
+primary swapchain positively reports SDR, the addon requests Streamline's
+UI-capable path early because many games call `SetOptions` before their first
+resource tags. That request only allocates the capable path: the guard still
+forwards optional HUD-less/UI inputs after it has observed a complete,
+structurally valid pair. When a pair is invalid, incomplete, or arrives in an
+unsafe split transition, the addon clears only those optional tags and lets
+DLSS-G use final color. In HDR it uses final color automatically because
+Streamline resource tags do not expose enough color-space information to prove
+that the HUD-less buffer matches a PQ/scRGB final buffer. The explicit **UI
+Composition** mode remains available for a game whose HDR integration has been
+independently verified.
+
+This can mitigate UI/HUD ghosting, flicker, bright halos, invalid masking, and
+composition mismatches in affected integrations. It does not claim that every
+artifact has that cause, and it cannot repair incorrect motion vectors, depth,
+exposure, camera matrices, distortion data, or pixels produced by the game.
+
+> **UI Composition example:** This community video shows the type of UI/HUD-related
+> Frame Generation artifact that UI Composition is intended to mitigate in
+> affected integrations: https://www.youtube.com/watch?v=xV_E-cvyu8Q
+
+The guard requests one Streamline temporal reset after an actual HDR,
+swapchain, resolution, option, multiplier, or quality-mode transition. It does
+not inject continuous resets. Required color, depth and motion-vector tags, the
+selected multiplier, the temporal kernel, and presentation pacing are not
+rewritten by the guard.
 
 The optional **depth-edge guard** changes Streamline's existing minimum relative
 linear-depth separation value. Lower values may improve disocclusion around
@@ -281,20 +352,167 @@ nearby objects or screen edges in some games, but the best value is
 integration-specific. It is disabled by default and does not add camera-turn
 resets or a separate pacing path.
 
+## Dynamic Multi Frame Generation
+
+**Use NVIDIA Dynamic MFG** requests Streamline's native
+[`DLSSGMode::eDynamic`](https://github.com/NVIDIA-RTX/Streamline/blob/main/docs/ProgrammingGuideDLSS_G.md#63-enabling-dynamic-multi-frame-generation).
+Dynamic MFG in this release requires the exact validated stack:
+
+- **DLSS-G 310.9.1**
+- **Streamline 2.14.1**
+- NVIDIA display driver **595.41 or newer**, as required by NVIDIA's current
+  Dynamic MFG integration guide
+- A compatible NVIDIA driver/runtime that reports
+  `DLSSGState::bIsDynamicMFGSupported = eTrue`
+- Direct3D 12; NVIDIA currently does not expose Dynamic MFG for Vulkan
+
+The active DLSS-G provider—not an addon frame scheduler—selects the multiplier
+and owns its pacing and hysteresis. In Dynamic mode, `numFramesToGenerate` is
+ignored. A target of `0` follows the refresh rate of the display containing the
+game window; with VSync off, a nonzero `dynamicTargetFrameRate` requests that
+output target.
+
+VSync is **not** a universal requirement for Dynamic MFG. When VSync is active,
+Streamline ignores the numeric Dynamic target and instead aims near the active
+display refresh for tear-free presentation. Users who are not using G-SYNC
+through the NVIDIA driver do not need to enable VSync solely because Dynamic
+MFG is enabled. If VSync is used with Dynamic MFG, use the validated 310.9.1 +
+2.14.1 stack, check that the addon reports VSync capability, and avoid a path
+that cannot reach Independent Flip; NVIDIA warns that such a path can add high
+latency.
+
+The optional **Advanced: cap application-rendered FPS with Reflex** setting is
+off by default. It changes `ReflexOptions::frameLimitUs`, which limits source
+frames rendered by the game; it is not a final displayed-FPS control and must
+not be treated as a workaround for VSync ignoring the Dynamic target. When the
+advanced cap is disabled, the game-owned Reflex options pass through unchanged.
+
+The addon queries `DLSSGState::bIsDynamicMFGSupported` on D3D12 whether or not
+the option is already enabled, using addon-owned v4 storage so games compiled
+against older state structures are not written past their ABI. Providers that
+reject the newer state ABI are retried only a bounded number of times. Dynamic
+is attempted only after the loaded versions and capability bit are confirmed.
+Transient initialization failures are retried on later game-side SetOptions
+calls; structural rejection fails safely to the game's fixed mode. The panel
+reports pending, active, rejected, version-mismatch and VSync-capability states
+separately. Renderer eligibility follows the selected primary swapchain rather
+than whichever temporary or auxiliary ReShade device initialized last. After
+changing Dynamic settings, toggle Frame Generation off/on in the game so it
+submits a fresh SetOptions call.
+
+## Version Matrix and Advanced Runtime Setup
+
+The table separates general fixed-MFG compatibility from features that depend
+on the new Dynamic ABI. “Validated” means the listed path has been exercised;
+it is not a universal claim for every game or presentation setup.
+
+| DLSS-G | Streamline | General addon / fixed MFG | Automatic Guard | UI Composition | Dynamic MFG | VSync / G-SYNC notes |
+|---|---|---|---|---|---|---|
+| 310.9.0 | 2.12.x | Validated legacy/compatibility path | Validated | Not release-validated on this older wrapper | Not supported by this release | Keep the game's established sync path; do not assume the 2.14.1 Dynamic/VSync behavior |
+| 310.9.0 | 2.14.0 / internal RC builds | Fixed MFG may work, including NVIDIA App override builds | Not release-validated as a complete combination | Not release-validated | The underlying runtime may expose Dynamic without VSync when its capability bit is true, but this addon does not advertise this combination as supported | Do not assume 2.14.1 VSync/frame-limiter behavior; use the exact current stack below for release testing |
+| 310.9.1 | 2.14.1 | Validated current path | Validated | Validated where the game supplies a correct pair; slight provider cost is expected | Supported on D3D12 when the runtime capability bit is true; final in-game release retest pending | VSync optional; with VSync, target follows refresh. G-SYNC remains a driver/display choice; capability and Independent Flip still matter |
+
+### Manually using the current NVIDIA runtime
+
+> [!IMPORTANT]
+> **Do not assume that updating the NVIDIA App or display driver installs
+> DLSS-G 310.9.1 and Streamline 2.14.1 into a game.** Games normally keep the
+> DLLs they ship, while NVIDIA App driver-profile overrides may load a different
+> module from an NVIDIA cache. For the supported Dynamic configuration, the
+> files currently have to be installed manually and the driver overrides must
+> be returned to application-controlled/default behavior.
+
+Dynamic MFG in this release requires the game process to **actually load** both:
+
+- `nvngx_dlssg.dll` **310.9.1**
+- the complete matching Streamline **2.14.1** runtime, including at least the
+  game's corresponding `sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`,
+  Reflex/PCL components, and any other Streamline plugins that game requires
+
+Replacing only `nvngx_dlssg.dll` is not sufficient. Likewise, seeing a 2.14.1
+DLL in the game directory does not prove that the process selected it.
+
+- Normal users can obtain the current game DLL from the established
+  [TechPowerUp DLSS Frame Generation archive](https://www.techpowerup.com/download/nvidia-dlss-3-frame-generation-dll/).
+- Developers and advanced users can obtain
+  [Streamline 2.14.1 from NVIDIA](https://github.com/NVIDIA-RTX/Streamline/releases/tag/v2.14.1),
+  inspect NVIDIA's official
+  [Windows DLSS library directory](https://github.com/NVIDIA/DLSS/tree/main/lib/Windows_x86_64/rel),
+  and consult the
+  [DLSS 310.9.1 release](https://github.com/NVIDIA/DLSS/releases/tag/v310.9.1).
+
+#### Required installation and override checklist
+
+1. Back up the original game DLLs.
+2. Install `nvngx_dlssg.dll` 310.9.1 manually.
+3. Install the **complete, version-matched** Streamline 2.14.1 set. Never mix
+   `sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`, `sl.reflex.dll`, or
+   other Streamline components from different packages.
+4. Open the NVIDIA App, check both **Global Settings** and the game's own
+   profile, and set **DLSS Override - Frame Generation** plus the Frame
+   Generation entry under **DLSS Override - Model Presets** to **Use the 3D
+   application setting**. Apply the changes.
+5. If NVIDIA Profile Inspector (NVPI) has been used, open the same game profile
+   and return every DLSS Frame Generation/NGX override changed there to its
+   NVIDIA default or application-controlled value, then apply the profile.
+   NVIDIA App and NVPI edit driver-profile state; leaving an override active in
+   either place can make the manually installed DLL lose selection again.
+6. In MFG Unlock choose **Streamline runtime selection -> Prefer local runtime
+   - disable OTA**. If the panel says this policy did not reach `slInit`, enable
+   **early addon loading for next restart**.
+7. Exit the game completely and start it again. Do not rely on an in-game reload
+   after changing DLLs, driver overrides, runtime selection, or early loading.
+8. Verify the **loaded** versions and paths in the MFG Unlock panel and
+   `ReShade.log` before enabling Dynamic MFG.
+
+For example, a path containing
+`ProgramData\\NVIDIA\\NGX\\models\\sl_dlss_g_override_0` means the driver/NVIDIA
+App override is active. In that situation a 2.14.1 file beside the executable
+can be completely ignored. Do not delete NVIDIA cache directories as a normal
+installation step; correct the driver profile instead.
+
+Success means the log reports all of the following from the same launch:
+
+```text
+observed Streamline DLSS-G wrapper version 2.14.1.0 from ...
+verified mapped DLSS-G provider candidate version 310.9.1.0
+slDLSSGGetState confirms NVIDIA Dynamic MFG support
+NVIDIA Dynamic MFG accepted
+```
+
+If VSync is enabled, the last line can still report Dynamic as accepted, but
+the numeric `DynamicTargetFPS` is intentionally ignored and the provider aims
+near the active display refresh. Streamline 2.14.1 adds supported VSync and
+frame-limiter behavior to Dynamic mode; it does not make a custom Dynamic target
+override the monitor-refresh target while VSync is active.
+
+The addon does not write NVIDIA driver profiles, NVPI settings, or NVIDIA App
+settings. Public
+`NvAPI_NGX_GetNGXOverrideState` is used only by the optional diagnostic tool to
+observe override feedback; there is no verified public NVAPI call here that can
+safely force this per-game policy after Streamline/NGX initialization. To stop
+Streamline itself from choosing downloaded OTA plugins during a controlled test,
+select **Prefer local runtime**, restart, and verify the loaded paths/versions in
+the log.
+
 ## Settings
 
 Written to your `ReShade.ini` under `[RenoDX.MFGUnlock]`:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `Enabled` | `1` | Master switch for the whole addon |
+| `Enabled` | `1` | Enables the addon for the next launch; changing this requires a restart so live memory patches cannot be left in a partial state |
 | `MaxCount` | `4` | The `DLSSG.MultiFrameCountMax` value reported to the runtime |
 | `ForceFlipMeteringOff` | `0` | Normally leave off. Enable only if 3x/4x freezes; this forces Streamline's legacy software pacing fallback and requires a game restart |
-| `TemporalFix` | `1` | The interpolation correction. Leave on |
+| `TemporalFix` | `1` | The interpolation correction. Leave on; changing it requires a restart |
+| `BlackwellFrameworkKernels` | `1` | Uses the exact-fingerprint Blackwell motion-vector/inpaint/inpaint-decision replacements when the installed provider matches; otherwise falls back to the 0.7 temporal correction. Changing it requires a restart |
 | `ForceMultiplier` | `0` | `0` respects the game's own choice; `2`–`6` forces that multiplier |
+| `DynamicMFG` | `0` | Requests native NVIDIA Dynamic MFG only on the validated 310.9.1 + 2.14.1 D3D12 stack after the provider reports support; takes priority over `ForceMultiplier` while active |
+| `DynamicTargetFPS` | `0` | Dynamic output target; `0` follows display refresh. With VSync active, Streamline ignores a nonzero value and follows refresh instead |
+| `DynamicReflexSourceCap` | `0` | Advanced opt-in source/application frame cap through Reflex; not a final-output target |
 | `RaiseFrameCeiling` | `0` | Raises an old Streamline plugin's compiled hard limit to 6x. Off by default because that breaks some games; the stale device-limit bypass needed by STALKER 2 is always applied |
-| `ForceOTAPlugins` | `0` | Asks Streamline to load the driver's OTA plugin set. Off by default; see notes |
-| `HDRCompatibilityMode` | `2` | `0` passes native tags, `1` requests experimental UI recomposition, and `2` enables Automatic Quality Guard |
+| `RuntimeSelectionMode` | `0` | `0` preserves the game's runtime policy, `1` disables OTA/downloaded plugins to prefer local files, and `2` forces the NVIDIA OTA flags; restart required |
+| `HDRCompatibilityMode` | `2` | `0` passes native tags, `1` forces UI Composition, `2` is **Automatic Guard + UI Composition (Recommended)**, and `3` keeps the conservative automatic final-color guard |
 | `DepthEdgeGuardLevel` | `0` | Optional depth-edge tuning: `0` keeps the game value; `1`-`4` select progressively lower separation thresholds |
 
 If a game has its own multiplier selector, leave `ForceMultiplier` at `0` and use
@@ -331,6 +549,29 @@ the game's setting.
 - Measure final presentation pacing with FrameView rather than relying only on
   a Present-based overlay graph.
 
+### Dynamic MFG is not recognized or ignores my target
+
+- Confirm the panel observes **DLSS-G 310.9.1**, **Streamline 2.14.1**, D3D12,
+  a driver version of at least **595.41**, and
+  `bIsDynamicMFGSupported = true`. A DLL merely present beside the game is not
+  proof that Streamline selected it.
+- Toggle Frame Generation off/on after changing the addon setting. The addon
+  waits for the game's next `slDLSSGSetOptions` call instead of injecting one
+  from an unrelated UI thread. The panel keeps the change visibly marked as
+  pending until a successful call applies it.
+- If VSync is active, a target such as 100 FPS is intentionally ignored by
+  Streamline and Dynamic follows display refresh. Disable VSync for a custom
+  Dynamic output target; do not use the advanced Reflex source cap as though it
+  were a final-output limiter.
+- Check NVIDIA App global and per-game DLSS overrides, reset any matching NVPI
+  Frame Generation/NGX overrides, and check the addon's Streamline
+  runtime-selection mode. Apply the profile and restart fully after changes.
+- If a 2.14.1 file is present but the panel reports 2.14.0, select **Prefer
+  local runtime**. If the policy did not reach `slInit`, enable the panel's
+  early-addon-loading option and restart again. Presence on disk is not proof
+  that Streamline selected that module.
+- Dynamic remains unavailable on Vulkan. Fixed MFG continues to work there.
+
 ### Performance collapses when RenoDX DLSS5 is also installed
 
 - Follow the [Using with RenoDX DLSS5](#using-with-renodx-dlss5) section.
@@ -344,8 +585,11 @@ the game's setting.
 
 - First compare native 2x with the addon completely removed and restart the
   game. Artifacts that remain are part of the game's native DLSS-G integration.
-- Keep **Automatic Quality Guard** selected. Use **Native** only as an A/B
-  control.
+- Keep **Automatic Guard + UI Composition (Recommended)** selected. Use forced
+  **UI Composition**, conservative **Automatic Guard**, or **Native** only as
+  controlled A/B comparisons.
+- Restart and compare **Prefer full Blackwell framework kernels** on and off.
+  Off uses the release-0.7 midpoint correction as the control path.
 - Test the optional depth-edge levels one at a time and fully recheck pacing;
   leave the setting off if it does not produce a repeatable visual improvement.
 - The addon cannot reconstruct missing or incorrect motion vectors, depth,
@@ -369,12 +613,30 @@ addon rewrites both compares, in both encodings, in memory only — NGX verifies
 the snippet's Authenticode signature at load time, so the same bytes changed on
 disk make frame generation disappear entirely.
 
-Unlocking the count alone is not enough. The interpolation kernel blends with a
-compiled-in `0.5`, so every generated frame lands at the temporal midpoint: 4x
-produces three identical half-way frames, the counter doubles and the motion does
-not get smoother. The addon decompresses the kernel's PTX, rewrites the blend
-weight to come from the kernel's own temporal parameter, and re-emits the fatbin
-so the driver JITs the corrected version.
+Unlocking the count alone is not enough. The Ada interpolation kernel blends
+with a compiled-in `0.5`, so every generated frame lands at the temporal
+midpoint: 4x produces three identical half-way frames, the counter doubles and
+the motion does not get smoother.
+
+The experimental full-kernel path uses the Blackwell motion-vector, inpaint,
+and inpaint-decision programs rebuilt for Ada. Each target is accepted only
+when the original ELF fingerprint **and exact fatbin slot size** match the
+locally generated compatibility table. The replacement cubin is then written
+inside that original slot in mapped process memory; fatbin headers, entry
+descriptors, registration metadata, surrounding provider data, and pacing code
+are left untouched. The Blackwell motion-vector program consumes the generated
+frame's temporal parameter natively, so it replaces rather than stacks with the
+older midpoint rewrite.
+
+The source repository does not store generated cubin tables. They are produced
+locally from installed NVIDIA providers during release preparation and excluded
+from source control. No complete NVIDIA DLL or provider package is included.
+
+If the complete Blackwell path cannot be identified unambiguously, the addon
+fails closed to the release-0.7 behavior: it decompresses the supported Ada
+kernel's PTX, rewrites the blend weight to use the temporal parameter, and lets
+the driver JIT the corrected version. The overlay reports which path applied.
+Changing **Prefer full Blackwell framework kernels** requires a game restart.
 
 DLSS-G owns frame generation and presentation pacing; this addon does not
 implement a separate frame scheduler or issue generated-frame presents. With
@@ -385,6 +647,37 @@ freeze presentation.
 
 Each source file documents its own area in detail — start with the header comment
 in [`addon.cpp`](src/addons/mfgunlock/addon.cpp).
+
+## Release Validation
+
+Code-side release checks use MSVC Release builds, native static analysis, and
+the tests in `tests/`. The project source is warning-clean in the latest check;
+the analyzer reports only existing warnings in external ReShade/Streamline
+headers. The final manual gate used a controlled STALKER 2 presentation trace.
+
+> **STALKER 2 frame-pacing validation (September 10, 2026):** one 45-second
+> release-gate run used DLSS-G 310.9.1, Streamline 2.14.1, Dynamic MFG with
+> VSync, and a 240 Hz display. PresentMon recorded Hardware: Independent Flip,
+> 9,316 display intervals at 4.450 ms median, 5.637 ms p95 and 7.953 ms p99
+> (224.48 FPS average). The generated/source cadence heuristic measured 3.986x,
+> consistent with the active 4x mode. Of 2,337 source intervals, four exceeded
+> the robust 31.662 ms outlier threshold.
+
+This is a single release-gate trace, not a cross-version performance benchmark.
+It validates the active 4x presentation path and does not claim zero game-side
+stutter, universal compatibility, or an addon-overhead difference.
+
+Use
+[`Capture-STALKER2-FramePacing.ps1`](src/addons/mfgdiagnostics/Capture-STALKER2-FramePacing.ps1)
+for three repeated 45-second runs of each case: native 2x without the addon,
+addon loaded at native 2x, addon 3x, and addon 4x. Keep the same warmed-up save,
+camera route, resolution, cap, HDR, VSync/G-SYNC state, driver, and runtime DLLs.
+Remove the diagnostic companion addon for these performance runs. Each capture
+records PresentMon data, an NVAPI before/after snapshot, and a version/hash
+inventory of relevant loaded modules; the analyzer reports display/application
+interval distributions, robust outliers, Present API time, available GPU and
+instrumented latency fields, and only clearly labeled heuristic generated-frame
+cadence.
 
 ## RTX 30-series support
 
@@ -444,6 +737,12 @@ They are developer tools and are not required for normal use.
   [`dlssg_for_sm86`](https://github.com/sdli1995/dlssg_for_sm86) implementation
   that brings DLSS-G multi-frame generation to supported RTX 30-series/SM86
   configurations.
+- [Matias Lombo](https://github.com/matiasLombo/mfg-unlock) identified and
+  validated the benefit of rebuilding DLSS-G's Blackwell framework kernels for
+  Ada, including the motion-vector estimate, inpaint, and inpaint-decision
+  stages. This fork's experimental full-kernel path follows his proven
+  precompiled-cubin, exact-fingerprint, in-place replacement method; its
+  release payload table is generated with his `rebuild_cubins.py` workflow.
 - Special thanks to [mugensc](https://next.nexusmods.com/profile/mugensc) for the
   RenoDX DLSS5 compatibility testing and known-good runtime combination.
 - Special thanks to Artur from DLSS Enabler for the valuable debugging insights

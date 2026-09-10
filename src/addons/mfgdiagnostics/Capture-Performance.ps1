@@ -11,6 +11,8 @@ param(
   [ValidateNotNullOrEmpty()]
   [string]$ProcessName,
 
+  [string]$ConfigurationNotes = '',
+
   [string]$OutputRoot = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'MFGBenchmarks'),
 
   [string]$PresentMonPath = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) `
@@ -37,6 +39,59 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $directory = Join-Path $OutputRoot "$stamp-$Label"
 New-Item -ItemType Directory -Force -Path $directory | Out-Null
 $csv = Join-Path $directory 'presentmon.csv'
+
+$modules = @()
+try {
+  $modules = @($target.Modules | ForEach-Object {
+    $path = $_.FileName
+    $name = [IO.Path]::GetFileName($path)
+    if ($name -match '^(sl\.|nvngx_)' -or
+        $name -match '^(ReShade|renodx-mfg)' -or
+        $name -like '*.addon64') {
+      $item = Get-Item -LiteralPath $path -ErrorAction Stop
+      [ordered]@{
+        name = $name
+        file_version = $item.VersionInfo.FileVersion
+        product_version = $item.VersionInfo.ProductVersion
+        sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+      }
+    }
+  })
+} catch {
+  $modules = @([ordered]@{ inventory_error = $_.Exception.Message })
+}
+
+$video = @()
+try {
+  $video = @(Get-CimInstance Win32_VideoController | ForEach-Object {
+    [ordered]@{
+      name = $_.Name
+      driver_version = $_.DriverVersion
+      driver_date = $_.DriverDate
+    }
+  })
+} catch {
+  $video = @([ordered]@{ inventory_error = $_.Exception.Message })
+}
+
+$metadata = [ordered]@{
+  schema = 1
+  label = $Label
+  captured_at = (Get-Date).ToString('o')
+  duration_seconds = $DurationSeconds
+  process = $target.ProcessName
+  process_id = $target.Id
+  configuration_notes = $ConfigurationNotes
+  video_controllers = $video
+  loaded_runtime_modules = $modules
+  cautions = @(
+    'The module list is a point-in-time inventory, not proof that every mapped candidate executed.',
+    'Record game build, save, route, resolution, HDR, VSync/G-SYNC, cap and multiplier in configuration_notes.',
+    'Do not compare runs made with different drivers, runtime DLLs or addon hashes.'
+  )
+}
+$metadata | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (
+  Join-Path $directory 'capture-metadata.json') -Encoding UTF8
 
 if (Test-Path -LiteralPath $NvapiProbePath -PathType Leaf) {
   & $NvapiProbePath $target.Id | Set-Content -LiteralPath (Join-Path $directory 'nvapi-before.txt')

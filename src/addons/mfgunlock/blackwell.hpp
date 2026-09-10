@@ -345,4 +345,3 @@ inline bool Apply(HMODULE module, std::vector<Patch>& patches, std::vector<void*
 }
 
 }  // namespace mfgunlock::blackwell
-
