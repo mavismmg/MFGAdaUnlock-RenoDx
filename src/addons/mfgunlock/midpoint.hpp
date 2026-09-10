@@ -31,11 +31,11 @@
  * fatbin is TRUNCATED after the sm_89 PTX entry, dropping the cubin and forcing
  * the JIT path. The PTX entry is re-emitted uncompressed (flags 0x41).
  *
- * Credit: the technique -- the midpoint diagnosis, the injected PTX, and the
- * truncation trick -- is from dashdogy's RTX40MFG-Unlock. That project ships no
- * licence, so nothing here is copied from it; this is an independent
- * implementation of the same idea, verified by reproducing its published output
- * digest byte-for-byte offline (19FB3CD5...104B) before being written.
+ * Credit: the technique -- the midpoint diagnosis, injected PTX and truncation
+ * method -- is from dashdogy's MIT-licensed RTX40MFG-Unlock. This ReShade-form
+ * implementation was written for this addon and verified by reproducing the
+ * original patcher's published output digest byte-for-byte offline
+ * (19FB3CD5...104B).
  * ---------------------------------------------------------------------------
  */
 
@@ -46,6 +46,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <sstream>
 #include <vector>
 
@@ -383,7 +384,10 @@ inline bool Apply(HMODULE module, std::vector<Patch>& patches, void*& allocation
     for (size_t off = 0; off + sizeof(uint64_t) <= size; off += sizeof(uint64_t)) {
       uint64_t value = 0;
       std::memcpy(&value, sec + off, sizeof(value));
-      if (value < start || value >= start + image_size) continue;
+      if (value < start || image_size < internal::kOuterHeader ||
+          value > start + image_size - internal::kOuterHeader) {
+        continue;
+      }
       const auto* candidate = reinterpret_cast<const uint8_t*>(value);
       if (internal::ReadU32(candidate) != internal::kFatbinMagic) continue;
 
@@ -406,9 +410,13 @@ inline bool Apply(HMODULE module, std::vector<Patch>& patches, void*& allocation
       if (name_profile == nullptr) continue;
 
       const uint64_t declared = internal::ReadU64(candidate + 8);
+      if (declared > static_cast<uint64_t>((std::numeric_limits<size_t>::max)() -
+                                           internal::kOuterHeader)) {
+        continue;
+      }
       const size_t total = static_cast<size_t>(declared) + internal::kOuterHeader;
       if (total < 1024 || total > (16u << 20)) continue;
-      if (value + total > start + image_size) continue;
+      if (total > start + image_size - value) continue;
       const auto* fat_profile = internal::FindTemporalProfile(candidate, total);
       if (fat_profile == nullptr || fat_profile != name_profile) continue;
       if (fat == nullptr) {

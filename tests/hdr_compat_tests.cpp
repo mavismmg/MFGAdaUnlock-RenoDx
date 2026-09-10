@@ -77,6 +77,25 @@ int main() {
         sl::DLSSGQueueParallelismMode::eBlockNoClientQueues);
   CHECK(forwarded.dynamicTargetFrameRate == 165.0f);
 
+  source.structVersion = sl::kStructVersion1;
+  source.mode = sl::DLSSGMode::eOn;
+  source.numFramesToGenerate = 3;
+  CHECK(mfgunlock::hdrcompat::BuildAdvancedOptions(
+      source, forwarded, 0, false, true, true, 144.0f));
+  CHECK(forwarded.structVersion == sl::kStructVersion5);
+  CHECK(forwarded.mode == sl::DLSSGMode::eDynamic);
+  CHECK(forwarded.numFramesToGenerate == 3);
+  CHECK(forwarded.enableUserInterfaceRecomposition == sl::eTrue);
+  CHECK(forwarded.dynamicTargetFrameRate == 144.0f);
+
+  source.mode = sl::DLSSGMode::eOff;
+  CHECK(mfgunlock::hdrcompat::BuildAdvancedOptions(
+      source, forwarded, 0, false, true, true, 0.0f));
+  CHECK(forwarded.mode == sl::DLSSGMode::eOff);
+  CHECK(forwarded.dynamicTargetFrameRate == 0.0f);
+  CHECK(!mfgunlock::hdrcompat::BuildAdvancedOptions(
+      source, forwarded, 0, false, false, true, -1.0f));
+
   source.structVersion = 0;
   CHECK(!mfgunlock::hdrcompat::BuildUiRecompositionOptions(source, forwarded, 0, false));
   source.structVersion = 6;

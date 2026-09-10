@@ -34,19 +34,31 @@ inline bool HasHudSeparationResources(const sl::ResourceTag* tags, uint32_t coun
   return false;
 }
 
-inline bool BuildUiRecompositionOptions(const sl::DLSSGOptions& source,
-                                        sl::DLSSGOptions& destination,
-                                        uint32_t generated_frames,
-                                        bool override_generated_frames) {
+inline bool BuildAdvancedOptions(const sl::DLSSGOptions& source,
+                                 sl::DLSSGOptions& destination,
+                                 uint32_t generated_frames,
+                                 bool override_generated_frames,
+                                 bool enable_ui_recomposition,
+                                 bool enable_dynamic_mfg,
+                                 float dynamic_target_frame_rate) {
   const size_t version = source.structVersion;
   if (version < sl::kStructVersion1 || version > sl::kStructVersion5) return false;
+  if (dynamic_target_frame_rate < 0.0f || dynamic_target_frame_rate > 1000.0f)
+    return false;
 
   destination = sl::DLSSGOptions{};
   destination.next = source.next;
-  destination.structVersion = (std::max)(version, size_t{sl::kStructVersion4});
+  const size_t required_version = enable_dynamic_mfg
+                                      ? size_t{sl::kStructVersion5}
+                                      : (enable_ui_recomposition
+                                             ? size_t{sl::kStructVersion4}
+                                             : size_t{sl::kStructVersion1});
+  destination.structVersion = (std::max)(version, required_version);
 
   // Version 1.
-  destination.mode = source.mode;
+  destination.mode = enable_dynamic_mfg && source.mode != sl::DLSSGMode::eOff
+                         ? sl::DLSSGMode::eDynamic
+                         : source.mode;
   destination.numFramesToGenerate =
       override_generated_frames ? generated_frames : source.numFramesToGenerate;
   destination.flags = source.flags;
@@ -67,10 +79,24 @@ inline bool BuildUiRecompositionOptions(const sl::DLSSGOptions& source,
   if (version >= sl::kStructVersion2) destination.bReserved15 = source.bReserved15;
   if (version >= sl::kStructVersion3)
     destination.queueParallelismMode = source.queueParallelismMode;
-  destination.enableUserInterfaceRecomposition = sl::eTrue;
+  destination.enableUserInterfaceRecomposition =
+      enable_ui_recomposition ? sl::eTrue :
+      (version >= sl::kStructVersion4
+           ? source.enableUserInterfaceRecomposition
+           : sl::eFalse);
   if (version >= sl::kStructVersion5)
     destination.dynamicTargetFrameRate = source.dynamicTargetFrameRate;
+  if (enable_dynamic_mfg)
+    destination.dynamicTargetFrameRate = dynamic_target_frame_rate;
   return true;
+}
+
+inline bool BuildUiRecompositionOptions(const sl::DLSSGOptions& source,
+                                        sl::DLSSGOptions& destination,
+                                        uint32_t generated_frames,
+                                        bool override_generated_frames) {
+  return BuildAdvancedOptions(source, destination, generated_frames,
+                              override_generated_frames, true, false, 0.0f);
 }
 
 inline uint32_t SuppressHudSeparationResources(sl::ResourceTag* tags, uint32_t count) {

@@ -35,6 +35,7 @@
 
 #include <atomic>
 #include <cwctype>
+#include <vector>
 
 #include <include/reshade.hpp>
 
@@ -44,10 +45,15 @@ namespace mfgunlock::loadhook {
 
 // Called with the freshly loaded DLSS-G snippet. Set by the addon.
 inline void (*g_on_dlssg_loaded)(HMODULE) = nullptr;
+// Called with the freshly loaded Streamline DLSS-G wrapper. This is separate
+// from the NGX snippet above: native multiplier menus query the wrapper's
+// compiled ceiling, so it must be handled even when legacy pacing is disabled.
+inline void (*g_on_dlssg_plugin_loaded)(HMODULE) = nullptr;
 // slInit must be hooked before the game calls it, and it calls it early --
 // so catch the interposer as it is mapped rather than hoping to beat it.
 inline void (*g_on_interposer_loaded)() = nullptr;
 inline std::atomic_bool g_hooked{false};
+inline std::atomic_bool g_installing{false};
 inline std::atomic<unsigned int> g_catches{0};
 
 namespace internal {
@@ -55,6 +61,8 @@ namespace internal {
 constexpr wchar_t kNeedle[] = L"nvngx_dlssg";
 constexpr wchar_t kOtaNeedle[] = L"\\models\\dlssg\\";
 constexpr wchar_t kInterposerNeedle[] = L"sl.interposer";
+constexpr wchar_t kDlssgPluginNeedle[] = L"sl.dlss_g";
+constexpr wchar_t kDlssgPluginOtaNeedle[] = L"\\models\\sl_dlss_g_0\\";
 
 inline bool NameContains(const wchar_t* path, const wchar_t* needle) {
   if (path == nullptr) return false;
@@ -78,13 +86,21 @@ inline void Notify(HMODULE module, const wchar_t* path) {
   // Driver OTA snippets are commonly mapped from ...\models\dlssg\... under
   // opaque numeric .bin names. The loader call may receive only that basename,
   // so also inspect the resolved module path after the mapping completes.
-  bool is_dlssg = NameContains(path, kNeedle) || NameContains(path, kOtaNeedle);
-  if (!is_dlssg) {
-    wchar_t resolved_path[32768] = {};
-    const DWORD length = GetModuleFileNameW(module, resolved_path, ARRAYSIZE(resolved_path));
-    if (length != 0 && length < ARRAYSIZE(resolved_path)) {
-      is_dlssg = NameContains(resolved_path, kNeedle) || NameContains(resolved_path, kOtaNeedle);
-    }
+  std::vector<wchar_t> resolved_path(32768);
+  const DWORD length = GetModuleFileNameW(
+      module, resolved_path.data(), static_cast<DWORD>(resolved_path.size()));
+  if (length >= resolved_path.size()) resolved_path[0] = L'\0';
+  const bool is_dlssg =
+      NameContains(path, kNeedle) || NameContains(path, kOtaNeedle) ||
+      NameContains(resolved_path.data(), kNeedle) ||
+      NameContains(resolved_path.data(), kOtaNeedle);
+  const bool is_dlssg_plugin =
+      NameContains(path, kDlssgPluginNeedle) ||
+      NameContains(path, kDlssgPluginOtaNeedle) ||
+      NameContains(resolved_path.data(), kDlssgPluginNeedle) ||
+      NameContains(resolved_path.data(), kDlssgPluginOtaNeedle);
+  if (g_on_dlssg_plugin_loaded != nullptr && is_dlssg_plugin) {
+    g_on_dlssg_plugin_loaded(module);
   }
   if (g_on_dlssg_loaded != nullptr && is_dlssg) {
     g_catches.fetch_add(1, std::memory_order_relaxed);
@@ -129,10 +145,22 @@ inline const std::vector<hook::HookItem> kHooks = {
 inline void TryInstall() {
   if (g_hooked.load(std::memory_order_acquire)) return;
   if (g_on_dlssg_loaded == nullptr) return;
+  bool expected = false;
+  if (!g_installing.compare_exchange_strong(expected, true,
+                                             std::memory_order_acq_rel)) {
+    return;
+  }
   HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
-  if (kernel32 == nullptr) return;
-  if (!hook::Install(kernel32, internal::kHooks, "kernel32.dll")) return;
+  if (kernel32 == nullptr) {
+    g_installing.store(false, std::memory_order_release);
+    return;
+  }
+  if (!hook::Install(kernel32, internal::kHooks, "kernel32.dll")) {
+    g_installing.store(false, std::memory_order_release);
+    return;
+  }
   g_hooked.store(true, std::memory_order_release);
+  g_installing.store(false, std::memory_order_release);
 }
 
 inline void Uninstall() {

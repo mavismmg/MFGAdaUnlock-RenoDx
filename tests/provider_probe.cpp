@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "../src/addons/mfgunlock/blackwell.hpp"
 #include "../src/addons/mfgunlock/midpoint.hpp"
 
 namespace {
@@ -89,6 +90,22 @@ int wmain(int argc, wchar_t** argv) {
   std::vector<mfgunlock::midpoint::Patch> patches;
   void* allocation = nullptr;
   std::string detail;
+  std::vector<mfgunlock::blackwell::Patch> blackwell_patches;
+  std::vector<void*> blackwell_allocations;
+  mfgunlock::blackwell::Result blackwell_result;
+  std::string blackwell_detail;
+  const bool blackwell_supported = mfgunlock::blackwell::Apply(
+      module, blackwell_patches, blackwell_allocations, blackwell_result, blackwell_detail);
+  std::cout << "blackwell_framework_supported=" << (blackwell_supported ? "yes" : "no")
+            << '\n';
+  std::cout << "blackwell_motion_vector="
+            << (blackwell_result.motion_vector ? "yes" : "no") << '\n';
+  std::cout << "blackwell_inpaint=" << (blackwell_result.inpaint ? "yes" : "no") << '\n';
+  std::cout << "blackwell_inpaint_decision="
+            << (blackwell_result.inpaint_decision ? "yes" : "no") << '\n';
+  std::cout << "blackwell_detail=" << blackwell_detail << '\n';
+  mfgunlock::blackwell::Restore(blackwell_patches, blackwell_allocations);
+
   const bool temporal_supported =
       mfgunlock::midpoint::Apply(module, patches, allocation, detail);
   std::cout << "temporal_profile_supported=" << (temporal_supported ? "yes" : "no")

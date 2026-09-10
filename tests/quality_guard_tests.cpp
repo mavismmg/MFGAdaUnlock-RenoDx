@@ -53,6 +53,13 @@ int main() {
   const Assessment hdr = AssessTags(matching, 3, true);
   CHECK(hdr.suppress_hud_separation);
   CHECK((hdr.issues & kHdrFinalColorIsolation) != 0);
+  CHECK(hdr.has_hudless_color && hdr.has_ui_color_or_alpha);
+  CHECK(IsStructurallyValidForUiRecomposition(hdr));
+  CHECK(!CanAutomaticallyUseUiRecomposition(hdr, true));
+  CHECK(CanAutomaticallyUseUiRecomposition(hdr, false));
+  CHECK(!ShouldRequestAutomaticUiPath(false, false));
+  CHECK(ShouldRequestAutomaticUiPath(true, false));
+  CHECK(!ShouldRequestAutomaticUiPath(true, true));
   CHECK(hdr.observed_backbuffer.width == 2560 && hdr.observed_backbuffer.height == 1440);
   CHECK(hdr.observed_backbuffer.format == 10);
 
@@ -69,6 +76,7 @@ int main() {
   };
   const Assessment extent = AssessTags(extent_tags, 2, false);
   CHECK(extent.suppress_hud_separation);
+  CHECK(!IsStructurallyValidForUiRecomposition(extent));
   CHECK((extent.issues & kHudlessExtentMismatch) != 0);
 
   auto wrong_format = MakeResource(2560, 1440, 24);
@@ -79,6 +87,19 @@ int main() {
   };
   const Assessment format = AssessTags(format_tags, 2, false);
   CHECK(format.suppress_hud_separation);
+  CHECK(!IsStructurallyValidForUiRecomposition(format));
+
+  sl::ResourceTag clear_tags[] = {
+      sl::ResourceTag{nullptr, sl::kBufferTypeHUDLessColor,
+                      sl::ResourceLifecycle::eValidUntilPresent},
+      sl::ResourceTag{nullptr, sl::kBufferTypeUIAlpha,
+                      sl::ResourceLifecycle::eValidUntilPresent},
+  };
+  const Assessment clears = AssessTags(clear_tags, 2, false);
+  CHECK(clears.has_hud_separation);
+  CHECK(clears.clears_hudless_color && clears.clears_ui_color_or_alpha);
+  CHECK(!clears.has_hudless_color && !clears.has_ui_color_or_alpha);
+  CHECK(clears.issues == kNone);
   CHECK((format.issues & kHudlessFormatMismatch) != 0);
 
   sl::Extent cropped{0, 0, 1920, 1080};
@@ -110,6 +131,18 @@ int main() {
   const Assessment invalid_assessment = AssessTags(invalid_tags, 2, false);
   CHECK(invalid_assessment.suppress_hud_separation);
   CHECK((invalid_assessment.issues & kInvalidOptionalResource) != 0);
+
+  auto invalid_lifecycle = MakeResource(2560, 1440, 10);
+  sl::ResourceTag invalid_lifecycle_tags[] = {
+      {&backbuffer, sl::kBufferTypeBackbuffer,
+       sl::ResourceLifecycle::eValidUntilPresent},
+      {&invalid_lifecycle, sl::kBufferTypeHUDLessColor,
+       static_cast<sl::ResourceLifecycle>(99)},
+  };
+  const Assessment invalid_lifecycle_assessment =
+      AssessTags(invalid_lifecycle_tags, 2, false);
+  CHECK(invalid_lifecycle_assessment.suppress_hud_separation);
+  CHECK((invalid_lifecycle_assessment.issues & kInvalidOptionalResource) != 0);
 
   auto depth = MakeResource(2560, 1440, 40);
   auto motion = MakeResource(2560, 1440, 16);

@@ -40,9 +40,43 @@ struct OutputDescription {
 struct Assessment {
   uint32_t issues = kNone;
   bool has_hud_separation = false;
+  bool has_hudless_color = false;
+  bool has_ui_color_or_alpha = false;
+  bool clears_hudless_color = false;
+  bool clears_ui_color_or_alpha = false;
   bool suppress_hud_separation = false;
   OutputDescription observed_backbuffer{};
 };
+
+inline bool HasStructuralIssues(const Assessment& assessment) {
+  constexpr uint32_t kStructuralIssues =
+      kInvalidOptionalResource | kHudlessExtentMismatch |
+      kHudlessFormatMismatch | kUiExtentMismatch |
+      kUiColorAlphaLowPrecision;
+  return (assessment.issues & kStructuralIssues) != 0;
+}
+
+inline bool IsStructurallyValidForUiRecomposition(const Assessment& assessment) {
+  return assessment.has_hudless_color && assessment.has_ui_color_or_alpha &&
+         !HasStructuralIssues(assessment);
+}
+
+inline bool CanAutomaticallyUseUiRecomposition(const Assessment& assessment,
+                                                bool hdr) {
+  // Resource tags expose dimensions and native formats, but not whether their
+  // pixels use the same HDR transfer function/color space as final color.
+  // Automatic mode therefore cannot prove NVIDIA's color-space contract in
+  // HDR. Users with a verified integration can still select the explicit mode.
+  return !hdr && IsStructurallyValidForUiRecomposition(assessment);
+}
+
+inline constexpr bool ShouldRequestAutomaticUiPath(bool output_color_space_seen,
+                                                    bool hdr) {
+  // SetOptions commonly precedes the first resource tags, so allocation of the
+  // UI-capable path cannot depend on already having observed a complete tag
+  // pair. Actual optional inputs remain independently gated by AssessTags.
+  return output_color_space_seen && !hdr;
+}
 
 inline bool IsHudSeparationType(sl::BufferType type) {
   return type == sl::kBufferTypeHUDLessColor ||
@@ -51,7 +85,11 @@ inline bool IsHudSeparationType(sl::BufferType type) {
 }
 
 inline OutputDescription Describe(const sl::ResourceTag& tag, bool* valid = nullptr) {
-  bool local_valid = tag.structVersion == sl::kStructVersion1;
+  const bool lifecycle_valid =
+      tag.lifecycle == sl::ResourceLifecycle::eOnlyValidNow ||
+      tag.lifecycle == sl::ResourceLifecycle::eValidUntilPresent ||
+      tag.lifecycle == sl::ResourceLifecycle::eValidUntilEvaluate;
+  bool local_valid = tag.structVersion == sl::kStructVersion1 && lifecycle_valid;
   OutputDescription result{};
   if (tag.extent.width != 0 && tag.extent.height != 0) {
     result.width = tag.extent.width;
@@ -102,8 +140,18 @@ inline Assessment AssessTags(const sl::ResourceTag* tags, uint32_t count, bool h
 
   for (uint32_t i = 0; i < count; ++i) {
     const sl::ResourceTag& tag = tags[i];
-    if (!IsHudSeparationType(tag.type) || tag.resource == nullptr) continue;
+    if (!IsHudSeparationType(tag.type)) continue;
     result.has_hud_separation = true;
+    if (tag.resource == nullptr) {
+      result.clears_hudless_color |= tag.type == sl::kBufferTypeHUDLessColor;
+      result.clears_ui_color_or_alpha |=
+          tag.type == sl::kBufferTypeUIColorAndAlpha ||
+          tag.type == sl::kBufferTypeUIAlpha;
+      continue;
+    }
+    result.has_hudless_color |= tag.type == sl::kBufferTypeHUDLessColor;
+    result.has_ui_color_or_alpha |= tag.type == sl::kBufferTypeUIColorAndAlpha ||
+                                    tag.type == sl::kBufferTypeUIAlpha;
 
     bool valid = false;
     const OutputDescription resource = Describe(tag, &valid);

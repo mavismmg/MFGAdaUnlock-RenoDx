@@ -29,10 +29,19 @@ target_compile_definitions(quality_guard_tests PRIVATE NOMINMAX)
 target_include_directories(quality_guard_tests SYSTEM PRIVATE
   "${RENODX_SOURCE_DIR}/external/Streamline/include")
 add_test(NAME quality_guard_tests COMMAND quality_guard_tests)
+add_executable(pacing_policy_tests pacing_policy_tests.cpp)
+add_test(NAME pacing_policy_tests COMMAND pacing_policy_tests)
+add_executable(runtime_version_tests runtime_version_tests.cpp)
+add_test(NAME runtime_version_tests COMMAND runtime_version_tests)
 add_executable(provider_probe provider_probe.cpp)
 target_compile_definitions(provider_probe PRIVATE NOMINMAX)
 target_include_directories(provider_probe SYSTEM PRIVATE
   "${RENODX_SOURCE_DIR}/external/reshade")
+add_executable(blackwell_kernel_tests blackwell_kernel_tests.cpp)
+target_compile_definitions(blackwell_kernel_tests PRIVATE NOMINMAX)
+target_include_directories(blackwell_kernel_tests SYSTEM PRIVATE
+  "${RENODX_SOURCE_DIR}/external/reshade")
+add_test(NAME blackwell_kernel_tests COMMAND blackwell_kernel_tests)
 find_program(POWERSHELL_EXECUTABLE NAMES powershell)
 if(POWERSHELL_EXECUTABLE)
   add_test(NAME capture_comparison COMMAND "${POWERSHELL_EXECUTABLE}" -NoProfile
