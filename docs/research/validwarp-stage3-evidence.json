@@ -1,0 +1,347 @@
+{
+  "binaries": [
+    {
+      "version": "310.7.0.0",
+      "filename": "nvngx_dlssg.dll",
+      "sha256": "135eaf0733c1e37381a8c28abcf7a862404a54132b81787c04e35d09efc5e36f",
+      "size": 7519856,
+      "image_size": 7622656,
+      "machine": "0x8664",
+      "timestamp": 1778082620,
+      "utf16_hit_count": 0,
+      "ascii_validwarp_hit_count": 0
+    },
+    {
+      "version": "310.7.0.0",
+      "filename": "nvngx_dlssg.dll",
+      "sha256": "0d33b5de65d60a943c33bd096d574297302b214a1c5baa6bcb74bc1150a608de",
+      "size": 13959792,
+      "image_size": 14069760,
+      "machine": "0x8664",
+      "timestamp": 1778082538,
+      "utf16_hit_count": 0,
+      "ascii_validwarp_hit_count": 0
+    },
+    {
+      "version": "310.9.1.0",
+      "filename": "nvngx_dlssg.dll",
+      "sha256": "ff6e90eb78b827927dff5b4ecc6b1c870c2e9bca29ed9f48c7d348cc9e170b82",
+      "size": 7460976,
+      "image_size": 7565312,
+      "machine": "0x8664",
+      "timestamp": 1788370993,
+      "utf16_hit_count": 0,
+      "ascii_validwarp_hit_count": 0
+    },
+    {
+      "version": "2.14.1.0",
+      "filename": "sl.dlss_g.dll",
+      "sha256": "f4a6b2b14dcc0b1485989e430d3b4e3a44ac1800b92ba1ad74f476e64fb2b09c",
+      "size": 636032,
+      "image_size": 638976,
+      "machine": "0x8664",
+      "timestamp": 1788542315,
+      "utf16_hit_count": 0,
+      "ascii_validwarp_hit_count": 0
+    },
+    {
+      "version": "310.9.0.0",
+      "filename": "160_E658700.bin",
+      "sha256": "c64928fdb7c48a57722ea8eef2662171edc323473adea66c29a206a23f1a2bed",
+      "size": 7460976,
+      "image_size": 7565312,
+      "machine": "0x8664",
+      "timestamp": 1787250093,
+      "utf16_hit_count": 0,
+      "ascii_validwarp_hit_count": 0
+    },
+    {
+      "version": "310.7.129.0",
+      "filename": "160_E658700.bin",
+      "sha256": "20c18281e88f376bd6a0c1ab5ecfcb6f1bed931b928f956299d3489703b84cc3",
+      "size": 7519856,
+      "image_size": 7622656,
+      "machine": "0x8664",
+      "timestamp": 1786753737,
+      "utf16_hit_count": 0,
+      "ascii_validwarp_hit_count": 0
+    },
+    {
+      "version": "310.6.0.0",
+      "filename": "160_E658700.bin",
+      "sha256": "83230804a087272c6d7eb4c805ac5925ce1188c70f150cc8dbd5cd843f53946a",
+      "size": 7499376,
+      "image_size": 7606272,
+      "machine": "0x8664",
+      "timestamp": 1772742300,
+      "utf16_hit_count": 0,
+      "ascii_validwarp_hit_count": 0
+    },
+    {
+      "version": "2.11.0.0",
+      "filename": "190_E658703.dll",
+      "sha256": "86e55063193a5c82d804acb2dcd843d4f285cf78ae6a6e58cb156ed654f04342",
+      "size": 568448,
+      "image_size": 573440,
+      "machine": "0x8664",
+      "timestamp": 1774374034,
+      "utf16_hit_count": 0,
+      "ascii_validwarp_hit_count": 0
+    },
+    {
+      "version": "2.12.129.0",
+      "filename": "190_E658703.dll",
+      "sha256": "ee12fb6825564a024709ec7a41a110e43479c45a08b7c1e85892f4bf2b2640ca",
+      "size": 614016,
+      "image_size": 618496,
+      "machine": "0x8664",
+      "timestamp": 1786822240,
+      "utf16_hit_count": 0,
+      "ascii_validwarp_hit_count": 0
+    },
+    {
+      "version": "2.14.0.0",
+      "filename": "190_E658703.dll",
+      "sha256": "73b8a78a275b5a3db58038a4ff701a1fb4049db5c379eab9473a09fa856ba84e",
+      "size": 636032,
+      "image_size": 638976,
+      "machine": "0x8664",
+      "timestamp": 1787672776,
+      "utf16_hit_count": 0,
+      "ascii_validwarp_hit_count": 0
+    }
+  ],
+  "kernels": [
+    {
+      "version": "310.6.0",
+      "index": 46,
+      "offset": "0x69d090",
+      "fatbin_sha256": "5a8e0284aab8ac14fc82b0504bbeef25d2fce1d13a1c11d8bdb3f91fee8145fc",
+      "kernels": [
+        "main_kernel"
+      ],
+      "ptx": [
+        {
+          "arch": "sm_120",
+          "normalized_sha256": "af175af8dbbd41664590a837b629451420f91fa7c577a0434cfe31bf66f8ebe9",
+          "entry_normalized_sha256": "e805ab6fba3d9620a9bb82cc2a77ab778634544b2b441baf0d4d74241f0a4ef4",
+          "lines": 2777
+        },
+        {
+          "arch": "sm_89",
+          "normalized_sha256": "51a0d8e633473f5d08ace575fe1046ebe9d9196e5a1646f0bb2a485bb2f4bee1",
+          "entry_normalized_sha256": "a46fb1606b16e17b0eb9d21f63fbbf3aba378a63da9637e28ab67c3a18c33d98",
+          "lines": 2982
+        }
+      ]
+    },
+    {
+      "version": "310.6.0",
+      "index": 47,
+      "offset": "0x6b5100",
+      "fatbin_sha256": "fd0665969da887dd92540b673009e0361a6c1de74fe54badf48f300b1fccbbf1",
+      "kernels": [
+        "main_kernel"
+      ],
+      "ptx": [
+        {
+          "arch": "sm_120",
+          "normalized_sha256": "9358913bb13d122462f32e9c221ebeb62daeb30c1a88178546ff4164e5ecb679",
+          "entry_normalized_sha256": "579c5a80ddac3e83ad6afd9e22815d39674712ed0fd978e830f453ae812974cf",
+          "lines": 266
+        },
+        {
+          "arch": "sm_89",
+          "normalized_sha256": "a9f9cf48ba2bfc04a315fdd93bb0558acc0a0347eb53044db70943b261d56b53",
+          "entry_normalized_sha256": "0e252f76309b8a8fab554b70dcc8db872d4b3bcd330b3d8d9122754938d5d35f",
+          "lines": 280
+        }
+      ]
+    },
+    {
+      "version": "310.7.0",
+      "index": 46,
+      "offset": "0x6a3ee0",
+      "fatbin_sha256": "5a8e0284aab8ac14fc82b0504bbeef25d2fce1d13a1c11d8bdb3f91fee8145fc",
+      "kernels": [
+        "main_kernel"
+      ],
+      "ptx": [
+        {
+          "arch": "sm_120",
+          "normalized_sha256": "af175af8dbbd41664590a837b629451420f91fa7c577a0434cfe31bf66f8ebe9",
+          "entry_normalized_sha256": "e805ab6fba3d9620a9bb82cc2a77ab778634544b2b441baf0d4d74241f0a4ef4",
+          "lines": 2777
+        },
+        {
+          "arch": "sm_89",
+          "normalized_sha256": "51a0d8e633473f5d08ace575fe1046ebe9d9196e5a1646f0bb2a485bb2f4bee1",
+          "entry_normalized_sha256": "a46fb1606b16e17b0eb9d21f63fbbf3aba378a63da9637e28ab67c3a18c33d98",
+          "lines": 2982
+        }
+      ]
+    },
+    {
+      "version": "310.7.0",
+      "index": 47,
+      "offset": "0x6bbf50",
+      "fatbin_sha256": "fd0665969da887dd92540b673009e0361a6c1de74fe54badf48f300b1fccbbf1",
+      "kernels": [
+        "main_kernel"
+      ],
+      "ptx": [
+        {
+          "arch": "sm_120",
+          "normalized_sha256": "9358913bb13d122462f32e9c221ebeb62daeb30c1a88178546ff4164e5ecb679",
+          "entry_normalized_sha256": "579c5a80ddac3e83ad6afd9e22815d39674712ed0fd978e830f453ae812974cf",
+          "lines": 266
+        },
+        {
+          "arch": "sm_89",
+          "normalized_sha256": "a9f9cf48ba2bfc04a315fdd93bb0558acc0a0347eb53044db70943b261d56b53",
+          "entry_normalized_sha256": "0e252f76309b8a8fab554b70dcc8db872d4b3bcd330b3d8d9122754938d5d35f",
+          "lines": 280
+        }
+      ]
+    },
+    {
+      "version": "310.7.129",
+      "index": 46,
+      "offset": "0x6a3ee0",
+      "fatbin_sha256": "5a8e0284aab8ac14fc82b0504bbeef25d2fce1d13a1c11d8bdb3f91fee8145fc",
+      "kernels": [
+        "main_kernel"
+      ],
+      "ptx": [
+        {
+          "arch": "sm_120",
+          "normalized_sha256": "af175af8dbbd41664590a837b629451420f91fa7c577a0434cfe31bf66f8ebe9",
+          "entry_normalized_sha256": "e805ab6fba3d9620a9bb82cc2a77ab778634544b2b441baf0d4d74241f0a4ef4",
+          "lines": 2777
+        },
+        {
+          "arch": "sm_89",
+          "normalized_sha256": "51a0d8e633473f5d08ace575fe1046ebe9d9196e5a1646f0bb2a485bb2f4bee1",
+          "entry_normalized_sha256": "a46fb1606b16e17b0eb9d21f63fbbf3aba378a63da9637e28ab67c3a18c33d98",
+          "lines": 2982
+        }
+      ]
+    },
+    {
+      "version": "310.7.129",
+      "index": 47,
+      "offset": "0x6bbf50",
+      "fatbin_sha256": "fd0665969da887dd92540b673009e0361a6c1de74fe54badf48f300b1fccbbf1",
+      "kernels": [
+        "main_kernel"
+      ],
+      "ptx": [
+        {
+          "arch": "sm_120",
+          "normalized_sha256": "9358913bb13d122462f32e9c221ebeb62daeb30c1a88178546ff4164e5ecb679",
+          "entry_normalized_sha256": "579c5a80ddac3e83ad6afd9e22815d39674712ed0fd978e830f453ae812974cf",
+          "lines": 266
+        },
+        {
+          "arch": "sm_89",
+          "normalized_sha256": "a9f9cf48ba2bfc04a315fdd93bb0558acc0a0347eb53044db70943b261d56b53",
+          "entry_normalized_sha256": "0e252f76309b8a8fab554b70dcc8db872d4b3bcd330b3d8d9122754938d5d35f",
+          "lines": 280
+        }
+      ]
+    },
+    {
+      "version": "310.9.0",
+      "index": 46,
+      "offset": "0x695da0",
+      "fatbin_sha256": "fba7599cc9cdc1eed947ad5adb94436052e8c17ad7fd268c2590ab36a0c731e9",
+      "kernels": [
+        "Kernel_EstimateIntermMvecsScatter"
+      ],
+      "ptx": [
+        {
+          "arch": "sm_120",
+          "normalized_sha256": "e27ca3a5bc914f113445f73b2e36644aabff90fac0dd0d2d5830561c42aca0ff",
+          "entry_normalized_sha256": "e805ab6fba3d9620a9bb82cc2a77ab778634544b2b441baf0d4d74241f0a4ef4",
+          "lines": 2777
+        },
+        {
+          "arch": "sm_89",
+          "normalized_sha256": "b6ef6d76104d13d2a49561bfc2178faca99945ed37bf9d44366b3630b868e818",
+          "entry_normalized_sha256": "a46fb1606b16e17b0eb9d21f63fbbf3aba378a63da9637e28ab67c3a18c33d98",
+          "lines": 2982
+        }
+      ]
+    },
+    {
+      "version": "310.9.0",
+      "index": 47,
+      "offset": "0x6adf40",
+      "fatbin_sha256": "95a9d97130a4cc88ddb5e08dc8d54c491bdfd66fc99571007886d3f0d792476e",
+      "kernels": [
+        "Kernel_EstimatePrev2CurrScatter"
+      ],
+      "ptx": [
+        {
+          "arch": "sm_120",
+          "normalized_sha256": "0a9fc32fbf5769de13526d0b290459ecea4909f1e895ebe618d4f017a7e3161e",
+          "entry_normalized_sha256": "579c5a80ddac3e83ad6afd9e22815d39674712ed0fd978e830f453ae812974cf",
+          "lines": 266
+        },
+        {
+          "arch": "sm_89",
+          "normalized_sha256": "d9457d1ec2fad424410c839fe2f46f9fbc1ec812c9f7344db4ce1e103f552239",
+          "entry_normalized_sha256": "0e252f76309b8a8fab554b70dcc8db872d4b3bcd330b3d8d9122754938d5d35f",
+          "lines": 280
+        }
+      ]
+    },
+    {
+      "version": "310.9.1",
+      "index": 46,
+      "offset": "0x695da0",
+      "fatbin_sha256": "fba7599cc9cdc1eed947ad5adb94436052e8c17ad7fd268c2590ab36a0c731e9",
+      "kernels": [
+        "Kernel_EstimateIntermMvecsScatter"
+      ],
+      "ptx": [
+        {
+          "arch": "sm_120",
+          "normalized_sha256": "e27ca3a5bc914f113445f73b2e36644aabff90fac0dd0d2d5830561c42aca0ff",
+          "entry_normalized_sha256": "e805ab6fba3d9620a9bb82cc2a77ab778634544b2b441baf0d4d74241f0a4ef4",
+          "lines": 2777
+        },
+        {
+          "arch": "sm_89",
+          "normalized_sha256": "b6ef6d76104d13d2a49561bfc2178faca99945ed37bf9d44366b3630b868e818",
+          "entry_normalized_sha256": "a46fb1606b16e17b0eb9d21f63fbbf3aba378a63da9637e28ab67c3a18c33d98",
+          "lines": 2982
+        }
+      ]
+    },
+    {
+      "version": "310.9.1",
+      "index": 47,
+      "offset": "0x6adf40",
+      "fatbin_sha256": "95a9d97130a4cc88ddb5e08dc8d54c491bdfd66fc99571007886d3f0d792476e",
+      "kernels": [
+        "Kernel_EstimatePrev2CurrScatter"
+      ],
+      "ptx": [
+        {
+          "arch": "sm_120",
+          "normalized_sha256": "0a9fc32fbf5769de13526d0b290459ecea4909f1e895ebe618d4f017a7e3161e",
+          "entry_normalized_sha256": "579c5a80ddac3e83ad6afd9e22815d39674712ed0fd978e830f453ae812974cf",
+          "lines": 266
+        },
+        {
+          "arch": "sm_89",
+          "normalized_sha256": "d9457d1ec2fad424410c839fe2f46f9fbc1ec812c9f7344db4ce1e103f552239",
+          "entry_normalized_sha256": "0e252f76309b8a8fab554b70dcc8db872d4b3bcd330b3d8d9122754938d5d35f",
+          "lines": 280
+        }
+      ]
+    }
+  ],
+  "note": "Static evidence only; not a supported-provider allowlist. Kernel indices and offsets are inventory locators, not runtime patch targets. PTX entry normalization replaces the entry-name substring, including its parameter symbols, after removing comments and blank lines. No NVIDIA payloads or personal paths are included."
+}

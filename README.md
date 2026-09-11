@@ -86,6 +86,7 @@ replace or claim authorship of either original contribution.
 - [Verifying Operation](#verifying-operation)
 - [Experimental Vulkan Support](#experimental-vulkan-support)
 - [Frame-generation Input Quality](#frame-generation-input-quality)
+- [Experimental Thin-geometry Interpolation](#experimental-thin-geometry-interpolation)
 - [Dynamic Multi Frame Generation](#dynamic-multi-frame-generation)
 - [Version Matrix and Advanced Runtime Setup](#version-matrix-and-advanced-runtime-setup)
 - [Settings](#settings)
@@ -369,6 +370,48 @@ nearby objects or screen edges in some games, but the best value is
 integration-specific. It is disabled by default and does not add camera-turn
 resets or a separate pacing path.
 
+## Experimental Thin-geometry Interpolation
+
+These controls modify separate stages of the DLSS-G kernel pipeline. They do
+not change the selected multiplier, presentation pacing, Reflex, Dynamic MFG,
+HUD/UI tags, or HDR color handling. They currently require an exactly validated
+DLSS-G 310.9.0 or 310.9.1 provider; unknown or changed providers fail closed and
+keep the normal kernel path. Changes take effect after restarting the game.
+
+**Intermediate scatter retention (Experimental — Recommended)** and
+**Validated warp blend (Experimental — Recommended)** are enabled together by
+default when no saved settings exist. They remain independently selectable,
+and existing explicitly saved choices are preserved.
+
+Intermediate scatter retention relaxes one motion-consistency
+rejection while DLSS-G constructs motion vectors for intermediate generated
+frames. The kernel's separate depth-mismatch test remains active. This can
+preserve more useful motion for fences, wires, foliage, small objects, character
+outlines, and weapon edges. Because retaining additional motion can also retain
+an incorrect vector, disable it if a particular game develops trails, ghosting,
+stretched pixels, or worse disocclusion artifacts.
+
+Validated warp blend is a separate later-stage experiment. It checks
+warped-coordinate bounds, invalid-vector sentinels,
+finite color values, and agreement between two candidates before gradually
+increasing how strongly accepted warped color is used. It may reduce flicker or
+the breakup of thin moving detail, but can increase temporal persistence or
+ghosting in some scenes. This implementation was informed by Tony Joaca's public
+DLSSG-Transfusion `qualityValidWarp` work, but is independently implemented and
+intentionally uses additional conservative validation rather than copying its
+complete behavior.
+
+The two options are deliberately independent: **Intermediate scatter
+retention** changes which motion information survives during intermediate-frame
+construction, while **Validated warp blend** changes how accepted candidates
+are blended later. For troubleshooting, test one option at a time and restart
+between changes.
+
+**Previous-to-current scatter retention** remains available only as an advanced
+research control. It changes a different rejection path between real frames,
+was unstable in initial game testing, and is disabled by default. It is not
+recommended for normal use.
+
 ## Dynamic Multi Frame Generation
 
 **Use NVIDIA Dynamic MFG** requests Streamline's native
@@ -523,6 +566,9 @@ Written to your `ReShade.ini` under `[RenoDX.MFGUnlock]`:
 | `ForceFlipMeteringOff` | `0` | Normally leave off. Enable only if 3x/4x freezes; this forces Streamline's legacy software pacing fallback and requires a game restart |
 | `TemporalFix` | `1` | The interpolation correction. Leave on; changing it requires a restart |
 | `BlackwellFrameworkKernels` | `1` | Uses the exact-fingerprint Blackwell motion-vector/inpaint/inpaint-decision replacements when the installed provider matches; otherwise falls back to the 0.7 temporal correction. Changing it requires a restart |
+| `ThinGeometryIntermediateScatter` | `1` | Experimental recommended default: retains more motion information while constructing intermediate generated frames; keeps the separate depth test and requires the validated full Blackwell path. Disable per game if it adds ghosting or disocclusion artifacts |
+| `ThinGeometryValidatedWarpBlend` | `1` | Experimental recommended default paired with Intermediate scatter retention: validates warped candidates before gradually increasing their blend weight; may reduce thin-detail flicker but can increase temporal persistence. Requires a restart |
+| `ThinGeometryPreviousScatter` | `0` | Unstable advanced research control for a separate previous-to-current motion-rejection path; not recommended for normal use |
 | `ForceMultiplier` | `0` | `0` respects the game's own choice; `2`–`6` requests that exact multiplier, whether it is higher or lower than the game's choice |
 | `DynamicMFG` | `0` | Requests native NVIDIA Dynamic MFG only on the validated 310.9.1 + 2.14.1 D3D12 stack after the provider reports support; takes priority over `ForceMultiplier` while active |
 | `DynamicTargetFPS` | `0` | Dynamic output target; `0` follows display refresh. With VSync active, Streamline ignores a nonzero value and follows refresh instead |
@@ -540,6 +586,11 @@ the panel reports it as pending until the game submits its next enabled
 `slDLSSGSetOptions` call; toggling Frame Generation off/on forces most games to
 submit one. The panel lists the game's request, the addon's fixed request, and
 the effective downstream request separately.
+
+> **First launch after installation or update:** After installing or updating
+> the addon, the first launch may perform DLSS-G kernel compilation and exhibit
+> temporary stutter or uneven pacing. Restart the game once before evaluating
+> performance or image quality.
 
 ## Troubleshooting
 
@@ -662,6 +713,15 @@ kernel's PTX, rewrites the blend weight to use the temporal parameter, and lets
 the driver JIT the corrected version. The overlay reports which path applied.
 Changing **Prefer full Blackwell framework kernels** requires a game restart.
 
+When enabled, **Intermediate scatter retention** selects an exact-fingerprint
+variant of the Blackwell intermediate motion-vector kernel. It relaxes only the
+identified motion-consistency input and retains the separate depth test.
+**Validated warp blend** operates later through a separately validated PTX
+fatbin redirect. Its rebuilt fatbin preserves all original entries around the
+modified program. Both paths modify mapped process memory only, validate the
+provider and original payload exactly, and fall back without patching when any
+identity or layout check fails.
+
 DLSS-G owns frame generation and presentation pacing; this addon does not
 implement a separate frame scheduler or issue generated-frame presents. With
 current Streamline builds, pacing is normally left to the runtime. The optional
@@ -690,6 +750,19 @@ headers. The final manual gate used a controlled STALKER 2 presentation trace.
 This is a single release-gate trace, not a cross-version performance benchmark.
 It validates the active 4x presentation path and does not claim zero game-side
 stutter, universal compatibility, or an addon-overhead difference.
+
+> **Onimusha: Way of the Sword thin-geometry validation (September 11, 2026):**
+> a 45-second release-candidate run used an RTX 4070 SUPER, D3D12, Streamline
+> 2.10.3, a mapped DLSS-G 310.9.1 provider, fixed 4x, Hardware: Independent
+> Flip, and both Intermediate Scatter Retention and Validated Warp Blend.
+> PresentMon recorded 9,312 display intervals at 4.446 ms median, 6.245 ms p95
+> and 8.486 ms p99 (222.90 FPS average). The AnimationTime cadence heuristic
+> measured 3.998x from 2,347 source-frame samples and 7,036 generated-frame
+> candidates; two source intervals exceeded the robust 30.768 ms threshold.
+
+This Onimusha result validates the tested 4x cadence with both experimental
+quality mechanisms active. It remains one controlled run, not a universal
+performance or artifact-free compatibility claim.
 
 Use
 [`Capture-STALKER2-FramePacing.ps1`](src/addons/mfgdiagnostics/Capture-STALKER2-FramePacing.ps1)
@@ -767,6 +840,15 @@ They are developer tools and are not required for normal use.
   stages. This fork's experimental full-kernel path follows his proven
   precompiled-cubin, exact-fingerprint, in-place replacement method; its
   release payload table is generated with his `rebuild_cubins.py` workflow.
+- Tony Joaca, author of DLSSG-Transfusion, publicly identified
+  `Kernel_BlendCandidatesFused` as the useful intervention point behind his
+  `qualityValidWarp` quality option. That research informed this fork's
+  separately implemented and more conservative **Validated warp blend**
+  experiment. No code or binary payload from DLSSG-Transfusion is included.
+- The **Intermediate scatter retention** analysis and experimental `+120`
+  motion-consistency variant were developed independently in this fork. The
+  underlying DLSS-G kernels remain NVIDIA technology and are not claimed as
+  original project code.
 - Special thanks to [mugensc](https://next.nexusmods.com/profile/mugensc) for the
   RenoDX DLSS5 compatibility testing and known-good runtime combination.
 - Special thanks to Artur from DLSS Enabler for the valuable debugging insights

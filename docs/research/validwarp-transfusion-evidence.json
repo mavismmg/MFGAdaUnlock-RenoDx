@@ -1,0 +1,417 @@
+{
+  "package": [
+    {
+      "filename": "dinput8.dll",
+      "size": 512512,
+      "sha256": "e696667c7f9d0002e017093bd021c7b2fc0f4a0a74fd6e924cd1dda8f8a9d18c",
+      "quality_builder_range": [
+        "0x1aac0",
+        "0x1b2b5"
+      ],
+      "quality_builder_sha256": "6ce32f81b0f7bc61796fedc6fb398f7f39fb3126552c3d9422e7bc2fe48cce94"
+    },
+    {
+      "filename": "DLSSG-Transfusion.asi",
+      "size": 512000,
+      "sha256": "835bfc97b1e3809ee67b5d9e2fbebed5dfa9cd46de8365e63002c1cc08379b94",
+      "quality_builder_range": [
+        "0x1aac0",
+        "0x1b2b5"
+      ],
+      "quality_builder_sha256": "6ce32f81b0f7bc61796fedc6fb398f7f39fb3126552c3d9422e7bc2fe48cce94"
+    },
+    {
+      "filename": "DLSSG-Transfusion.json",
+      "size": 305,
+      "sha256": "06cdf2d0c38baf43e995fdd36f72f60f4b9789453aa714583699530090552478",
+      "quality_builder_range": null,
+      "quality_builder_sha256": null
+    },
+    {
+      "filename": "dxgi.dll",
+      "size": 513024,
+      "sha256": "978e45edc89e3cc653067af3deffa10cdd2a63c4e0af4d2b8669f3ad0dc79f2b",
+      "quality_builder_range": [
+        "0x1aac0",
+        "0x1b2b5"
+      ],
+      "quality_builder_sha256": "6ce32f81b0f7bc61796fedc6fb398f7f39fb3126552c3d9422e7bc2fe48cce94"
+    },
+    {
+      "filename": "README.txt",
+      "size": 7946,
+      "sha256": "5a574770e4dad4dbbe8a0477462b4984da77308926a0c39b4f6cbe4dbbc450b9",
+      "quality_builder_range": null,
+      "quality_builder_sha256": null
+    },
+    {
+      "filename": "version.dll",
+      "size": 513024,
+      "sha256": "4e5aec19ecdf8a801c55bec635433fd7fb6afda3856ecca16c102db96ccd60bb",
+      "quality_builder_range": [
+        "0x1aac0",
+        "0x1b2b5"
+      ],
+      "quality_builder_sha256": "6ce32f81b0f7bc61796fedc6fb398f7f39fb3126552c3d9422e7bc2fe48cce94"
+    },
+    {
+      "filename": "winmm.dll",
+      "size": 517120,
+      "sha256": "f4bb0c01b0ebe1ca1382a9f3bac1a27c38530a8e1770c886f59d87d12f144183",
+      "quality_builder_range": [
+        "0x1aac0",
+        "0x1b2b5"
+      ],
+      "quality_builder_sha256": "e8ab805adf9a721dee9996832d391af58139cece1e62779c6561cdf125d18bb3"
+    }
+  ],
+  "payload_comparison": [
+    {
+      "filename": "dinput8.dll",
+      "payload_rva": "0x5c260",
+      "template_sha256": "7946a671a8a70f8a47fa304118db73402feb05a93b6b7742e740a097623f2031",
+      "effective_payload_sha256": "2e9aa1a59e3776f374f36f55d8bee1893a672912570106c33fe803b33647dce4",
+      "floor_replacements": 2
+    },
+    {
+      "filename": "DLSSG-Transfusion.asi",
+      "payload_rva": "0x5c260",
+      "template_sha256": "7946a671a8a70f8a47fa304118db73402feb05a93b6b7742e740a097623f2031",
+      "effective_payload_sha256": "2e9aa1a59e3776f374f36f55d8bee1893a672912570106c33fe803b33647dce4",
+      "floor_replacements": 2
+    },
+    {
+      "filename": "dxgi.dll",
+      "payload_rva": "0x5c260",
+      "template_sha256": "7946a671a8a70f8a47fa304118db73402feb05a93b6b7742e740a097623f2031",
+      "effective_payload_sha256": "2e9aa1a59e3776f374f36f55d8bee1893a672912570106c33fe803b33647dce4",
+      "floor_replacements": 2
+    },
+    {
+      "filename": "version.dll",
+      "payload_rva": "0x5c260",
+      "template_sha256": "7946a671a8a70f8a47fa304118db73402feb05a93b6b7742e740a097623f2031",
+      "effective_payload_sha256": "2e9aa1a59e3776f374f36f55d8bee1893a672912570106c33fe803b33647dce4",
+      "floor_replacements": 2
+    },
+    {
+      "filename": "winmm.dll",
+      "payload_rva": "0x5c260",
+      "template_sha256": "7946a671a8a70f8a47fa304118db73402feb05a93b6b7742e740a097623f2031",
+      "effective_payload_sha256": "2e9aa1a59e3776f374f36f55d8bee1893a672912570106c33fe803b33647dce4",
+      "floor_replacements": 2
+    }
+  ],
+  "provider_gate_checks": [
+    {
+      "version": "310.6.0",
+      "arch": "sm_120",
+      "length": 39542,
+      "fnv1a64": "0x1ddb45ec587d4411",
+      "sha256": "ee78a570e68e924b8df5c29e2a12551c56a89fda66b61c492997b2769b6737c7",
+      "matches_transfusion_gate": false
+    },
+    {
+      "version": "310.6.0",
+      "arch": "sm_89",
+      "length": 41933,
+      "fnv1a64": "0x2235e64731d66ba5",
+      "sha256": "6dec7860f553377598f36bba8ae93a8f3e38907cbd479a6dcc94088b3872bde8",
+      "matches_transfusion_gate": false
+    },
+    {
+      "version": "310.7.0",
+      "arch": "sm_120",
+      "length": 39542,
+      "fnv1a64": "0x1ddb45ec587d4411",
+      "sha256": "ee78a570e68e924b8df5c29e2a12551c56a89fda66b61c492997b2769b6737c7",
+      "matches_transfusion_gate": false
+    },
+    {
+      "version": "310.7.0",
+      "arch": "sm_89",
+      "length": 41933,
+      "fnv1a64": "0x2235e64731d66ba5",
+      "sha256": "6dec7860f553377598f36bba8ae93a8f3e38907cbd479a6dcc94088b3872bde8",
+      "matches_transfusion_gate": false
+    },
+    {
+      "version": "310.7.129",
+      "arch": "sm_120",
+      "length": 39542,
+      "fnv1a64": "0x1ddb45ec587d4411",
+      "sha256": "ee78a570e68e924b8df5c29e2a12551c56a89fda66b61c492997b2769b6737c7",
+      "matches_transfusion_gate": false
+    },
+    {
+      "version": "310.7.129",
+      "arch": "sm_89",
+      "length": 41933,
+      "fnv1a64": "0x2235e64731d66ba5",
+      "sha256": "6dec7860f553377598f36bba8ae93a8f3e38907cbd479a6dcc94088b3872bde8",
+      "matches_transfusion_gate": false
+    },
+    {
+      "version": "310.9.0",
+      "arch": "sm_120",
+      "length": 39638,
+      "fnv1a64": "0x7a6f5f41105c6d85",
+      "sha256": "14d2c4b5e54e04c2865664b8019e53cdea0a847b6bdd5ef82265d5f567533e9d",
+      "matches_transfusion_gate": true
+    },
+    {
+      "version": "310.9.0",
+      "arch": "sm_89",
+      "length": 42029,
+      "fnv1a64": "0x9b5219cdd66e0969",
+      "sha256": "5f1a0dfb94df02ac6644b4211cf059826b2c6646d4d9680697fc7a0d975c01b1",
+      "matches_transfusion_gate": false
+    },
+    {
+      "version": "310.9.1",
+      "arch": "sm_120",
+      "length": 39638,
+      "fnv1a64": "0x7a6f5f41105c6d85",
+      "sha256": "14d2c4b5e54e04c2865664b8019e53cdea0a847b6bdd5ef82265d5f567533e9d",
+      "matches_transfusion_gate": true
+    },
+    {
+      "version": "310.9.1",
+      "arch": "sm_89",
+      "length": 42029,
+      "fnv1a64": "0x9b5219cdd66e0969",
+      "sha256": "5f1a0dfb94df02ac6644b4211cf059826b2c6646d4d9680697fc7a0d975c01b1",
+      "matches_transfusion_gate": false
+    }
+  ],
+  "scalar_checks": {
+    "note": "Illustrative finite inputs evaluated in Python double precision; no PTX execution, no GPU timing, no proof of visual gain. Values are away from float32 threshold boundaries.",
+    "cases": [
+      {
+        "case": "agreeing warped candidates, low native weights",
+        "input": {
+          "u0": [
+            0.1,
+            0.1,
+            0.1
+          ],
+          "u1": [
+            0.7,
+            0.7,
+            0.7
+          ],
+          "w0": [
+            0.35,
+            0.35,
+            0.35
+          ],
+          "w1": [
+            0.36,
+            0.36,
+            0.36
+          ],
+          "c0": 0.1,
+          "c1": 0.1
+        },
+        "result": {
+          "e_static": 1.8,
+          "e_motion": 0.03,
+          "mutual": true,
+          "primary0": true,
+          "primary1": true,
+          "copy0to1": false,
+          "copy1to0": false
+        }
+      },
+      {
+        "case": "low image change, no UIR",
+        "input": {
+          "u0": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "u1": [
+            0.52,
+            0.52,
+            0.52
+          ],
+          "w0": [
+            0.3,
+            0.3,
+            0.3
+          ],
+          "w1": [
+            0.7,
+            0.7,
+            0.7
+          ],
+          "c0": 0.3,
+          "c1": 0.3
+        },
+        "result": {
+          "e_static": 0.06,
+          "e_motion": 1.2,
+          "mutual": false,
+          "primary0": false,
+          "primary1": false,
+          "copy0to1": false,
+          "copy1to0": false
+        }
+      },
+      {
+        "case": "same low-change data with UIR flag",
+        "input": {
+          "u0": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "u1": [
+            0.52,
+            0.52,
+            0.52
+          ],
+          "w0": [
+            0.3,
+            0.3,
+            0.3
+          ],
+          "w1": [
+            0.7,
+            0.7,
+            0.7
+          ],
+          "c0": 0.01,
+          "c1": 0.01,
+          "uir": true
+        },
+        "result": {
+          "e_static": 0.06,
+          "e_motion": 1.2,
+          "mutual": false,
+          "primary0": true,
+          "primary1": true,
+          "copy0to1": false,
+          "copy1to0": false
+        }
+      },
+      {
+        "case": "possible translucent HUD over changing background; not recognized semantically",
+        "input": {
+          "u0": [
+            0.55,
+            0.55,
+            0.55
+          ],
+          "u1": [
+            0.95,
+            0.95,
+            0.95
+          ],
+          "w0": [
+            0.65,
+            0.65,
+            0.65
+          ],
+          "w1": [
+            0.85,
+            0.85,
+            0.85
+          ],
+          "c0": 0.3,
+          "c1": 0.3
+        },
+        "result": {
+          "e_static": 1.2,
+          "e_motion": 0.6,
+          "mutual": false,
+          "primary0": true,
+          "primary1": true,
+          "copy0to1": false,
+          "copy1to0": false
+        }
+      },
+      {
+        "case": "source 0 confident, destination candidate invalid",
+        "input": {
+          "u0": [
+            0.1,
+            0.1,
+            0.1
+          ],
+          "u1": [
+            0.7,
+            0.7,
+            0.7
+          ],
+          "w0": [
+            0.4,
+            0.4,
+            0.4
+          ],
+          "w1": [
+            0.8,
+            0.8,
+            0.8
+          ],
+          "c0": 0.3,
+          "c1": 0.02,
+          "valid1": false
+        },
+        "result": {
+          "e_static": 1.8,
+          "e_motion": 1.2,
+          "mutual": false,
+          "primary0": true,
+          "primary1": false,
+          "copy0to1": true,
+          "copy1to0": false
+        }
+      },
+      {
+        "case": "both motion candidates invalid despite color agreement",
+        "input": {
+          "u0": [
+            0.1,
+            0.1,
+            0.1
+          ],
+          "u1": [
+            0.7,
+            0.7,
+            0.7
+          ],
+          "w0": [
+            0.35,
+            0.35,
+            0.35
+          ],
+          "w1": [
+            0.36,
+            0.36,
+            0.36
+          ],
+          "c0": 0.5,
+          "c1": 0.5,
+          "valid0": false,
+          "valid1": false
+        },
+        "result": {
+          "e_static": 1.8,
+          "e_motion": 0.03,
+          "mutual": false,
+          "primary0": false,
+          "primary1": false,
+          "copy0to1": false,
+          "copy1to0": false
+        }
+      }
+    ]
+  },
+  "note": "Static comparison of user-supplied DLSSG-Transfusion v1.4.0 files. Detailed disassembly conclusions refer to the ASI. Effective payload hashes apply the ASI's observed 0.85-to-1.0 text transformation to each identical template; winmm control flow was not separately disassembled. Gate matches establish offline PTX identity only, not runtime activation, supported integration or quality improvement.",
+  "original_stage3_preserved": {
+    "report_sha256": "1f360fe5d2c3e9308e6dddddbd3ad2923d981e2ad2ec6fde71fa416a244d5efa",
+    "manifest_sha256": "fab4baad1d8808da3b2d60f1fa861ebe8db925acfd49de93f9d68a9cd0703e1d"
+  }
+}
