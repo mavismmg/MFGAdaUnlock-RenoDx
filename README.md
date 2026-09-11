@@ -314,6 +314,23 @@ following game launch option so its Vulkan layer is allowed to load:
 Without this option, ReShade—and therefore the addon—may not initialize in the
 game.
 
+For Xbox Game Pass / UWP-style installations, see the community installation guide by u/amart565 below.
+
+### UWP / Xbox Game Pass Installation Guide
+
+Installing ReShade addons in some Xbox Game Pass / UWP-style game packages can require additional steps
+compared to standard Steam or standalone installations. 
+
+For a detailed walkthrough covering ReShade installation, `gamelaunchhelper.exe`, 
+Vulkan setup, launch arguments, addon loading, and MFG Unlock setup in games such as
+**Indiana Jones and the Great Circle** and **DOOM: The Dark Ages**, 
+see the community guide by [u/amart565](https://www.reddit.com/user/amart565/): > **[Guide to installing ReShade on UWP (Xbox Game Pass) games and getting MFG Unlock working](https://www.reddit.com/r/ReShade/comments/1wd6dyr/guide_to_installing_reshade_on_uwpxbox_game_pass/)**
+The guide covers Xbox Game Pass-specific installation steps that are outside the core 
+scope of MFG Unlock and may be especially useful when ReShade cannot be installed through the usual executable-selection workflow. 
+
+**Credit:** Huge thanks to [u/amart565](https://www.reddit.com/user/amart565/) 
+for testing the Xbox Game Pass / UWP installation path and putting together the detailed community guide.
+
 ## Frame-generation Input Quality
 
 The default is **Automatic Guard + UI Composition (Recommended)**.
@@ -754,6 +771,10 @@ They are developer tools and are not required for normal use.
 - Special thanks to Artur from DLSS Enabler for the valuable debugging insights
   during the investigation of the Hogwarts Legacy HDR + Frame Generation issue,
   which helped lead to the fix included in this fork.
+- [u/amart565](https://www.reddit.com/user/amart565/) tested and documented the
+  ReShade + MFG Unlock installation workflow for Xbox Game Pass / UWP-style game packages,
+  including Vulkan titles such as Indiana Jones and DOOM: The Dark Ages.
+  See the [community installation guide](https://www.reddit.com/r/ReShade/comments/1wd6dyr/guide_to_installing_reshade_on_uwpxbox_game_pass/).
 - Built on [RenoDX](https://github.com/clshortfuse/renodx) by clshortfuse, and
   [ReShade](https://github.com/crosire/reshade) by crosire.
 
