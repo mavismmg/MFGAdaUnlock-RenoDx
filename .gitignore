@@ -11,6 +11,8 @@ out/
 *.lib
 *.tlog
 *.recipe
+__pycache__/
+*.pyc
 
 # Never commit vendor binaries. This repo redistributes no NVIDIA files.
 *.dll
@@ -22,6 +24,7 @@ _nvngx*
 # Release builds may compile this table in, but the derived vendor payloads
 # are never stored in source control.
 src/addons/mfgunlock/blackwell_cubins.generated.hpp
+src/addons/mfgunlock/thin_geometry_cubins.generated.hpp
 
 # Editor / OS
 .vs/

@@ -9,6 +9,7 @@
 
 #include "../src/addons/mfgunlock/blackwell.hpp"
 #include "../src/addons/mfgunlock/midpoint.hpp"
+#include "../src/addons/mfgunlock/thin_geometry.hpp"
 
 namespace {
 
@@ -95,7 +96,8 @@ int wmain(int argc, wchar_t** argv) {
   mfgunlock::blackwell::Result blackwell_result;
   std::string blackwell_detail;
   const bool blackwell_supported = mfgunlock::blackwell::Apply(
-      module, blackwell_patches, blackwell_allocations, blackwell_result, blackwell_detail);
+      module, blackwell_patches, blackwell_allocations, blackwell_result,
+      blackwell_detail, true);
   std::cout << "blackwell_framework_supported=" << (blackwell_supported ? "yes" : "no")
             << '\n';
   std::cout << "blackwell_motion_vector="
@@ -104,6 +106,26 @@ int wmain(int argc, wchar_t** argv) {
   std::cout << "blackwell_inpaint_decision="
             << (blackwell_result.inpaint_decision ? "yes" : "no") << '\n';
   std::cout << "blackwell_detail=" << blackwell_detail << '\n';
+
+  std::vector<mfgunlock::thingeometry::Redirect> thin_redirects;
+  mfgunlock::thingeometry::Result thin_result;
+  std::string thin_provider_version;
+  const bool thin_supported = mfgunlock::thingeometry::Apply(
+      module, {true, true}, thin_redirects, thin_result,
+      thin_provider_version);
+  std::cout << "thin_geometry_provider=" << thin_provider_version << '\n';
+  std::cout << "thin_geometry_redirect_supported="
+            << (thin_supported ? "yes" : "no") << '\n';
+  std::cout << "validated_warp_blend="
+            << (thin_result.validated_warp_blend.applied ? "applied" : "not-applied")
+            << ": " << thin_result.validated_warp_blend.detail << '\n';
+  std::cout << "previous_scatter="
+            << (thin_result.previous_scatter.applied ? "applied" : "not-applied")
+            << ": " << thin_result.previous_scatter.detail << '\n';
+  std::cout << "intermediate_scatter="
+            << (blackwell_result.intermediate_scatter ? "applied" : "not-applied")
+            << '\n';
+  mfgunlock::thingeometry::Restore(thin_redirects);
   mfgunlock::blackwell::Restore(blackwell_patches, blackwell_allocations);
 
   const bool temporal_supported =

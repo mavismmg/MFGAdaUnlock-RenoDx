@@ -46,6 +46,9 @@ target_compile_definitions(blackwell_kernel_tests PRIVATE NOMINMAX)
 target_include_directories(blackwell_kernel_tests SYSTEM PRIVATE
   "${RENODX_SOURCE_DIR}/external/reshade")
 add_test(NAME blackwell_kernel_tests COMMAND blackwell_kernel_tests)
+add_executable(thin_geometry_tests thin_geometry_tests.cpp)
+target_compile_definitions(thin_geometry_tests PRIVATE NOMINMAX)
+add_test(NAME thin_geometry_tests COMMAND thin_geometry_tests)
 find_program(POWERSHELL_EXECUTABLE NAMES powershell)
 if(POWERSHELL_EXECUTABLE)
   add_test(NAME capture_comparison COMMAND "${POWERSHELL_EXECUTABLE}" -NoProfile

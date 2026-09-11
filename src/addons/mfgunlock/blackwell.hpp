@@ -33,6 +33,15 @@ namespace mfgunlock::blackwell::generated {
 #define MFGUNLOCK_HAS_GENERATED_BLACKWELL_CUBINS 0
 #endif
 
+#if __has_include("./thin_geometry_cubins.generated.hpp")
+namespace mfgunlock::blackwell::generated_thin_geometry {
+#include "./thin_geometry_cubins.generated.hpp"
+}
+#define MFGUNLOCK_HAS_GENERATED_THIN_GEOMETRY_CUBINS 1
+#else
+#define MFGUNLOCK_HAS_GENERATED_THIN_GEOMETRY_CUBINS 0
+#endif
+
 namespace mfgunlock::blackwell {
 
 enum class KernelRole {
@@ -60,6 +69,8 @@ struct Result {
   bool motion_vector = false;
   bool inpaint = false;
   bool inpaint_decision = false;
+  bool intermediate_scatter_requested = false;
+  bool intermediate_scatter = false;
   size_t kernels = 0;
 };
 
@@ -84,6 +95,14 @@ inline uint32_t ReadU32(const uint8_t* p) {
 inline uint64_t ReadU64(const uint8_t* p) {
   uint64_t value = 0;
   std::memcpy(&value, p, sizeof(value));
+  return value;
+}
+
+inline uint64_t Fnv1a64(const uint8_t* bytes, size_t size) {
+  uint64_t value = 0xcbf29ce484222325ull;
+  for (size_t index = 0; index < size; ++index) {
+    value = (value ^ bytes[index]) * 0x100000001b3ull;
+  }
   return value;
 }
 
@@ -156,6 +175,24 @@ inline const generated::CubinPatch* MatchReplacement(const ElfFingerprint& finge
   for (const auto& replacement : generated::kCubinPatches) {
     if (replacement.text == fingerprint.text && replacement.shared == fingerprint.shared &&
         replacement.regs == fingerprint.registers && replacement.orig_size == slot_size &&
+        replacement.data != nullptr && replacement.size != 0 && replacement.size <= slot_size) {
+      return &replacement;
+    }
+  }
+  return nullptr;
+}
+#endif
+
+#if MFGUNLOCK_HAS_GENERATED_THIN_GEOMETRY_CUBINS
+inline const generated_thin_geometry::CubinVariant* MatchIntermediateScatter(
+    const ElfFingerprint& fingerprint, const uint8_t* payload, size_t slot_size) {
+  for (const auto& replacement : generated_thin_geometry::kThinGeometryCubins) {
+    if (std::strcmp(replacement.mechanism, "intermediate_scatter") != 0) continue;
+    if (replacement.source_text == fingerprint.text &&
+        replacement.source_shared == fingerprint.shared &&
+        replacement.source_regs == fingerprint.registers &&
+        replacement.slot_size == slot_size &&
+        replacement.source_fnv1a64 == Fnv1a64(payload, slot_size) &&
         replacement.data != nullptr && replacement.size != 0 && replacement.size <= slot_size) {
       return &replacement;
     }
@@ -285,10 +322,12 @@ inline void Restore(std::vector<Patch>& patches, std::vector<void*>& allocations
 }
 
 inline bool Apply(HMODULE module, std::vector<Patch>& patches, std::vector<void*>& allocations,
-                  Result& result, std::string& detail) {
+                  Result& result, std::string& detail,
+                  bool enable_intermediate_scatter = false) {
   patches.clear();
   allocations.clear();
   result = {};
+  result.intermediate_scatter_requested = enable_intermediate_scatter;
   detail.clear();
 
   std::vector<internal::Candidate> candidates;
@@ -311,6 +350,21 @@ inline bool Apply(HMODULE module, std::vector<Patch>& patches, std::vector<void*
 
 #if MFGUNLOCK_HAS_GENERATED_BLACKWELL_CUBINS
   for (const auto& candidate : candidates) {
+    const uint8_t* replacement_data = candidate.replacement->data;
+    size_t replacement_size = candidate.replacement->size;
+#if MFGUNLOCK_HAS_GENERATED_THIN_GEOMETRY_CUBINS
+    if (enable_intermediate_scatter && candidate.role == KernelRole::MotionVector) {
+      if (const auto* experimental = internal::MatchIntermediateScatter(
+              internal::ElfFingerprint{candidate.replacement->text,
+                                       candidate.replacement->shared,
+                                       candidate.replacement->regs},
+              candidate.payload, candidate.slot_size)) {
+        replacement_data = experimental->data;
+        replacement_size = experimental->size;
+        result.intermediate_scatter = true;
+      }
+    }
+#endif
     Patch patch;
     patch.payload = candidate.payload;
     patch.original.assign(candidate.payload, candidate.payload + candidate.slot_size);
@@ -321,9 +375,9 @@ inline bool Apply(HMODULE module, std::vector<Patch>& patches, std::vector<void*
       Restore(patches, allocations);
       return false;
     }
-    std::memcpy(candidate.payload, candidate.replacement->data, candidate.replacement->size);
-    std::memset(candidate.payload + candidate.replacement->size, 0,
-                candidate.slot_size - candidate.replacement->size);
+    std::memcpy(candidate.payload, replacement_data, replacement_size);
+    std::memset(candidate.payload + replacement_size, 0,
+                candidate.slot_size - replacement_size);
     DWORD ignored = 0;
     VirtualProtect(candidate.payload, candidate.slot_size, old_protection, &ignored);
     patches.push_back(std::move(patch));
@@ -340,6 +394,10 @@ inline bool Apply(HMODULE module, std::vector<Patch>& patches, std::vector<void*
          << (result.motion_vector ? "yes" : "no") << ", inpaint="
          << (result.inpaint ? "yes" : "no") << ", decision="
          << (result.inpaint_decision ? "yes" : "no") << ", kernels=" << result.kernels;
+  if (enable_intermediate_scatter) {
+    stream << "; intermediate scatter retention="
+           << (result.intermediate_scatter ? "applied" : "unsupported (baseline retained)");
+  }
   detail = stream.str();
   return result.motion_vector;
 }

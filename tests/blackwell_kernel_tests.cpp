@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <iostream>
+#include <string>
 
 #include "../src/addons/mfgunlock/blackwell.hpp"
 
@@ -31,6 +32,16 @@ int main() {
   }
 #else
   CHECK(!HasGeneratedCubins());
+#endif
+
+#if MFGUNLOCK_HAS_GENERATED_THIN_GEOMETRY_CUBINS
+  for (const auto& replacement : generated_thin_geometry::kThinGeometryCubins) {
+    CHECK(replacement.data != nullptr);
+    CHECK(replacement.size != 0);
+    CHECK(replacement.size <= replacement.slot_size);
+    CHECK(replacement.source_fnv1a64 != 0);
+    CHECK(std::string(replacement.mechanism) == "intermediate_scatter");
+  }
 #endif
 
   std::cout << "blackwell kernel tests passed\n";
