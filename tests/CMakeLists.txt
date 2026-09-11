@@ -31,6 +31,10 @@ target_include_directories(quality_guard_tests SYSTEM PRIVATE
 add_test(NAME quality_guard_tests COMMAND quality_guard_tests)
 add_executable(pacing_policy_tests pacing_policy_tests.cpp)
 add_test(NAME pacing_policy_tests COMMAND pacing_policy_tests)
+add_executable(force_policy_tests force_policy_tests.cpp)
+target_include_directories(force_policy_tests SYSTEM PRIVATE
+  "${RENODX_SOURCE_DIR}/external/Streamline/include")
+add_test(NAME force_policy_tests COMMAND force_policy_tests)
 add_executable(runtime_version_tests runtime_version_tests.cpp)
 add_test(NAME runtime_version_tests COMMAND runtime_version_tests)
 add_executable(provider_probe provider_probe.cpp)

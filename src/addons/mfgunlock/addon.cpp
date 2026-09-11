@@ -2185,20 +2185,92 @@ void OnRegisterOverlay(reshade::api::effect_runtime* /*runtime*/) {
     if (force != 0 && force < 2) force = 2;
     mfgunlock::framecount::g_force_multiplier.store(static_cast<unsigned int>(force),
                                                     std::memory_order_relaxed);
+    mfgunlock::framecount::NotifyFixedMultiplierChanged(
+        static_cast<unsigned int>(force));
     reshade::set_config_value(nullptr, kConfigSection, "ForceMultiplier", force);
   }
   ImGui::TextDisabled(
       "Leave off for games with their own 2x/3x/4x selector -- forcing would\n"
       "override your in-game choice. Dynamic MFG takes priority when active.");
-  if (mfgunlock::framecount::g_intercepted.load(std::memory_order_relaxed)) {
-    ImGui::Text("Game asked for %ux, forced to %u generated frame(s).",
-                mfgunlock::framecount::g_last_requested.load(std::memory_order_relaxed) + 1,
-                mfgunlock::framecount::g_last_forced.load(std::memory_order_relaxed));
-  } else if (mfgunlock::framecount::g_declined_no_pacing.load(std::memory_order_relaxed)) {
-    ImGui::TextWrapped("Declined to force: flip metering was still on when DLSS-G started.");
-  } else if (mfgunlock::framecount::g_hooked.load(std::memory_order_acquire)) {
-    ImGui::TextDisabled("slDLSSGSetOptions hook installed; not exercised yet.");
+  const bool game_request_seen =
+      mfgunlock::framecount::g_game_request_seen.load(std::memory_order_acquire);
+  if (game_request_seen) {
+    ImGui::Text("Game request: %ux.",
+                mfgunlock::framecount::g_last_requested.load(
+                    std::memory_order_relaxed) + 1);
   } else {
+    ImGui::TextDisabled("Game request: not observed yet.");
+  }
+  if (mfgunlock::forcepolicy::IsFixedMultiplier(
+          static_cast<unsigned int>(force))) {
+    ImGui::Text("Addon fixed request: %dx.", force);
+  } else {
+    ImGui::TextDisabled("Addon fixed request: off (game decides).");
+  }
+
+  const auto fixed_status =
+      static_cast<mfgunlock::forcepolicy::FixedOverrideStatus>(
+          mfgunlock::framecount::g_fixed_override_status.load(
+              std::memory_order_acquire));
+  const bool effective_seen =
+      mfgunlock::framecount::g_effective_request_seen.load(
+          std::memory_order_acquire);
+  const unsigned int effective_multiplier =
+      mfgunlock::framecount::g_last_effective_generated.load(
+          std::memory_order_relaxed) + 1;
+  switch (fixed_status) {
+    case mfgunlock::forcepolicy::FixedOverrideStatus::kPending:
+      ImGui::TextDisabled(
+          "Effective request: pending the next enabled slDLSSGSetOptions call.");
+      break;
+    case mfgunlock::forcepolicy::FixedOverrideStatus::kApplied:
+      ImGui::Text("Effective downstream request: %ux (addon override accepted).",
+                  effective_multiplier);
+      break;
+    case mfgunlock::forcepolicy::FixedOverrideStatus::kRejected:
+      if (effective_seen) {
+        ImGui::Text("Effective downstream request: %ux (game fallback).",
+                    effective_multiplier);
+      }
+      ImGui::TextDisabled("The runtime rejected the addon's fixed request.");
+      break;
+    case mfgunlock::forcepolicy::FixedOverrideStatus::kBlockedByPacing:
+      if (effective_seen) {
+        ImGui::Text("Effective downstream request: %ux (game fallback).",
+                    effective_multiplier);
+      }
+      ImGui::TextDisabled(
+          "Addon override blocked: legacy flip pacing was not verified.");
+      break;
+    case mfgunlock::forcepolicy::FixedOverrideStatus::kUnsupportedAbi:
+      if (effective_seen) {
+        ImGui::Text("Effective downstream request: %ux (game fallback).",
+                    effective_multiplier);
+      }
+      ImGui::TextDisabled(
+          "Addon override unsupported by the game's DLSSGOptions ABI.");
+      break;
+    case mfgunlock::forcepolicy::FixedOverrideStatus::kDynamicPriority:
+      ImGui::TextDisabled(
+          "Effective multiplier: Dynamic MFG/provider-controlled; fixed request is not applied.");
+      break;
+    case mfgunlock::forcepolicy::FixedOverrideStatus::kMatchedGameRequest:
+      ImGui::Text("Effective downstream request: %ux (already matched addon request).",
+                  effective_multiplier);
+      break;
+    case mfgunlock::forcepolicy::FixedOverrideStatus::kNative:
+    default:
+      if (effective_seen) {
+        ImGui::Text("Effective downstream request: %ux (game controlled).",
+                    effective_multiplier);
+      } else if (mfgunlock::framecount::g_hooked.load(
+                     std::memory_order_acquire)) {
+        ImGui::TextDisabled(
+            "Effective request: waiting for an enabled slDLSSGSetOptions call.");
+      }
+      break;
+  }
+  if (!mfgunlock::framecount::g_hooked.load(std::memory_order_acquire)) {
     ImGui::TextDisabled("sl.interposer.dll not hooked (no Streamline in this game?).");
   }
 
@@ -2343,6 +2415,13 @@ void LoadConfig() {
     if (value != 0 && (value < 2 || value > 6)) value = 0;
     mfgunlock::framecount::g_force_multiplier.store(static_cast<unsigned int>(value),
                                                     std::memory_order_relaxed);
+    mfgunlock::framecount::g_fixed_override_status.store(
+        static_cast<unsigned int>(
+            mfgunlock::forcepolicy::IsFixedMultiplier(
+                static_cast<unsigned int>(value))
+                ? mfgunlock::forcepolicy::FixedOverrideStatus::kPending
+                : mfgunlock::forcepolicy::FixedOverrideStatus::kNative),
+        std::memory_order_relaxed);
   }
   if (reshade::get_config_value(nullptr, kConfigSection, "DynamicMFG", value)) {
     mfgunlock::framecount::g_dynamic_mfg_enabled.store(value != 0,

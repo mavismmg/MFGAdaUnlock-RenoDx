@@ -23,7 +23,7 @@
  *
  * The lever is slDLSSGSetOptions. It is not exported: the app obtains it
  * through slGetFeatureFunction (which sl.interposer.dll does export), so we
- * hook that, hand back a wrapper, and raise numFramesToGenerate in transit.
+ * hook that, hand back a wrapper, and replace numFramesToGenerate in transit.
  *
  * DLSSGOptions::numFramesToGenerate counts GENERATED frames, not total:
  * 2x -> 1, 3x -> 2, 4x -> 3 (sl_dlss_g.h). The struct is passed by const
@@ -53,6 +53,7 @@
 
 #include <include/reshade.hpp>
 
+#include "./force_policy.hpp"
 #include "./hdr_compat.hpp"
 #include "./ngx_hook.hpp"
 #include "./pacing_policy.hpp"
@@ -61,12 +62,17 @@
 
 namespace mfgunlock::framecount {
 
-// 0 = leave the game's request alone. 2..5 = force that multiplier.
+// 0 = leave the game's request alone. 2..6 = force that exact multiplier.
 inline std::atomic<unsigned int> g_force_multiplier{0};
 inline std::atomic_bool g_hooked{false};
 inline std::atomic_bool g_intercepted{false};
+inline std::atomic_bool g_game_request_seen{false};
 inline std::atomic<unsigned int> g_last_requested{0};
 inline std::atomic<unsigned int> g_last_forced{0};
+inline std::atomic_bool g_effective_request_seen{false};
+inline std::atomic<unsigned int> g_last_effective_generated{0};
+inline std::atomic<unsigned int> g_fixed_override_status{
+    static_cast<unsigned int>(forcepolicy::FixedOverrideStatus::kNative)};
 inline std::atomic_bool g_declined_no_pacing{false};
 inline std::atomic<unsigned int> g_force_failed_for{0};
 inline std::atomic<unsigned int> g_last_result{0};
@@ -265,7 +271,7 @@ inline std::atomic<unsigned int> g_runtime_selection_result{0};
 // mutation. These callbacks are a guard only when the user explicitly requests
 // the legacy software-flip compatibility path. By SetOptions time the plugin is
 // loaded, so a requested legacy patch gets one last bounded attempt; if it still
-// cannot be verified, the raised count is declined rather than risking a freeze.
+// cannot be verified, the overridden count is declined rather than risking a freeze.
 inline void (*g_ensure_pacing)() = nullptr;
 inline bool (*g_pacing_ready)() = nullptr;
 
@@ -1147,51 +1153,128 @@ inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
   if (!g_addon_enabled.load(std::memory_order_relaxed))
     return real(viewport, options);
 
-  if (options.mode == sl::DLSSGMode::eOff) {
+  const bool game_enabled = options.mode != sl::DLSSGMode::eOff;
+  if (!game_enabled) {
     // A deliberate game-side off/on cycle is a safe retry boundary after a
     // transient or provider-version rejection.
     g_dynamic_runtime_declined.store(false, std::memory_order_release);
     g_dynamic_applied.store(false, std::memory_order_relaxed);
   }
   const bool dynamic_ready =
-      options.mode != sl::DLSSGMode::eOff &&
-      g_dynamic_mfg_enabled.load(std::memory_order_relaxed) &&
+      game_enabled && g_dynamic_mfg_enabled.load(std::memory_order_relaxed) &&
       g_dynamic_d3d12.load(std::memory_order_relaxed) &&
       DynamicVersionStackReady() &&
       g_dynamic_support_seen.load(std::memory_order_acquire) &&
       g_dynamic_supported.load(std::memory_order_relaxed) &&
       !g_dynamic_runtime_declined.load(std::memory_order_relaxed);
-  if (dynamic_ready) {
+  const unsigned int multiplier =
+      g_force_multiplier.load(std::memory_order_relaxed);
+  const uint32_t requested = options.numFramesToGenerate;
+  if (game_enabled) {
     g_last_requested.store(options.numFramesToGenerate, std::memory_order_relaxed);
-    return CallSetOptions(viewport, options);
+    g_game_request_seen.store(true, std::memory_order_release);
   }
 
-  const unsigned int multiplier = g_force_multiplier.load(std::memory_order_relaxed);
-  if (multiplier < 2 || options.mode == sl::DLSSGMode::eOff) {
+  const forcepolicy::RequestDecision decision = forcepolicy::Resolve(
+      requested, multiplier, dynamic_ready, game_enabled);
+
+  // Frame Generation Off is never rewritten. A selected fixed override remains
+  // pending and is applied only when the game submits its next enabled call.
+  if (!game_enabled) {
     const sl::Result result = CallSetOptions(viewport, options);
-    if (options.mode != sl::DLSSGMode::eOff) {
-      const unsigned int requested = options.numFramesToGenerate;
-      const unsigned int previous = g_native_requested.exchange(requested, std::memory_order_relaxed);
-      const unsigned int raw_result = static_cast<unsigned int>(result);
-      const unsigned int previous_result =
-          g_native_result.exchange(raw_result, std::memory_order_relaxed);
-      const bool first = !g_native_request_seen.exchange(true, std::memory_order_relaxed);
-      if (first || previous != requested || previous_result != raw_result) {
-        std::stringstream s;
-        s << "mfgunlock: native slDLSSGSetOptions requested numFramesToGenerate=" << requested
-          << " (" << (requested + 1) << "x) and returned sl::Result " << raw_result << ".";
-        reshade::log::message(result == sl::Result::eOk ? reshade::log::level::info
-                                                       : reshade::log::level::warning,
-                              s.str().c_str());
+    g_last_forced.store(0, std::memory_order_relaxed);
+    g_effective_request_seen.store(false, std::memory_order_release);
+    g_fixed_override_status.store(
+        static_cast<unsigned int>(
+            forcepolicy::IsFixedMultiplier(multiplier)
+                ? forcepolicy::FixedOverrideStatus::kPending
+                : forcepolicy::FixedOverrideStatus::kNative),
+        std::memory_order_release);
+    return result;
+  }
+
+  // Dynamic has priority only while its validated runtime path is actively
+  // eligible. Fixed selection remains saved for the next non-Dynamic call.
+  if (decision.source == forcepolicy::RequestSource::kDynamic) {
+    const sl::Result result = CallSetOptions(viewport, options);
+    g_last_forced.store(0, std::memory_order_relaxed);
+    if (g_dynamic_applied.load(std::memory_order_acquire)) {
+      g_effective_request_seen.store(false, std::memory_order_release);
+      g_fixed_override_status.store(
+          static_cast<unsigned int>(
+              forcepolicy::FixedOverrideStatus::kDynamicPriority),
+          std::memory_order_release);
+    } else {
+      if (result == sl::Result::eOk) {
+        g_last_effective_generated.store(requested, std::memory_order_relaxed);
+        g_effective_request_seen.store(true, std::memory_order_release);
+      } else {
+        g_effective_request_seen.store(false, std::memory_order_release);
       }
+      g_fixed_override_status.store(
+          static_cast<unsigned int>(
+              forcepolicy::IsFixedMultiplier(multiplier)
+                  ? forcepolicy::FixedOverrideStatus::kPending
+                  : forcepolicy::FixedOverrideStatus::kNative),
+          std::memory_order_release);
     }
     return result;
   }
 
-  const uint32_t desired = multiplier - 1;  // generated frames, not total
-  const uint32_t requested = options.numFramesToGenerate;
-  g_last_requested.store(requested, std::memory_order_relaxed);
-  if (requested >= desired) return CallSetOptions(viewport, options);
+  if (decision.source == forcepolicy::RequestSource::kNative) {
+    const sl::Result result = CallSetOptions(viewport, options);
+    g_last_forced.store(0, std::memory_order_relaxed);
+    g_declined_no_pacing.store(false, std::memory_order_relaxed);
+    g_fixed_override_status.store(
+        static_cast<unsigned int>(forcepolicy::FixedOverrideStatus::kNative),
+        std::memory_order_release);
+    if (result == sl::Result::eOk) {
+      g_last_effective_generated.store(requested, std::memory_order_relaxed);
+      g_effective_request_seen.store(true, std::memory_order_release);
+    } else {
+      g_effective_request_seen.store(false, std::memory_order_release);
+    }
+    const unsigned int previous =
+        g_native_requested.exchange(requested, std::memory_order_relaxed);
+    const unsigned int raw_result = static_cast<unsigned int>(result);
+    const unsigned int previous_result =
+        g_native_result.exchange(raw_result, std::memory_order_relaxed);
+    const bool first =
+        !g_native_request_seen.exchange(true, std::memory_order_relaxed);
+    if (first || previous != requested || previous_result != raw_result) {
+      std::stringstream s;
+      s << "mfgunlock: native slDLSSGSetOptions requested numFramesToGenerate="
+        << requested << " (" << (requested + 1)
+        << "x) and returned sl::Result " << raw_result << ".";
+      reshade::log::message(result == sl::Result::eOk
+                                ? reshade::log::level::info
+                                : reshade::log::level::warning,
+                            s.str().c_str());
+    }
+    return result;
+  }
+
+  const uint32_t desired = decision.downstream_generated_frames;
+  if (!decision.OverridesGeneratedFrames()) {
+    const sl::Result result = CallSetOptions(viewport, options);
+    g_last_result.store(static_cast<unsigned int>(result),
+                        std::memory_order_relaxed);
+    g_last_forced.store(0, std::memory_order_relaxed);
+    if (result == sl::Result::eOk) {
+      g_last_effective_generated.store(requested, std::memory_order_relaxed);
+      g_effective_request_seen.store(true, std::memory_order_release);
+    } else {
+      g_effective_request_seen.store(false, std::memory_order_release);
+    }
+    g_fixed_override_status.store(
+        static_cast<unsigned int>(
+            forcepolicy::FixedOverrideStatus::kMatchedGameRequest),
+        std::memory_order_release);
+    g_declined_no_pacing.store(false, std::memory_order_relaxed);
+    g_force_failed_for.store(0, std::memory_order_relaxed);
+    return result;
+  }
+
   if (options.structVersion < sl::kStructVersion1 ||
       options.structVersion > sl::kStructVersion5) {
     static std::atomic_bool warned{false};
@@ -1200,7 +1283,21 @@ inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
           reshade::log::level::warning,
           "mfgunlock: refusing to override an unknown DLSSGOptions ABI; forwarding the game's request unchanged.");
     }
-    return CallSetOptions(viewport, options);
+    const sl::Result result = CallSetOptions(viewport, options);
+    g_last_result.store(static_cast<unsigned int>(result),
+                        std::memory_order_relaxed);
+    g_last_forced.store(0, std::memory_order_relaxed);
+    if (result == sl::Result::eOk) {
+      g_last_effective_generated.store(requested, std::memory_order_relaxed);
+      g_effective_request_seen.store(true, std::memory_order_release);
+    } else {
+      g_effective_request_seen.store(false, std::memory_order_release);
+    }
+    g_fixed_override_status.store(
+        static_cast<unsigned int>(
+            forcepolicy::FixedOverrideStatus::kUnsupportedAbi),
+        std::memory_order_release);
+    return result;
   }
 
   // Native pacing is ready without a patch. This branch becomes false only
@@ -1218,7 +1315,21 @@ inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
             "was requested, but its provider field could not be verified. Leaving the "
             "game's own request alone.");
       }
-      return CallSetOptions(viewport, options);
+      const sl::Result result = CallSetOptions(viewport, options);
+      g_last_result.store(static_cast<unsigned int>(result),
+                          std::memory_order_relaxed);
+      g_last_forced.store(0, std::memory_order_relaxed);
+      if (result == sl::Result::eOk) {
+        g_last_effective_generated.store(requested, std::memory_order_relaxed);
+        g_effective_request_seen.store(true, std::memory_order_release);
+      } else {
+        g_effective_request_seen.store(false, std::memory_order_release);
+      }
+      g_fixed_override_status.store(
+          static_cast<unsigned int>(
+              forcepolicy::FixedOverrideStatus::kBlockedByPacing),
+          std::memory_order_release);
+      return result;
     }
   }
 
@@ -1229,11 +1340,11 @@ inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
 
   // A rejected call means frame generation just stays off, which looks exactly
   // like "the mod broke FG". Never leave the game worse than we found it: if
-  // the runtime refuses the raised count, put the original request through so
+  // the runtime refuses the overridden count, put the original request through so
   // the player still gets the frame generation they asked for.
   if (result != sl::Result::eOk) {
     // eErrorFeatureManagerInvalidState is not "your count is too high" -- it can
-    // simply mean DLSS-G was not ready yet. Retry once with the SAME raised
+    // simply mean DLSS-G was not ready yet. Retry once with the SAME overridden
     // count: if that succeeds the first failure was transient state, and
     // dropping straight back to the game's request would have silently given up
     // a working 4x. Only if the retry fails too is the count really refused.
@@ -1249,6 +1360,13 @@ inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
       }
       g_last_result.store(static_cast<unsigned int>(retry), std::memory_order_relaxed);
       g_last_forced.store(desired, std::memory_order_relaxed);
+      g_last_effective_generated.store(desired, std::memory_order_relaxed);
+      g_effective_request_seen.store(true, std::memory_order_release);
+      g_fixed_override_status.store(
+          static_cast<unsigned int>(forcepolicy::FixedOverrideStatus::kApplied),
+          std::memory_order_release);
+      g_declined_no_pacing.store(false, std::memory_order_relaxed);
+      g_force_failed_for.store(0, std::memory_order_relaxed);
       return retry;
     }
 
@@ -1261,18 +1379,36 @@ inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
       reshade::log::message(reshade::log::level::warning, s.str().c_str());
     }
     g_last_result.store(static_cast<unsigned int>(retry), std::memory_order_relaxed);
-    return CallSetOptions(viewport, options);
+    g_last_forced.store(0, std::memory_order_relaxed);
+    const sl::Result fallback = CallSetOptions(viewport, options);
+    if (fallback == sl::Result::eOk) {
+      g_last_effective_generated.store(requested, std::memory_order_relaxed);
+      g_effective_request_seen.store(true, std::memory_order_release);
+    } else {
+      g_effective_request_seen.store(false, std::memory_order_release);
+    }
+    g_fixed_override_status.store(
+        static_cast<unsigned int>(forcepolicy::FixedOverrideStatus::kRejected),
+        std::memory_order_release);
+    return fallback;
   }
 
   if (!g_intercepted.exchange(true, std::memory_order_relaxed)) {
     std::stringstream s;
-    s << "mfgunlock: raising DLSS-G numFramesToGenerate from " << requested << " to " << desired
-      << " (" << multiplier << "x) -- the game only ever asks for "
-      << (requested + 1) << "x. slDLSSGSetOptions accepted it.";
+    s << "mfgunlock: overriding DLSS-G numFramesToGenerate from " << requested
+      << " (" << (requested + 1) << "x) to " << desired << " ("
+      << multiplier << "x). slDLSSGSetOptions accepted it.";
     reshade::log::message(reshade::log::level::info, s.str().c_str());
   }
   g_last_result.store(static_cast<unsigned int>(result), std::memory_order_relaxed);
   g_last_forced.store(desired, std::memory_order_relaxed);
+  g_last_effective_generated.store(desired, std::memory_order_relaxed);
+  g_effective_request_seen.store(true, std::memory_order_release);
+  g_fixed_override_status.store(
+      static_cast<unsigned int>(forcepolicy::FixedOverrideStatus::kApplied),
+      std::memory_order_release);
+  g_declined_no_pacing.store(false, std::memory_order_relaxed);
+  g_force_failed_for.store(0, std::memory_order_relaxed);
   return result;
 }
 
@@ -1525,6 +1661,18 @@ inline void NotifyDynamicD3D12(bool d3d12) {
   g_dynamic_d3d12.store(d3d12, std::memory_order_relaxed);
 }
 
+inline void NotifyFixedMultiplierChanged(unsigned int) {
+  g_last_forced.store(0, std::memory_order_relaxed);
+  g_effective_request_seen.store(false, std::memory_order_release);
+  g_declined_no_pacing.store(false, std::memory_order_relaxed);
+  g_force_failed_for.store(0, std::memory_order_relaxed);
+  // Both selecting a fixed value and returning control to the game take effect
+  // only on the next enabled game-side SetOptions call.
+  g_fixed_override_status.store(
+      static_cast<unsigned int>(forcepolicy::FixedOverrideStatus::kPending),
+      std::memory_order_release);
+}
+
 inline void NotifyDynamicModeChanged() {
   g_dynamic_applied.store(false, std::memory_order_relaxed);
   g_dynamic_fell_back.store(false, std::memory_order_relaxed);
@@ -1534,6 +1682,14 @@ inline void NotifyDynamicModeChanged() {
   g_dynamic_state_probe_failures.store(0, std::memory_order_relaxed);
   g_dynamic_change_pending.store(true, std::memory_order_release);
   g_reflex_limit_failure_logged.store(false, std::memory_order_relaxed);
+  g_effective_request_seen.store(false, std::memory_order_release);
+  g_fixed_override_status.store(
+      static_cast<unsigned int>(
+          forcepolicy::IsFixedMultiplier(
+              g_force_multiplier.load(std::memory_order_relaxed))
+              ? forcepolicy::FixedOverrideStatus::kPending
+              : forcepolicy::FixedOverrideStatus::kNative),
+      std::memory_order_release);
   internal::RequestAllResets();
 }
 

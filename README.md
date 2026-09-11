@@ -523,7 +523,7 @@ Written to your `ReShade.ini` under `[RenoDX.MFGUnlock]`:
 | `ForceFlipMeteringOff` | `0` | Normally leave off. Enable only if 3x/4x freezes; this forces Streamline's legacy software pacing fallback and requires a game restart |
 | `TemporalFix` | `1` | The interpolation correction. Leave on; changing it requires a restart |
 | `BlackwellFrameworkKernels` | `1` | Uses the exact-fingerprint Blackwell motion-vector/inpaint/inpaint-decision replacements when the installed provider matches; otherwise falls back to the 0.7 temporal correction. Changing it requires a restart |
-| `ForceMultiplier` | `0` | `0` respects the game's own choice; `2`–`6` forces that multiplier |
+| `ForceMultiplier` | `0` | `0` respects the game's own choice; `2`–`6` requests that exact multiplier, whether it is higher or lower than the game's choice |
 | `DynamicMFG` | `0` | Requests native NVIDIA Dynamic MFG only on the validated 310.9.1 + 2.14.1 D3D12 stack after the provider reports support; takes priority over `ForceMultiplier` while active |
 | `DynamicTargetFPS` | `0` | Dynamic output target; `0` follows display refresh. With VSync active, Streamline ignores a nonzero value and follows refresh instead |
 | `DynamicReflexSourceCap` | `0` | Advanced opt-in source/application frame cap through Reflex; not a final-output target |
@@ -533,7 +533,13 @@ Written to your `ReShade.ini` under `[RenoDX.MFGUnlock]`:
 | `DepthEdgeGuardLevel` | `0` | Optional depth-edge tuning: `0` keeps the game value; `1`-`4` select progressively lower separation thresholds |
 
 If a game has its own multiplier selector, leave `ForceMultiplier` at `0` and use
-the game's setting.
+the game's setting. A fixed value is an absolute override: for example, if the
+game requests 4x and the addon is set to 2x, the downstream request becomes 2x.
+Dynamic MFG retains priority while it is active. After changing the fixed value,
+the panel reports it as pending until the game submits its next enabled
+`slDLSSGSetOptions` call; toggling Frame Generation off/on forces most games to
+submit one. The panel lists the game's request, the addon's fixed request, and
+the effective downstream request separately.
 
 ## Troubleshooting
 
