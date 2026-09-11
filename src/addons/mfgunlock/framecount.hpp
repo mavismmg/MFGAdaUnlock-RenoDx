@@ -87,20 +87,21 @@ inline std::atomic_bool g_addon_enabled{true};
 // Some games submit HUD-less/UI resources in a color space which does not
 // match their final HDR color buffer. The resulting invalid separation mask
 // can create halos, ghosting and edge artifacts in every generated frame.
-// The recommended automatic mode requests Streamline's UI-capable path in SDR,
-// but Quality Guard remains authoritative over the optional tags. In HDR it
-// uses final color rather than an untrusted optional HUD split. Required color,
-// depth and motion-vector inputs and frame pacing are never rewritten.
+// The optional automatic compatibility mode requests Streamline's UI-capable
+// path in SDR, but Quality Guard remains authoritative over the optional tags.
+// In HDR it uses final color rather than an untrusted optional HUD split.
+// Native remains the least-invasive default for fresh configurations. Required
+// color, depth and motion-vector inputs and frame pacing are never rewritten.
 enum class HdrCompatibilityMode : unsigned int {
   kNative = 0,
   kUiRecomposition = 1,
-  // Value 2 was the previous default. Reusing it for the new default upgrades
-  // existing ReShade.ini files without requiring a destructive migration.
+  // Keep the serialized values stable so existing ReShade.ini selections
+  // continue to load unchanged even though fresh configurations default to 0.
   kAutomaticHybrid = 2,
   kFinalColorFallback = 3,
 };
 inline std::atomic<unsigned int> g_hdr_compatibility_mode{
-    static_cast<unsigned int>(HdrCompatibilityMode::kAutomaticHybrid)};
+    static_cast<unsigned int>(HdrCompatibilityMode::kNative)};
 inline std::atomic_bool g_hdr_active{false};
 inline std::atomic_bool g_ui_recomposition_applied{false};
 inline std::atomic_bool g_ui_recomposition_fell_back{false};

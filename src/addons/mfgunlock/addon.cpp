@@ -1886,9 +1886,8 @@ void OnRegisterOverlay(reshade::api::effect_runtime* /*runtime*/) {
   if (mfgunlock::framecount::g_state_seen.load(std::memory_order_relaxed)) {
     const unsigned int status =
         mfgunlock::framecount::g_dlssg_status.load(std::memory_order_relaxed);
-    ImGui::Text("Actual presentations since last state query: %u (samples: %llu).",
-                mfgunlock::framecount::g_actual_frames_presented.load(std::memory_order_relaxed),
-                mfgunlock::framecount::g_state_samples.load(std::memory_order_relaxed));
+    ImGui::Text("Actual presentations since last state query: %u.",
+                mfgunlock::framecount::g_actual_frames_presented.load(std::memory_order_relaxed));
     if (status != 0) {
       ImGui::Text("DLSS-G runtime status: failure flags 0x%x.", status);
     } else {
@@ -1907,10 +1906,10 @@ void OnRegisterOverlay(reshade::api::effect_runtime* /*runtime*/) {
 
   ImGui::Separator();
   constexpr const char* kHdrModes[] = {
-      "Native - pass the game's tags unchanged",
-      "UI Composition - force when inputs are known-good",
-      "Automatic Guard + UI Composition (Recommended)",
-      "Automatic Guard - conservative final-color fallback"};
+      "Native (Default — recommended for most games)",
+      "Force UI Composition (Advanced)",
+      "Automatic Guard + UI Composition (HDR compatibility)",
+      "Final Color Fallback (Troubleshooting)"};
   int hdr_mode = static_cast<int>(
       mfgunlock::framecount::g_hdr_compatibility_mode.load(std::memory_order_relaxed));
   if (ImGui::Combo("Frame-generation input quality", &hdr_mode, kHdrModes,
@@ -1922,7 +1921,9 @@ void OnRegisterOverlay(reshade::api::effect_runtime* /*runtime*/) {
   }
   if (hdr_mode == static_cast<int>(
                       mfgunlock::framecount::HdrCompatibilityMode::kNative)) {
-    ImGui::TextDisabled("Passes the game's optional HUD-less and UI tags through unchanged.");
+    ImGui::TextDisabled(
+        "Passes the game's optional HUD-less and UI tags through unchanged.\n"
+        "Recommended for most games; use this if HUD elements show artifacts.");
   } else if (hdr_mode == static_cast<int>(
                              mfgunlock::framecount::HdrCompatibilityMode::kUiRecomposition)) {
     ImGui::TextDisabled(
@@ -1936,9 +1937,9 @@ void OnRegisterOverlay(reshade::api::effect_runtime* /*runtime*/) {
         "after HDR, swapchain, resolution, option or multiplier transitions.");
   } else {
     ImGui::TextDisabled(
-        "Uses final color in HDR because Streamline tags cannot prove color-space compatibility.\n"
-        "In SDR, matched HUD-less/UI inputs may use UI Composition; any concrete\n"
-        "mismatch falls back safely and synchronizes temporal history once.");
+        "Use for HDR artifacts in games such as Hogwarts Legacy, Jusant, and\n"
+        "Mafia: The Old Country. If HUD elements show artifacts, use Native.\n"
+        "Matched SDR inputs may use UI Composition; unsafe inputs fall back safely.");
   }
   ImGui::TextDisabled(
       "Color, depth, motion vectors, temporal kernel and frame pacing are not rewritten.");
@@ -2377,6 +2378,8 @@ void LoadConfig() {
                        : mfgunlock::framecount::HdrCompatibilityMode::kAutomaticHybrid),
         std::memory_order_relaxed);
   }
+  // When neither the current nor legacy key exists, this is a fresh
+  // configuration and the atomic's Native default remains active.
   if (reshade::get_config_value(nullptr, kConfigSection, "DepthEdgeGuardLevel", value)) {
     if (value < 0 || value > 4) value = 0;
     mfgunlock::framecount::g_depth_edge_guard_level.store(

@@ -5,11 +5,11 @@ A [ReShade](https://reshade.me/) addon that enables **DLSS multi-frame generatio
 RTX 50-series only — and corrects the frame interpolation so the extra frames
 carry new motion instead of repeats.
 
-The recommended first-install mode is **Automatic Guard + UI Composition
-(Recommended)**. It keeps the game's required color, depth and motion-vector
-inputs intact, rejects optional HUD/UI inputs when they cannot be trusted, and
-uses Streamline UI Composition only where the addon can validate the inputs it
-can actually observe.
+The default for a new installation is **Native**, which preserves the game's
+existing HUD/UI tags and is recommended for most games. **Automatic Guard + UI
+Composition (HDR compatibility)** remains available for known HDR-related
+issues and keeps the game's required color, depth and motion-vector inputs
+intact.
 
 Nothing in the game installation is modified. Every patch is applied to the
 mapped image at runtime and reverted when the addon unloads. **No complete
@@ -142,6 +142,10 @@ replace or claim authorship of either original contribution.
 These are the games personally tested with this fork; this is not a claim of
 universal compatibility. Results may vary with the game version, DLSS and
 Streamline versions, GPU, drivers, and configuration.
+
+**Working with HDR fix** means selecting **Automatic Guard + UI Composition
+(HDR compatibility)** if the HDR issue occurs. If that mode introduces an
+artifact on a HUD/UI element, switch back to **Native**.
 
 ## Known Multiplier Behavior
 
@@ -316,7 +320,9 @@ game.
 
 ## Frame-generation Input Quality
 
-The default is **Automatic Guard + UI Composition (Recommended)**.
+The default for new configurations is **Native**, which passes the game's
+optional HUD-less and UI tags through unchanged. It is the least-invasive mode
+and is recommended for most games. Existing saved selections are preserved.
 
 DLSS-G can receive an optional HUD-less scene plus a UI color/alpha mask so it
 does not interpolate the interface as ordinary world geometry. This works only
@@ -324,7 +330,12 @@ when those resources obey Streamline's contract: matching output extents,
 compatible formats, sufficient alpha precision, premultiplied UI color, and the
 same color space/post-processing as final color.
 
-The recommended mode validates the metadata the addon can observe. Once the
+**Automatic Guard + UI Composition (HDR compatibility)** is intended for
+HDR-related artifacts in known affected games such as Hogwarts Legacy, Jusant,
+and Mafia: The Old Country. If HUD/UI elements show artifacts while it is
+selected, switch back to **Native**.
+
+The compatibility mode validates the metadata the addon can observe. Once the
 primary swapchain positively reports SDR, the addon requests Streamline's
 UI-capable path early because many games call `SetOptions` before their first
 resource tags. That request only allocates the capable path: the guard still
@@ -333,9 +344,9 @@ structurally valid pair. When a pair is invalid, incomplete, or arrives in an
 unsafe split transition, the addon clears only those optional tags and lets
 DLSS-G use final color. In HDR it uses final color automatically because
 Streamline resource tags do not expose enough color-space information to prove
-that the HUD-less buffer matches a PQ/scRGB final buffer. The explicit **UI
-Composition** mode remains available for a game whose HDR integration has been
-independently verified.
+that the HUD-less buffer matches a PQ/scRGB final buffer. The explicit **Force
+UI Composition (Advanced)** mode remains available for a game whose HDR
+integration has been independently verified.
 
 This can mitigate UI/HUD ghosting, flicker, bright halos, invalid masking, and
 composition mismatches in affected integrations. It does not claim that every
@@ -518,7 +529,7 @@ Written to your `ReShade.ini` under `[RenoDX.MFGUnlock]`:
 | `DynamicReflexSourceCap` | `0` | Advanced opt-in source/application frame cap through Reflex; not a final-output target |
 | `RaiseFrameCeiling` | `0` | Raises an old Streamline plugin's compiled hard limit to 6x. Off by default because that breaks some games; the stale device-limit bypass needed by STALKER 2 is always applied |
 | `RuntimeSelectionMode` | `0` | `0` preserves the game's runtime policy, `1` disables OTA/downloaded plugins to prefer local files, and `2` forces the NVIDIA OTA flags; restart required |
-| `HDRCompatibilityMode` | `2` | `0` passes native tags, `1` forces UI Composition, `2` is **Automatic Guard + UI Composition (Recommended)**, and `3` keeps the conservative automatic final-color guard |
+| `HDRCompatibilityMode` | `0` | `0` is **Native** (default for new configurations), `1` forces UI Composition, `2` enables **Automatic Guard + UI Composition (HDR compatibility)**, and `3` enables Final Color Fallback; existing saved values remain unchanged |
 | `DepthEdgeGuardLevel` | `0` | Optional depth-edge tuning: `0` keeps the game value; `1`-`4` select progressively lower separation thresholds |
 
 If a game has its own multiplier selector, leave `ForceMultiplier` at `0` and use
@@ -591,9 +602,10 @@ the game's setting.
 
 - First compare native 2x with the addon completely removed and restart the
   game. Artifacts that remain are part of the game's native DLSS-G integration.
-- Keep **Automatic Guard + UI Composition (Recommended)** selected. Use forced
-  **UI Composition**, conservative **Automatic Guard**, or **Native** only as
-  controlled A/B comparisons.
+- Start with **Native**. For known HDR-related issues, try **Automatic Guard +
+  UI Composition (HDR compatibility)**; if HUD/UI elements then show artifacts,
+  switch back to **Native**. Use **Force UI Composition** and **Final Color
+  Fallback** only as controlled A/B comparisons.
 - Restart and compare **Prefer full Blackwell framework kernels** on and off.
   Off uses the release-0.7 midpoint correction as the control path.
 - Test the optional depth-edge levels one at a time and fully recheck pacing;
