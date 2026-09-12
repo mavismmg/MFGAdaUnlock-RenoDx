@@ -47,6 +47,25 @@ compatibility. The repository history and current code attribute these additions
 - Support and fixes for **S.T.A.L.K.E.R. 2: Heart of Chornobyl**, including its
   native 3x/4x selector and bundled/OTA provider handling.
 - Temporal-patch compatibility with newer 310.9 DLSS-G providers.
+- An exact-fingerprint Blackwell framework-kernel path for Ada, covering the
+  motion-vector, inpaint, and inpaint-decision stages, with the established
+  temporal correction retained as a safe fallback. This path follows the
+  Blackwell-kernel research and rebuild workflow published by Matias Lombo.
+- **Intermediate Scatter Retention**, independently investigated and implemented
+  in this fork. It conservatively relaxes one motion-consistency rejection while
+  intermediate-frame motion vectors are constructed, while retaining the
+  separate depth-mismatch test.
+- **Validated Warp Blend**, a separate conservative candidate-validation and
+  blending path informed by Tony Joaca's public `qualityValidWarp` research in
+  DLSSG-Transfusion and independently implemented for this addon.
+- The two complementary thin-geometry quality mechanisms enabled together as
+  experimental defaults while remaining independently selectable per game.
+- Exact DLSS-G 310.9.0/310.9.1 provider and payload validation for the
+  thin-geometry paths, with unknown providers failing closed instead of being
+  patched speculatively.
+- Safer reconstructed-fatbin handling that preserves kernels and metadata after
+  the modified PTX entry, plus hardened restoration that avoids leaving a live
+  provider descriptor pointing to released replacement memory.
 - Safer ReShade addon lifecycle handling across temporary device probing and
   addon reloads.
 - Bounded background provider discovery, removing continuous module enumeration
@@ -55,6 +74,9 @@ compatibility. The repository history and current code attribute these additions
   pacing fallback behavior.
 - Runtime diagnostics using `slDLSSGSetOptions` and `slDLSSGGetState`, including
   requested multipliers, DLSS-G status, and actual presentation telemetry.
+- A concise normal telemetry display that hides the cumulative sample counter
+  without removing presentation counts, multiplier validation, or diagnostic
+  logging.
 - A conservative Streamline input Quality Guard that avoids incompatible
   optional HUD/UI separation resources, including the HDR mismatch confirmed
   during Hogwarts Legacy testing.
@@ -67,9 +89,17 @@ compatibility. The repository history and current code attribute these additions
 - Native NVIDIA Dynamic MFG integration through `DLSSGMode::eDynamic`, including
   exact release-stack checks, proactive capability validation for older games,
   correct VSync target semantics, bounded retries, and fixed-MFG fallback.
+- Absolute fixed-multiplier control from 2x through 6x, allowing the addon to
+  lower or raise the game's request while preserving Dynamic MFG priority and
+  distinguishing game, addon, effective, observed, and pending states.
+- **Native** quality mode as the least-invasive default for new configurations,
+  while preserving every explicitly saved choice from existing users.
 - Optional depth-edge tuning for integrations whose native linear-depth
   separation produces visible disocclusion artifacts. It is off by default.
 - Experimental Vulkan renderer and NGX provider discovery.
+- Reusable PresentMon/NVAPI validation tooling and controlled frame-pacing
+  evidence, including an observed 3.998x cadence in Onimusha: Way of the Sword
+  with Intermediate Scatter Retention and Validated Warp Blend active at 4x.
 - Compatibility testing and documentation across the games and runtime
   combinations listed below.
 
