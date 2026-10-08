@@ -329,6 +329,120 @@ fma.rn.f32 %qf4, %qf5, %qf4, %qf7;
   return program;
 }
 
+// Continuous-axis path. Both treatments retain their perpendicular protection.
+// Interpolation uses smoothstep(dx^2 / (dx^2 + dy^2)); the 1.4.2 magnitude
+// transition stays intact. f177..f179 are dead at this validated insertion site.
+inline std::string ContinuousAxisBorderProgram() {
+  std::string program = "// MFGUNLOCK_CONTINUOUS_BORDER_AXES\n"
+      "cvt.rn.f32.u32 %qf2, %r10;\n"
+      "cvt.rn.f32.u32 %qf3, %r11;\n";
+  for (int direction = 0; direction < 2; ++direction) {
+    const std::string u = direction == 0 ? "%f123" : "%f129";
+    const std::string v = direction == 0 ? "%f124" : "%f130";
+    const std::string label = direction == 0 ? "FORWARD" : "INVERSE";
+    // Apply replacements only to named tokens, never provider register names.
+    auto emit = [&](std::string text) {
+      for (const auto& item : {std::pair{"CAND_U", u}, std::pair{"CAND_V", v},
+                               std::pair{"DIRECTION", label}}) {
+        size_t pos = 0;
+        while ((pos = text.find(item.first, pos)) != std::string::npos) {
+          text.replace(pos, std::string(item.first).size(), item.second);
+          pos += item.second.size();
+        }
+      }
+      program += text;
+    };
+    emit(R"PTX(
+// MFGUNLOCK_AXIS_BLEND_CANDIDATE
+sub.f32 %qf5, 0f3F800000, CAND_U;
+min.f32 %qf5, %qf5, CAND_U;
+mul.f32 %qf5, %qf5, %qf2;
+sub.f32 %qf6, 0f3F800000, CAND_V;
+min.f32 %qf6, %qf6, CAND_V;
+mul.f32 %qf6, %qf6, %qf3;
+min.f32 %f177, %qf5, %qf6;
+mov.f32 %qf4, %f177;
+sub.f32 %qf5, CAND_U, %f1;
+mul.f32 %qf5, %qf5, %qf2;
+sub.f32 %qf6, CAND_V, %f2;
+mul.f32 %qf6, %qf6, %qf3;
+mul.f32 %qf5, %qf5, %qf5;
+fma.rn.f32 %qf7, %qf6, %qf6, %qf5;
+setp.le.f32 %qv5, %qf7, 0f3E800000;
+@%qv5 bra MFGUNLOCK_AXIS_DIRECTION_DONE;
+)PTX");
+    for (int axis = 0; axis < 2; ++axis) {
+      std::string text = R"PTX(
+add.f32 %qf7, CURRENT, CANDIDATE;
+setp.le.f32 %qv5, %qf7, 0f3F800000;
+sub.f32 %qf5, 0f3F800000, CURRENT;
+selp.f32 %qf5, CURRENT, %qf5, %qv5;
+sub.f32 %qf6, 0f3F800000, CANDIDATE;
+selp.f32 %qf6, CANDIDATE, %qf6, %qv5;
+mul.f32 %qf5, %qf5, EXTENT;
+mul.f32 %qf6, %qf6, EXTENT;
+setp.gt.f32 %qv6, %qf5, %qf6;
+min.f32 %qf4, %qf5, %qf6;
+max.f32 %qf7, %qf5, %qf6;
+add.f32 %qf6, %qf4, 0f3F800000;
+min.f32 %qf7, %qf7, %qf6;
+selp.f32 %qf4, %qf7, %qf4, %qv6;
+sub.f32 %qf5, 0f3F800000, CROSS_CURRENT;
+min.f32 %qf5, %qf5, CROSS_CURRENT;
+sub.f32 %qf6, 0f3F800000, CROSS_CANDIDATE;
+min.f32 %qf6, %qf6, CROSS_CANDIDATE;
+min.f32 %qf5, %qf5, %qf6;
+mul.f32 %qf5, %qf5, CROSS_EXTENT;
+min.f32 %qf4, %qf4, %qf5;
+mov.f32 RESULT, %qf4;
+)PTX";
+      // Longer tokens must be replaced before their suffixes.
+      for (const auto& item : {
+               std::pair{"CROSS_CURRENT", axis == 0 ? "%f2" : "%f1"},
+               std::pair{"CROSS_CANDIDATE", axis == 0 ? "CAND_V" : "CAND_U"},
+               std::pair{"CROSS_EXTENT", axis == 0 ? "%qf3" : "%qf2"},
+               std::pair{"CURRENT", axis == 0 ? "%f1" : "%f2"},
+               std::pair{"CANDIDATE", axis == 0 ? "CAND_U" : "CAND_V"},
+               std::pair{"EXTENT", axis == 0 ? "%qf2" : "%qf3"},
+               std::pair{"RESULT", axis == 0 ? "%f178" : "%f179"}}) {
+        size_t pos = 0;
+        while ((pos = text.find(item.first, pos)) != std::string::npos) {
+          text.replace(pos, std::string(item.first).size(), item.second);
+          pos += std::string(item.second).size();
+        }
+      }
+      emit(text);
+    }
+    emit(R"PTX(
+sub.f32 %qf5, CAND_U, %f1;
+mul.f32 %qf5, %qf5, %qf2;
+sub.f32 %qf6, CAND_V, %f2;
+mul.f32 %qf6, %qf6, %qf3;
+mul.f32 %qf5, %qf5, %qf5;
+fma.rn.f32 %qf7, %qf6, %qf6, %qf5;
+mov.f32 %qf6, %qf7;
+rcp.approx.ftz.f32 %qf7, %qf7;
+mul.sat.f32 %qf5, %qf5, %qf7;
+fma.rn.f32 %qf7, %qf5, 0fC0000000, 0f40400000;
+mul.f32 %qf5, %qf5, %qf5;
+mul.f32 %qf5, %qf5, %qf7;
+sub.f32 %qf4, %f178, %f179;
+fma.rn.f32 %qf4, %qf5, %qf4, %f179;
+sub.f32 %qf6, %qf6, 0f3E800000;
+mul.sat.f32 %qf6, %qf6, 0f3F000000;
+fma.rn.f32 %qf5, %qf6, 0fC0000000, 0f40400000;
+mul.f32 %qf6, %qf6, %qf6;
+mul.f32 %qf6, %qf6, %qf5;
+sub.f32 %qf4, %qf4, %f177;
+fma.rn.f32 %qf4, %qf6, %qf4, %f177;
+MFGUNLOCK_AXIS_DIRECTION_DONE:
+)PTX");
+    program += direction == 0 ? "mov.f32 %f180, %qf4;\n"
+                              : "mov.f32 %f181, %qf4;\n";
+  }
+  return program;
+}
+
 inline constexpr const char* kCandidateArbitration = R"PTX(
 // MFGUNLOCK_RELATIVE_CANDIDATE_ARBITRATION_V3
 sub.f32 %qf2, %f176, 0f3DCCCCCD;
@@ -490,6 +604,49 @@ inline float ContinuousDirectionalBorderDistance(float current_u, float current_
   float weight = Clamp01((dx * dx + dy * dy - 0.25f) * 0.5f);
   weight = weight * weight * (3.0f - 2.0f * weight);
   return symmetric + weight * (directional - symmetric);
+}
+
+// Scalar oracle for the candidate's axis interpolation. No hard-validity gate
+// is changed: this helper is used only after the provider's structural checks.
+inline float BorderAxisDistance(float current_u, float current_v,
+                               float candidate_u, float candidate_v,
+                               float width, float height, bool horizontal) {
+  const float current = horizontal ? current_u : current_v;
+  const float candidate = horizontal ? candidate_u : candidate_v;
+  const float extent = horizontal ? width : height;
+  const bool low_edge = current + candidate <= 1.0f;
+  const float current_distance = (low_edge ? current : 1.0f - current) * extent;
+  const float candidate_distance = (low_edge ? candidate : 1.0f - candidate) * extent;
+  const float nearest = std::min(current_distance, candidate_distance);
+  const float along_axis = current_distance > candidate_distance
+      ? std::min(std::max(current_distance, candidate_distance), nearest + 1.0f)
+      : nearest;
+  const float cross_current = horizontal ? current_v : current_u;
+  const float cross_candidate = horizontal ? candidate_v : candidate_u;
+  const float cross_extent = horizontal ? height : width;
+  const float cross_distance = std::min(
+      std::min(cross_current, 1.0f - cross_current),
+      std::min(cross_candidate, 1.0f - cross_candidate)) * cross_extent;
+  return std::min(along_axis, cross_distance);
+}
+
+inline float ContinuousAxisBorderDistance(float current_u, float current_v,
+    float candidate_u, float candidate_v, float width, float height) {
+  const float symmetric = SymmetricBorderDistance(candidate_u, candidate_v, width, height);
+  const float dx = (candidate_u - current_u) * width;
+  const float dy = (candidate_v - current_v) * height;
+  const float motion_squared = dx * dx + dy * dy;
+  if (motion_squared <= 0.25f) return symmetric;
+  float horizontal_weight = Clamp01(dx * dx / motion_squared);
+  horizontal_weight = horizontal_weight * horizontal_weight * (3.0f - 2.0f * horizontal_weight);
+  const float horizontal = BorderAxisDistance(current_u, current_v, candidate_u,
+      candidate_v, width, height, true);
+  const float vertical = BorderAxisDistance(current_u, current_v, candidate_u,
+      candidate_v, width, height, false);
+  const float directional = vertical + horizontal_weight * (horizontal - vertical);
+  float motion_weight = Clamp01((motion_squared - 0.25f) * 0.5f);
+  motion_weight = motion_weight * motion_weight * (3.0f - 2.0f * motion_weight);
+  return symmetric + motion_weight * (directional - symmetric);
 }
 
 inline float OrientationWeight(float motion_x, float motion_y,

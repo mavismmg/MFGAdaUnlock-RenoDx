@@ -7139,7 +7139,13 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
 #if defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
             kUiMuted);
 #if defined(MFGUNLOCK_LOCAL_STABILITY)
+#if defined(MFGUNLOCK_RELEASE_1_4_3)
+        StatusRow("Build", "Release 1.4.3; continuous border axes + paired diagonals", kUiPositive);
+#elif defined(MFGUNLOCK_CONTINUOUS_BORDER_AXES)
+        StatusRow("Build", "1.4.2-base; continuous-axis border candidate; in-game validation pending", kUiMuted);
+#else
         StatusRow("Build", "Release 1.4.2; continuous borders + paired diagonals", kUiPositive);
+#endif
 #else
         StatusRow("Build", "Local low-overhead; no V3 inpaint or confidence history", kUiPositive);
 #endif
@@ -7521,7 +7527,11 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
            << "V3.2 Stability effective: "
 #if defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
            << "History disabled; dedicated Local cubin requested (see installed variant above)" << '\n'
-#if defined(MFGUNLOCK_LOCAL_STABILITY)
+#if defined(MFGUNLOCK_RELEASE_1_4_3)
+           << "Build: Release 1.4.3; continuous border axes; paired diagonal consensus; V2 inpaint" << '\n'
+#elif defined(MFGUNLOCK_CONTINUOUS_BORDER_AXES)
+           << "Build: 1.4.2-base; continuous-axis border candidate; in-game validation pending" << '\n'
+#elif defined(MFGUNLOCK_LOCAL_STABILITY)
            << "Build: Release 1.4.2; continuous border transition; paired diagonal consensus; V2 inpaint" << '\n'
 #else
            << "Build: Local low-overhead; no V3 inpaint or confidence history" << '\n'
@@ -8243,7 +8253,13 @@ void LoadConfig() {
 #if defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
   reshade::log::message(reshade::log::level::info,
       "mfgunlock: Local low-overhead build; V2 inpaint; confidence history, CUDA/NVAPI launch hooks and backend barriers disabled. Saved temporal keys preserved but ignored; native pacing remains the default. Output caps require a native sleep path; Game controlled accepts fresh driver-confirmed MFG.");
-#if defined(MFGUNLOCK_LOCAL_STABILITY)
+#if defined(MFGUNLOCK_RELEASE_1_4_3)
+  reshade::log::message(reshade::log::level::info,
+      "mfgunlock: Release 1.4.3; continuous border axes (48 registers, zero local/spill); paired diagonal consensus; V2 inpaint; no new resource reads.");
+#elif defined(MFGUNLOCK_CONTINUOUS_BORDER_AXES)
+  reshade::log::message(reshade::log::level::info,
+      "mfgunlock: 1.4.2-base Border Axis Candidate; both border axes interpolated continuously; no new resource reads; in-game validation pending.");
+#elif defined(MFGUNLOCK_LOCAL_STABILITY)
   reshade::log::message(reshade::log::level::info,
       "mfgunlock: Release 1.4.2; continuous subpixel border (48 registers, zero local/spill); paired diagonal consensus (40 registers, 39680 B text, 7776 B shared, zero local/spill); InputMvecProcessing unchanged.");
 #endif
@@ -8254,7 +8270,11 @@ void LoadConfig() {
 
 extern "C" __declspec(dllexport) constexpr const char* NAME = "MFG Unlock";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
-#if defined(MFGUNLOCK_LOCAL_STABILITY)
+#if defined(MFGUNLOCK_RELEASE_1_4_3)
+    "Release 1.4.3 - Continuous Border Stability; Local low-overhead; V2 inpaint; no confidence history or CUDA/NVAPI launch interception";
+#elif defined(MFGUNLOCK_CONTINUOUS_BORDER_AXES)
+    "1.4.2-base - Border Axis Candidate; Local low-overhead; V2 inpaint; no confidence history or CUDA/NVAPI launch interception";
+#elif defined(MFGUNLOCK_LOCAL_STABILITY)
     "Release 1.4.2 - Local Stability & CPU Overhead; Local low-overhead; V2 inpaint; no confidence history or CUDA/NVAPI launch interception";
 #elif defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
     "Local low-overhead; V2 inpaint; no confidence history or CUDA/NVAPI launch interception";

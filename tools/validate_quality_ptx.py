@@ -26,7 +26,10 @@ def fragments(name: str, git_ref: str | None) -> list[str]:
         text = (ROOT / "src" / "addons" / "mfgunlock" / name).read_text(
             encoding="utf-8"
         )
-    return re.findall(r'R"PTX\((.*?)\)PTX"', text, re.DOTALL)
+    # Generated fragments contain placeholders until the C++ emitter resolves
+    # them. Validate only complete constants here; validate_border_axis.py
+    # executes the emitted candidate against the actual C++ oracle on GPU.
+    return re.findall(r'inline constexpr const char\* \w+ = R"PTX\((.*?)\)PTX"', text, re.DOTALL)
 
 
 def validation_entry(name: str, body: str) -> str:

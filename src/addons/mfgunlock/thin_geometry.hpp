@@ -401,7 +401,9 @@ sub.f32 %qf4, %f133, %f121;
                 : absolute_rgb_errors;
         if (directional_border) {
           error_program =
-#if defined(MFGUNLOCK_LOCAL_STABILITY)
+#if defined(MFGUNLOCK_CONTINUOUS_BORDER_AXES)
+              adaptivequalityv3::ContinuousAxisBorderProgram() +
+#elif defined(MFGUNLOCK_LOCAL_STABILITY)
               adaptivequalityv3::ContinuousBorderProgram() +
 #else
               std::string(adaptivequalityv3::kDirectionalBorderDistances) +

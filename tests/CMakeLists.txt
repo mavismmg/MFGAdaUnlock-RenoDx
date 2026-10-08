@@ -22,26 +22,62 @@ target_include_directories(mfgunlock_addon_compile SYSTEM PRIVATE
   "${RENODX_SOURCE_DIR}/external/Streamline/external/ngx-sdk/include"
   "${RENODX_SOURCE_DIR}/external/DLSS/include"
   "${RENODX_SOURCE_DIR}/external/reshade")
+add_library(mfgunlock_1_4_2_control SHARED EXCLUDE_FROM_ALL
+  ../src/addons/mfgunlock/addon.cpp)
+target_compile_definitions(mfgunlock_1_4_2_control PRIVATE
+  $<TARGET_PROPERTY:mfgunlock_addon_compile,COMPILE_DEFINITIONS>
+  MFGUNLOCK_LOCAL_LOW_OVERHEAD MFGUNLOCK_LOCAL_STABILITY)
+target_compile_options(mfgunlock_1_4_2_control PRIVATE /bigobj)
+target_include_directories(mfgunlock_1_4_2_control SYSTEM PRIVATE
+  $<TARGET_PROPERTY:mfgunlock_addon_compile,INCLUDE_DIRECTORIES>)
+target_link_libraries(mfgunlock_1_4_2_control PRIVATE
+  "${RENODX_SOURCE_DIR}/external/Detours/lib.X64/detours.lib"
+  user32 gdi32 shell32 ole32 uuid comdlg32 advapi32 version)
+get_target_property(MFGUNLOCK_NATIVE_LIBRARIES mfgunlock_1_4_2_control LINK_LIBRARIES)
+set_target_properties(mfgunlock_1_4_2_control PROPERTIES
+  PREFIX "" SUFFIX ".addon64" OUTPUT_NAME "renodx-mfgunlock-1.4.2-control")
 add_library(mfgunlock_local_low_overhead SHARED EXCLUDE_FROM_ALL
   ../src/addons/mfgunlock/addon.cpp)
 target_compile_definitions(mfgunlock_local_low_overhead PRIVATE
-  $<TARGET_PROPERTY:mfgunlock_addon_compile,COMPILE_DEFINITIONS>
-  MFGUNLOCK_LOCAL_LOW_OVERHEAD MFGUNLOCK_LOCAL_STABILITY)
+  $<TARGET_PROPERTY:mfgunlock_1_4_2_control,COMPILE_DEFINITIONS>
+  MFGUNLOCK_CONTINUOUS_BORDER_AXES MFGUNLOCK_RELEASE_1_4_3)
 target_compile_options(mfgunlock_local_low_overhead PRIVATE /bigobj)
 target_include_directories(mfgunlock_local_low_overhead SYSTEM PRIVATE
   $<TARGET_PROPERTY:mfgunlock_addon_compile,INCLUDE_DIRECTORIES>)
 target_link_libraries(mfgunlock_local_low_overhead PRIVATE
-  "${RENODX_SOURCE_DIR}/external/Detours/lib.X64/detours.lib"
-  user32 gdi32 shell32 ole32 uuid comdlg32 advapi32 version)
+  ${MFGUNLOCK_NATIVE_LIBRARIES})
 set_target_properties(mfgunlock_local_low_overhead PROPERTIES
   PREFIX "" SUFFIX ".addon64" OUTPUT_NAME "renodx-mfgunlock")
+add_library(mfgunlock_border_axis_candidate SHARED EXCLUDE_FROM_ALL
+  ../src/addons/mfgunlock/addon.cpp)
+target_compile_definitions(mfgunlock_border_axis_candidate PRIVATE
+  $<TARGET_PROPERTY:mfgunlock_1_4_2_control,COMPILE_DEFINITIONS>
+  MFGUNLOCK_CONTINUOUS_BORDER_AXES)
+target_compile_options(mfgunlock_border_axis_candidate PRIVATE /bigobj)
+target_include_directories(mfgunlock_border_axis_candidate SYSTEM PRIVATE
+  $<TARGET_PROPERTY:mfgunlock_addon_compile,INCLUDE_DIRECTORIES>)
+target_link_libraries(mfgunlock_border_axis_candidate PRIVATE
+  ${MFGUNLOCK_NATIVE_LIBRARIES})
+set_target_properties(mfgunlock_border_axis_candidate PROPERTIES
+  PREFIX "" SUFFIX ".addon64" OUTPUT_NAME "renodx-mfgunlock-border-axis-candidate")
+add_executable(border_axis_tests border_axis_tests.cpp)
+target_compile_definitions(border_axis_tests PRIVATE NOMINMAX)
+add_test(NAME border_axis_tests COMMAND border_axis_tests)
+add_executable(border_axis_warp_tests local_stability_warp_tests.cpp)
+target_compile_definitions(border_axis_warp_tests PRIVATE NOMINMAX
+  MFGUNLOCK_LOCAL_LOW_OVERHEAD MFGUNLOCK_LOCAL_STABILITY MFGUNLOCK_CONTINUOUS_BORDER_AXES)
+add_test(NAME border_axis_warp_tests COMMAND border_axis_warp_tests)
+add_executable(release_warp_tests local_stability_warp_tests.cpp)
+target_compile_definitions(release_warp_tests PRIVATE NOMINMAX
+  MFGUNLOCK_LOCAL_LOW_OVERHEAD MFGUNLOCK_LOCAL_STABILITY MFGUNLOCK_CONTINUOUS_BORDER_AXES MFGUNLOCK_RELEASE_1_4_3)
+add_test(NAME release_warp_tests COMMAND release_warp_tests)
 add_executable(stability_runtime_tests stability_runtime_tests.cpp)
 target_compile_definitions(stability_runtime_tests PRIVATE NOMINMAX MFGUNLOCK_LOCAL_LOW_OVERHEAD MFGUNLOCK_LOCAL_STABILITY)
 target_compile_options(stability_runtime_tests PRIVATE /bigobj)
 target_include_directories(stability_runtime_tests SYSTEM PRIVATE
   $<TARGET_PROPERTY:mfgunlock_addon_compile,INCLUDE_DIRECTORIES>)
 target_link_libraries(stability_runtime_tests PRIVATE
-  $<TARGET_PROPERTY:mfgunlock_local_low_overhead,LINK_LIBRARIES>)
+  ${MFGUNLOCK_NATIVE_LIBRARIES})
 add_test(NAME stability_runtime_tests COMMAND stability_runtime_tests)
 add_executable(local_stability_warp_tests local_stability_warp_tests.cpp)
 target_compile_definitions(local_stability_warp_tests PRIVATE NOMINMAX MFGUNLOCK_LOCAL_STABILITY)
@@ -49,7 +85,7 @@ add_test(NAME local_stability_warp_tests COMMAND local_stability_warp_tests)
 add_executable(release_isolation_tests release_isolation_tests.cpp)
 target_compile_definitions(release_isolation_tests PRIVATE RELEASE_SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
 add_test(NAME release_isolation_tests COMMAND release_isolation_tests)
-foreach(policy_variant IN ITEMS local_low_overhead research_baseline)
+foreach(policy_variant IN ITEMS local_low_overhead research_baseline border_axis_policy release_policy)
   add_executable(${policy_variant}_tests quality_build_policy_tests.cpp)
   target_compile_definitions(${policy_variant}_tests PRIVATE NOMINMAX)
   target_include_directories(${policy_variant}_tests SYSTEM PRIVATE
@@ -57,6 +93,8 @@ foreach(policy_variant IN ITEMS local_low_overhead research_baseline)
   add_test(NAME ${policy_variant}_tests COMMAND ${policy_variant}_tests)
 endforeach()
 target_compile_definitions(local_low_overhead_tests PRIVATE MFGUNLOCK_LOCAL_LOW_OVERHEAD)
+target_compile_definitions(border_axis_policy_tests PRIVATE MFGUNLOCK_LOCAL_LOW_OVERHEAD MFGUNLOCK_LOCAL_STABILITY MFGUNLOCK_CONTINUOUS_BORDER_AXES)
+target_compile_definitions(release_policy_tests PRIVATE MFGUNLOCK_LOCAL_LOW_OVERHEAD MFGUNLOCK_LOCAL_STABILITY MFGUNLOCK_CONTINUOUS_BORDER_AXES MFGUNLOCK_RELEASE_1_4_3)
 add_executable(latency_analysis_tests latency_analysis_tests.cpp)
 target_compile_definitions(latency_analysis_tests PRIVATE NOMINMAX)
 add_test(NAME latency_analysis_tests COMMAND latency_analysis_tests)
@@ -155,10 +193,31 @@ if(POWERSHELL_EXECUTABLE)
   add_test(NAME capture_comparison COMMAND "${POWERSHELL_EXECUTABLE}" -NoProfile
     -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/compare_tests.ps1")
 endif()
-find_package(Python3 COMPONENTS Interpreter QUIET)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
 if(Python3_Interpreter_FOUND)
+  add_test(NAME research_workflow COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/research_workflow_tests.py")
   add_test(NAME quality_refinement
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/quality_refinement_tests.py")
   add_test(NAME silhouette_guard
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/silhouette_guard_tests.py")
 endif()
+
+# Keep candidate and control identities reviewable; no NVIDIA payload is exported.
+if(Python3_Interpreter_FOUND)
+  foreach(variant IN ITEMS control border-axis-candidate release-1.4.3)
+    if(variant STREQUAL "control")
+      set(addon_target mfgunlock_1_4_2_control)
+    elseif(variant STREQUAL "release-1.4.3")
+      set(addon_target mfgunlock_local_low_overhead)
+    else()
+      set(addon_target mfgunlock_border_axis_candidate)
+    endif()
+    add_custom_command(TARGET ${addon_target} POST_BUILD
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/write_build_manifest.py"
+        --addon "$<TARGET_FILE:${addon_target}>" --source-root "${CMAKE_CURRENT_SOURCE_DIR}/.."
+        --variant "${variant}"
+      VERBATIM)
+  endforeach()
+endif()
+
+set_property(TARGET mfgunlock_1_4_2_control mfgunlock_local_low_overhead mfgunlock_border_axis_candidate APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../tools/write_build_manifest.py")

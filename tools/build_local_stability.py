@@ -57,6 +57,7 @@ def main():
     p.add_argument("--ptxas", type=Path, required=True)
     p.add_argument("--nvdisasm", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--variant", choices=["control", "border-axis-candidate", "release-1.4.3"], default="control")
     args = p.parse_args()
     assert args.header.resolve() != args.baseline.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -90,6 +91,9 @@ def main():
             source_path.write_bytes(source.encode("ascii"))
             subprocess.run([str(args.emitter), "--emit", str(source_path), str(args.output)], check=True)
             patched = (args.output / "warp-preset-0.ptx").read_text()
+            has_axis_candidate = "MFGUNLOCK_AXIS_BLEND_CANDIDATE" in patched
+            if has_axis_candidate != (args.variant in ["border-axis-candidate", "release-1.4.3"]):
+                raise ValueError("Emitter does not match --variant; refusing mislabeled validation")
             assert accesses(patched) == accesses(patch_adaptive_blend_v3(source))
             _, stats = assemble(patched, "warp-continuous-border", args, 48)
             compiler = CudaDriverCompiler()
@@ -105,10 +109,24 @@ def main():
                 stats["driver_jit_text"] = jit_text
             finally:
                 compiler.close()
+            stats["ptx_sha256"] = hashlib.sha256(patched.encode("ascii")).hexdigest()
             report["warp"] = stats
     assert set(report) == {"geometry", "warp"}
     emit_header(records, args.header, [args.provider])
-    (args.output / "validation.json").write_text(json.dumps(report, indent=2))
+    report["metadata"] = dict(baseline_version="1.4.2", variant=args.variant,
+        release_version="1.4.3" if args.variant == "release-1.4.3" else None,
+        provider_sha256=hashlib.sha256(args.provider.read_bytes()).hexdigest(),
+        baseline_table_sha256=hashlib.sha256(args.baseline.read_bytes()).hexdigest(),
+        generated_table_sha256=hashlib.sha256(args.header.read_bytes()).hexdigest(),
+        emitter_sha256=hashlib.sha256(args.emitter.read_bytes()).hexdigest(),
+        warp_source_sha256=hashlib.sha256((Path(__file__).resolve().parents[1] /
+            "src/addons/mfgunlock/adaptive_quality_v3.hpp").read_bytes()).hexdigest(),
+        rewrite_source_sha256=hashlib.sha256((Path(__file__).resolve().parents[1] /
+            "src/addons/mfgunlock/thin_geometry.hpp").read_bytes()).hexdigest(),
+        ptxas=subprocess.check_output([str(args.ptxas), "--version"], text=True).strip(),
+        resource_accesses="identical to the 1.4.2 local baseline",
+        runtime_validation="pending; assembly/JIT only")
+    (args.output / "validation.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
 
 
