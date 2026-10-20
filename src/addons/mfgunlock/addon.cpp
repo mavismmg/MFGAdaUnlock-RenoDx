@@ -641,25 +641,63 @@ SRWLOCK g_provider_maintenance_lock = SRWLOCK_INIT;
 std::atomic_bool g_provider_rescan_requested{false};
 
 bool ModuleContains(HMODULE mod, const char* needle, size_t needle_len) {
-  auto* base = reinterpret_cast<unsigned char*>(mod);
-  const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
-  if (IsBadReadPtr(base, sizeof(IMAGE_DOS_HEADER)) != 0) return false;
-  if (dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
-  const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
-  if (nt->Signature != IMAGE_NT_SIGNATURE) return false;
-  if (nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) return false;
+  if (mod == nullptr || needle == nullptr || needle_len == 0) return false;
+  __try {
+    auto* base = reinterpret_cast<unsigned char*>(mod);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (IsBadReadPtr(base, sizeof(IMAGE_DOS_HEADER)) != 0) return false;
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return false;
+    if (nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) return false;
 
-  const auto* section = IMAGE_FIRST_SECTION(nt);
-  for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
-    if ((section->Characteristics & IMAGE_SCN_MEM_READ) == 0) continue;
-    unsigned char* start = base + section->VirtualAddress;
-    const size_t size = section->Misc.VirtualSize;
-    if (size < needle_len) continue;
-    for (size_t off = 0; off + needle_len <= size; ++off) {
-      if (std::memcmp(start + off, needle, needle_len) == 0) return true;
+    const auto* section = IMAGE_FIRST_SECTION(nt);
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
+      if ((section->Characteristics & IMAGE_SCN_MEM_READ) == 0) continue;
+      unsigned char* start = base + section->VirtualAddress;
+      const size_t size = section->Misc.VirtualSize;
+      if (size < needle_len) continue;
+      const auto begin = reinterpret_cast<uintptr_t>(start);
+      if (size > UINTPTR_MAX - begin) continue;
+      const auto end = begin + size;
+      auto cursor = begin;
+      while (cursor < end) {
+        MEMORY_BASIC_INFORMATION info;
+        if (VirtualQuery(reinterpret_cast<void*>(cursor), &info, sizeof(info)) != sizeof(info)) break;
+        const auto next = reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
+        if (next <= cursor) break;
+        auto readable_end = (std::min)(next, end);
+        constexpr DWORD readable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
+            PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+        if (info.State != MEM_COMMIT || (info.Protect & PAGE_GUARD) != 0 ||
+            (info.Protect & readable) == 0) {
+          cursor = readable_end;
+          continue;
+        }
+        // Preserve marker matches spanning adjacent readable protection regions.
+        while (readable_end < end) {
+          if (VirtualQuery(reinterpret_cast<void*>(readable_end), &info, sizeof(info)) != sizeof(info) ||
+              info.State != MEM_COMMIT || (info.Protect & PAGE_GUARD) != 0 ||
+              (info.Protect & readable) == 0) break;
+          const auto region_end = reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
+          if (region_end <= readable_end) break;
+          readable_end = (std::min)(region_end, end);
+        }
+        if (needle_len <= readable_end - cursor) {
+          const auto last = readable_end - needle_len;
+          for (auto candidate = cursor; candidate <= last; ++candidate) {
+            if (std::memcmp(reinterpret_cast<const void*>(candidate), needle, needle_len) == 0) return true;
+          }
+        }
+        cursor = readable_end;
+      }
     }
+    return false;
+  } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ||
+              GetExceptionCode() == EXCEPTION_IN_PAGE_ERROR
+                  ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+    return false;
   }
-  return false;
 }
 
 void RememberDlssgModule(HMODULE mod) {
