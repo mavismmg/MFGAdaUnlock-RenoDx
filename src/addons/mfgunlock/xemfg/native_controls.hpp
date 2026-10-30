@@ -66,6 +66,8 @@ ControlSettings ControlsSettings();
 bool ForceVSyncOff() noexcept;
 // Lock-free read of ControlSettings::exclusiveAsBorderless for swapchain calls.
 bool ExclusiveAsBorderless() noexcept;
+// Lock-free read of ControlSettings::uiStabilization for the Present and tag paths.
+bool UiStabilization() noexcept;
 bool ConfigureControls(const ControlSettings& settings);
 ControlStatus ControlsSnapshot();
 enum class PanelPage { General, Quality, Latency, Diagnostics };

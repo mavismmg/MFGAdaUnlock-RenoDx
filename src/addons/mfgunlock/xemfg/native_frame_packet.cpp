@@ -249,7 +249,7 @@ void SubmitResource(Output& o,Frame& frame,uint32_t id,const Resource& t) {
   // HUD is still interpolated at the output rate. XeFG keeps only the first
   // tag of a type per frame, so the game's own HUD tags are held back here.
   // The game's HUD-less is kept for the mask: a volatile one is copied now.
-  if(optional && ControlsSettings().uiStabilization) {
+  if(optional && UiStabilization()) {
     if(type==XEFG_SWAPCHAIN_RES_HUDLESS_COLOR && !encodeScrgb) {
       const DejitterRegion region{uint32_t(data.resourceBase.x),uint32_t(data.resourceBase.y),data.resourceSize.x,data.resourceSize.y};
       if(data.validity==XEFG_SWAPCHAIN_RV_ONLY_NOW) {

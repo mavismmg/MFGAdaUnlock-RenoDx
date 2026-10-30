@@ -38,6 +38,8 @@ struct PanelStatus {
   uint32_t frames{};  // frames presented per base frame
   uint32_t baseFpsMilli{},outputFpsMilli{};
   uint64_t inputFrames{};
+  bool dynamic{},gameLatency{};   // 1.7.1: Dynamic MFG runs; the game's sleep drove XeLL
+  uint32_t dynamicTargetMilli{},fpsLimit{};
   std::string reason;
 };
 PanelStatus Status() noexcept;

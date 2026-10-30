@@ -2,6 +2,7 @@
 #include "native_vulkan.hpp"
 #include "vendor/xvkhost/vk_host.h"
 #include "vulkan_policy.hpp"
+#include "display_cap.hpp"
 #include "vendor/xvk/single_module.h"
 #include "vendor/xess_mod.h"
 #include "vendor/third_party/minhook/include/MinHook.h"
@@ -17,7 +18,10 @@
 #include <unordered_map>
 #include <vector>
 
-namespace mfgunlock::xemfg::native { bool Hook(void* entry,void* replacement,void** trampoline); }
+namespace mfgunlock::xemfg::native {
+bool Hook(void* entry,void* replacement,void** trampoline);
+uint32_t DisplayCapIntervalForWindow(HWND window) noexcept;
+}
 
 // The xvk layer's log and program module (vendor/xvk/single_module.h).
 namespace single_module {
@@ -50,8 +54,18 @@ struct Internal { Internal() { ++internalDepth; } ~Internal() { --internalDepth;
 // Calls from this module (the host and the xvk layer) pass straight on: they
 // reach these hooks through the loader's exports, never to be taken over.
 bool FromSelf(const void* caller) noexcept {
-  MEMORY_BASIC_INFORMATION m{};
-  return caller && VirtualQuery(caller,&m,sizeof(m))==sizeof(m) && m.AllocationBase==xess_mod::Self();
+  static std::atomic<uintptr_t> selfBase{},selfEnd{};
+  auto base=selfBase.load(std::memory_order_acquire);
+  if(!base) {
+    const auto* dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(xess_mod::Self());
+    if(!dos) return false;
+    const auto* nt=reinterpret_cast<const IMAGE_NT_HEADERS*>(reinterpret_cast<const char*>(dos)+dos->e_lfanew);
+    selfEnd.store(reinterpret_cast<uintptr_t>(dos)+nt->OptionalHeader.SizeOfImage,std::memory_order_release);
+    base=reinterpret_cast<uintptr_t>(dos);
+    selfBase.store(base,std::memory_order_release);
+  }
+  const auto address=reinterpret_cast<uintptr_t>(caller);
+  return address>=base && address<selfEnd.load(std::memory_order_acquire);
 }
 bool Passed(const void* caller) noexcept { return internalDepth>0 || FromSelf(caller); }
 std::atomic<bool> takeoverSeen{};
@@ -59,6 +73,15 @@ std::atomic<uint64_t> presentsDone{}; // the game's presents through this hook (
 std::atomic<VkDevice> inputDevice{}; // the newest host device, for an input image created before the hooks
 std::atomic<VkInstance> gameInstance{}; // for the surface's present modes
 std::atomic<bool> exclusiveExtension{}; // the game's device enabled VK_EXT_full_screen_exclusive
+// 1.7.1 (plan B.3): the game's Reflex limit and the display cap, as on D3D12: the
+// longer interval wins, and XeLL holds it for every presented frame.
+std::atomic<uint32_t> gameLimitUs{};
+std::atomic<HWND> gameWindow{};
+std::atomic<uint64_t> limitTick{};
+void ApplyFpsLimit() noexcept {
+  const auto cap=DisplayCapIntervalForWindow(gameWindow.load());
+  xess_vulkan::SetStandaloneFpsLimit(policy::LimitFps(CombinedIntervalUs(gameLimitUs.load(),cap)));
+}
 void FlushLog();
 
 #define MFG_VK_EXPORTS(X) \
@@ -219,6 +242,7 @@ __declspec(noinline) VkResult VKAPI_CALL Hook_vkCreateWin32SurfaceKHR(VkInstance
   const auto result=original_vkCreateWin32SurfaceKHR(instance,info,allocator,output);
   if(!Passed(_ReturnAddress()) && result==VK_SUCCESS && info && output) {
     SeeInstance(instance);
+    gameWindow=info->hwnd;
     xess_vulkan::SurfaceCreated(instance,*output,info->hwnd);
   }
   return result;
@@ -319,6 +343,11 @@ __declspec(noinline) VkResult VKAPI_CALL Hook_vkQueuePresentKHR(VkQueue queue,co
   if(Passed(_ReturnAddress())) return original_vkQueuePresentKHR(queue,info);
   Internal internal;
   struct Count { ~Count() { presentsDone.fetch_add(1,std::memory_order_relaxed); } } count;
+  // The display's refresh and the panel's display cap, as on D3D12, every 2 s.
+  if(const auto tick=GetTickCount64();tick-limitTick.load(std::memory_order_relaxed)>=2000) {
+    limitTick.store(tick,std::memory_order_relaxed);
+    ApplyFpsLimit();
+  }
   VkResult result=VK_SUCCESS;
   if(xess_vulkan::QueuePresent(queue,info,result)) return result;
   result=original_vkQueuePresentKHR(queue,info);
@@ -436,12 +465,14 @@ void VKAPI_CALL Hook_vkSetHdrMetadataEXT(VkDevice device,uint32_t count,const Vk
   if(!native.empty() && original) original(device,uint32_t(native.size()),native.data(),nativeMetadata.data());
 }
 VkResult VKAPI_CALL Hook_vkSetLatencySleepModeNV(VkDevice device,VkSwapchainKHR swapchain,const VkLatencySleepModeInfoNV* info) {
+  if(info && gameLimitUs.exchange(info->minimumIntervalUs)!=info->minimumIntervalUs) ApplyFpsLimit();
   if(xess_vulkan::OwnsSwapchain(swapchain)) return VK_SUCCESS;
   const auto original=Extension(device,&Extensions::vkSetLatencySleepModeNV);
   return original?original(device,swapchain,info):VK_ERROR_INITIALIZATION_FAILED;
 }
 VkResult VKAPI_CALL Hook_vkLatencySleepNV(VkDevice device,VkSwapchainKHR swapchain,const VkLatencySleepInfoNV* info) {
   if(xess_vulkan::OwnsSwapchain(swapchain)) {
+    { Internal internal; xess_vulkan::GameLatencySleep(swapchain); }
     const auto signal=Extension(device,&Extensions::vkSignalSemaphore);
     if(!info || !signal) return VK_SUCCESS;
     VkSemaphoreSignalInfo value{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO,nullptr,info->signalSemaphore,info->value};
@@ -451,7 +482,10 @@ VkResult VKAPI_CALL Hook_vkLatencySleepNV(VkDevice device,VkSwapchainKHR swapcha
   return original?original(device,swapchain,info):VK_ERROR_INITIALIZATION_FAILED;
 }
 void VKAPI_CALL Hook_vkSetLatencyMarkerNV(VkDevice device,VkSwapchainKHR swapchain,const VkSetLatencyMarkerInfoNV* info) {
-  if(xess_vulkan::OwnsSwapchain(swapchain)) return;
+  if(xess_vulkan::OwnsSwapchain(swapchain)) {
+    if(info) { Internal internal; xess_vulkan::GameLatencyMarker(swapchain,uint32_t(info->marker)); }
+    return;
+  }
   if(const auto original=Extension(device,&Extensions::vkSetLatencyMarkerNV)) original(device,swapchain,info);
 }
 void VKAPI_CALL Hook_vkGetLatencyTimingsNV(VkDevice device,VkSwapchainKHR swapchain,VkGetLatencyMarkerInfoNV* info) {
@@ -789,6 +823,15 @@ bool BeforeInstance(uint32_t& apiVersion) noexcept {
     const bool metering=GetPrivateProfileIntW(L"XeFG",L"VulkanPresentMetering",1,ini.c_str())!=0;
     xess_vulkan::SetPresentMetering(metering);
     xess_mod::WriteLog("vk_present_metering_config","\"enabled\":"+std::string(metering?"true":"false"));
+    // 1.7.1 (plans B.2, B.4): both off by default until measured in a game.
+    const bool gameLatency=GetPrivateProfileIntW(L"XeFG",L"VulkanGameLatency",0,ini.c_str())!=0;
+    xess_vulkan::SetGameLatency(gameLatency);
+    if(gameLatency) xess_mod::WriteLog("vk_game_latency_config","\"enabled\":true");
+    xess_vulkan::SetStandaloneDynamic(GetPrivateProfileIntW(L"XeFG",L"VulkanDynamicMFG",0,ini.c_str())!=0,
+        GetPrivateProfileIntW(L"XeFG",L"VulkanDynamicTargetFps",0,ini.c_str()),
+        int(GetPrivateProfileIntW(L"XeFG",L"VulkanDynamicRounding",1,ini.c_str())),
+        GetPrivateProfileIntW(L"XeFG",L"VulkanDynamicAllow1x",1,ini.c_str())!=0,
+        GetPrivateProfileIntW(L"XeFG",L"VulkanDynamicTargetAsCap",0,ini.c_str())!=0);
     if(!generate) xess_mod::WriteLog("vk_generate","\"enabled\":false");
     static std::atomic<bool> logged{};
     if(!copy && !logged.exchange(true)) xess_mod::WriteLog("vk_input_copy","\"enabled\":false");
@@ -816,6 +859,8 @@ PanelStatus Status() noexcept {
     const bool fresh=snapshot.fpsAgeMs<3000;
     out.baseFpsMilli=fresh?snapshot.baseFpsMilli:0; out.outputFpsMilli=fresh?snapshot.outputFpsMilli:0;
     out.inputFrames=snapshot.inputFrames; out.reason=snapshot.reason;
+    out.dynamic=snapshot.dynamic; out.dynamicTargetMilli=snapshot.dynamicTargetMilli;
+    out.fpsLimit=snapshot.fpsLimit; out.gameLatency=snapshot.gameLatency;
   } catch(...) {}
   return out;
 }

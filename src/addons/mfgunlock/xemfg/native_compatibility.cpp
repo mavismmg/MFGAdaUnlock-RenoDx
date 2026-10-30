@@ -22,7 +22,8 @@ Json VulkanReport() {
 #ifdef MFGUNLOCK_XEMFG_VULKAN
   const auto vk=vulkan::Status();
   return {{"game",vk.game},{"active",vk.active},{"frames",vk.frames},{"input_frames",vk.inputFrames},
-      {"base_fps_milli",vk.baseFpsMilli},{"output_fps_milli",vk.outputFpsMilli},{"reason",vk.reason}};
+      {"base_fps_milli",vk.baseFpsMilli},{"output_fps_milli",vk.outputFpsMilli},{"reason",vk.reason},
+      {"dynamic",vk.dynamic},{"fps_limit",vk.fpsLimit},{"game_latency",vk.gameLatency}};
 #else
   return {{"game",false}};
 #endif

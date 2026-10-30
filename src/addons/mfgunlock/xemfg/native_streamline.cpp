@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "native_internal.hpp"
+#include "vendor/sdk_pacing.h"
 #include "native_frame_packet.hpp"
 #include "native_ffx.hpp"
 #include "native_ngx.hpp"
@@ -846,9 +847,9 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
   auto& s=State(); auto& a=s.api; std::lock_guard lock(o->io);
   {
     // 1.5.7: smoothed interval between source Presents (display-cap notice).
-    LARGE_INTEGER now{},frequency{}; QueryPerformanceCounter(&now); QueryPerformanceFrequency(&frequency);
+    LARGE_INTEGER now{}; QueryPerformanceCounter(&now);
     const auto previous=o->lastSourcePresentQpc; o->lastSourcePresentQpc=now.QuadPart;
-    const auto us=previous && frequency.QuadPart?uint64_t(now.QuadPart-previous)*1000000/uint64_t(frequency.QuadPart):0;
+    const auto us=previous?QpcMicroseconds(now.QuadPart-previous):0;
     const auto smoothed=s.sourceIntervalUs.load();
     if(us && us<250000) s.sourceIntervalUs=smoothed?uint32_t((uint64_t(smoothed)*7+us)/8):uint32_t(us);
     else if(us) s.sourceIntervalUs=0; // a pause or a loading screen: start again
@@ -864,7 +865,7 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
       && (frame->resources&(1u<<XEFG_SWAPCHAIN_RES_HUDLESS_COLOR));
   // 1.7 (plan E.2): with HUD stabilization on, the game's HUD tags were held
   // back (SubmitResource), so `hudless` is false and the addon's inputs apply.
-  const bool stabilized=!hudless && frame && !frame->failed && ControlsSettings().uiStabilization
+  const bool stabilized=!hudless && frame && !frame->failed && UiStabilization()
       && StabilizeHud(*o,*frame,id);
   const bool compositionReady=ApplyUiComposition(*o,hudless || stabilized,stabilized);
   constexpr uint32_t required=(1u<<XEFG_SWAPCHAIN_RES_DEPTH)|(1u<<XEFG_SWAPCHAIN_RES_MOTION_VECTOR);
@@ -935,7 +936,9 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
       |(uint32_t(f&&f->failed)<<18)|(uint32_t(f&&f->sleeping)<<19)
       |(uint32_t(s.nativeOff.load())<<20)|(uint32_t(s.reflexOff.load())<<21);
   const auto tick=GetTickCount64();
-  if(Snapshot().frames<4 || (admission!=o->lastAdmission && tick-o->admissionTick>=1000)) {
+  uint32_t framesSoFar{};
+  { std::lock_guard guard(s.lock); framesSoFar=s.status.frames; }
+  if(framesSoFar<4 || (admission!=o->lastAdmission && tick-o->admissionTick>=1000)) {
     o->lastAdmission=admission; o->admissionTick=tick;
     xess_mod::WriteLog("native_frame_admission","\"id\":"+std::to_string(id)
         +",\"native_off\":"+std::to_string(s.nativeOff.load())+",\"requested\":"+std::to_string(s.requested.load())
@@ -965,10 +968,13 @@ static void WriteSummary(Output& o,const xefg_swapchain_present_status_t& status
     o.summaryTick=tick; o.summaryFrames=frames; o.summaryRejectedFrames=withoutFg; o.summarySleeps=o.rejectedExplicitSleeps;
     o.summaryTagsRejected=tagsRejected; o.summaryTagsRemoved=tagsRemoved; o.summaryReservedStates=reservedStates;
     o.summaryHudFiltered=hudFiltered;
+    o.summaryPresentUs=0; o.summaryPresentCalls=0; o.summarySleepUs=0; o.summarySleepCalls=0;
   };
   if(!o.summaryTick) { baseline(); return; }
   if(tick-o.summaryTick<s.summaryIntervalMs.load()) return;
   const auto sync=s.gameSyncInterval.load();
+  const auto presents=o.summaryPresentCalls.load();
+  const auto flip=sdk_pacing::Snapshot(o.fg);
   xess_mod::WriteLog("native_summary","\"output\":"+std::to_string(o.diagnosticOutput)+",\"interval_ms\":"+std::to_string(tick-o.summaryTick)
       +",\"frames\":"+std::to_string(uint32_t(frames-uint32_t(o.summaryFrames)))
       +",\"frames_without_fg\":"+std::to_string(uint32_t(withoutFg-uint32_t(o.summaryRejectedFrames)))
@@ -980,7 +986,13 @@ static void WriteSummary(Output& o,const xefg_swapchain_present_status_t& status
       +",\"reserved_states\":"+std::to_string(reservedStates-o.summaryReservedStates)
       +",\"sleeps_rejected\":"+std::to_string(o.rejectedExplicitSleeps-o.summarySleeps)
       +",\"game_sync_interval\":"+(sync==UINT32_MAX?std::string("-1"):std::to_string(sync))
-      +",\"force_vsync_off\":"+std::to_string(ForceVSyncOff()));
+      +",\"force_vsync_off\":"+std::to_string(ForceVSyncOff())
+      +",\"source_interval_us\":"+std::to_string(s.sourceIntervalUs.load())
+      +",\"sleep_us\":"+std::to_string(o.summarySleepCalls?o.summarySleepUs/o.summarySleepCalls:0)
+      +",\"present_call_us\":"+std::to_string(presents?o.summaryPresentUs.load()/presents:0)
+      +",\"latency_output\":"+std::to_string(uint32_t(s.latencyOutput.load()))
+      +",\"native_buffers\":"+std::to_string(flip.nativeBuffers)+",\"native_latency\":"+std::to_string(flip.nativeLatency)
+      +",\"flip_metered\":"+std::to_string(flip.metered)+",\"queue_ahead\":"+std::to_string(flip.queueAheadActive));
   baseline();
 }
 void AfterPresent(const std::shared_ptr<Output>& o,CpuProbe* probe,HRESULT result) {
@@ -1013,12 +1025,7 @@ void AfterPresent(const std::shared_ptr<Output>& o,CpuProbe* probe,HRESULT resul
   // 1.5.7: refresh of the display showing this output, every 2 s (display cap).
   if(const auto tick=GetTickCount64(); tick-o->refreshTick>=2000) {
     o->refreshTick=tick;
-    uint32_t refresh{};
-    if(const auto monitor=MonitorFromWindow(o->hwnd,MONITOR_DEFAULTTONEAREST)) {
-      MONITORINFOEXW info{}; info.cbSize=sizeof(info); DEVMODEW mode{}; mode.dmSize=sizeof(mode);
-      if(GetMonitorInfoW(monitor,&info) && EnumDisplaySettingsW(info.szDevice,ENUM_CURRENT_SETTINGS,&mode)
-          && mode.dmDisplayFrequency>1 && mode.dmDisplayFrequency<=1000) refresh=mode.dmDisplayFrequency*1000;
-    }
+    const uint32_t refresh=WindowRefreshMilliHz(o->hwnd);
     if(State().displayRefreshMilliHz.exchange(refresh)!=refresh || !o->displayCapLogged) {
       o->displayCapLogged=true;
       xess_mod::WriteLog("native_display_cap","\"output\":"+std::to_string(o->diagnosticOutput)+",\"refresh_mhz\":"+std::to_string(refresh)

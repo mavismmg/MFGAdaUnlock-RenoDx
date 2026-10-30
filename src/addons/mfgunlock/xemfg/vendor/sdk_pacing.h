@@ -48,6 +48,9 @@ void RequestFlipMetering(bool enabled) noexcept;
 void RequestSdkDeadlines(bool enabled) noexcept;
 // Commits at a first generated output, together with the metering configuration.
 void RequestQueueAhead(bool enabled) noexcept;
+// MFGAdaUnlock 1.7.1: [XeFG] XeFGNativeLatency, the maximum frame latency of XeFG's native swap chain for owners
+// registered from now on (1..16; 0 keeps XeFG's own, at most 3). Not applied with the flip queue, which sets its own.
+void RequestNativeLatency(uint32_t latency) noexcept;
 struct FlipStatus {
     bool requested{}, enabled{}, available{}, installed{}, registered{}, queue{}, busy{};
     bool configured{}, metered{}, refused{};
@@ -57,6 +60,7 @@ struct FlipStatus {
     bool sdkDeadlinesRequested{},sdkDeadlinesActive{};
     bool queueAheadRequested{},queueAheadActive{};
     uint64_t queueAheadDeadlines{};
+    uint32_t nativeBuffers{},nativeLatency{};
 };
 // Read only, scoped to the exact live SDK handle (never another context).
 FlipStatus Snapshot(void* handle) noexcept;

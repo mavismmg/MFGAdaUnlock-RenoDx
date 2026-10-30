@@ -88,7 +88,7 @@ public:
     owner->RetirePresentation(std::move(chain));
     { auto& s=State(); std::lock_guard lock(s.lock);
       if(s.output.lock()==owner) {
-        s.output.reset(); s.status.output=s.status.xell=s.status.enabled=s.status.inputs=false;
+        s.output.reset(); s.hasOutput=false; s.status.output=s.status.xell=s.status.enabled=s.status.inputs=false;
         s.status.submitted=1; s.status.sdkResult=0;
         s.viewport=UINT32_MAX; s.recording=0; s.presenting=0;
       }
@@ -220,8 +220,11 @@ public:
     { RuntimeCall trace("prepare_present",owner->diagnosticOutput,frame);BeforePresent(owner); }
     probe.Prepared();
     HRESULT hr;
+    LARGE_INTEGER presentBegin{},presentEnd{}; QueryPerformanceCounter(&presentBegin);
     { RuntimeCall trace("xefg_present",owner->diagnosticOutput,frame);
       hr=extended?chain->Present1(sync,flags,params):chain->Present(sync,flags);trace.Result(hr); }
+    QueryPerformanceCounter(&presentEnd);
+    owner->summaryPresentUs+=QpcMicroseconds(presentEnd.QuadPart-presentBegin.QuadPart); ++owner->summaryPresentCalls;
     probe.Returned();
     if(owner->gpuTrace) owner->gpuTrace->End();
     { RuntimeCall trace("after_present",owner->diagnosticOutput,frame);AfterPresent(owner,&probe,hr); }

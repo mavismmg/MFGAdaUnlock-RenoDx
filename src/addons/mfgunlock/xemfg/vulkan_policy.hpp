@@ -34,6 +34,13 @@ inline VkPresentModeKHR HostPresentMode(VkPresentModeKHR requested,const VkPrese
   for(uint32_t i=0;i<count;++i) if(modes[i]==VK_PRESENT_MODE_IMMEDIATE_KHR) return VK_PRESENT_MODE_IMMEDIATE_KHR;
   return requested;
 }
+// The host's limit counts presented frames per second. Rounded down, so an
+// interval is never exceeded; 0 means no limit.
+constexpr uint32_t LimitFps(uint32_t intervalUs) {
+  if(!intervalUs) return 0;
+  const uint32_t fps=1000000/intervalUs;
+  return fps?fps:1;
+}
 // ReShade's create_device writes Vulkan versions as major<<12 | minor<<8 (1.3 is
 // 0x1300), not VK_MAKE_API_VERSION. The program set needs 1.3.
 struct InstanceVersion { uint32_t major,minor; bool raised; };

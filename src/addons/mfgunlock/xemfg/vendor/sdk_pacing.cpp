@@ -198,6 +198,7 @@ struct Owner
         int64_t anchorNs{};
         bool queueAhead{};
         uint64_t queueAheadDeadlines{};
+        uint32_t nativeBuffers{},nativeLatency{}; // MFGAdaUnlock 1.7.1: XeFG's native chain, as registered
     } flip;
     std::atomic<unsigned> flipLogs{}, flipSkipLogs{};
     // pacing.1: the flip queue; null keeps the CPU pacing of V1.6.0. The batch being gated (gateMutex): its frame,
@@ -257,6 +258,7 @@ std::atomic<bool> flipEnabled{}, firstLayout{}, flipToggleDown{}, flipToggleKey{
 std::atomic<bool> flipRequested{};
 std::atomic<bool> sdkDeadlinesRequested{},sdkDeadlinesActive{};
 std::atomic<bool> queueAheadRequested{true};
+std::atomic<uint32_t> nativeLatencyRequested{0};
 std::atomic<int64_t> flipLeadNs{2500000};
 std::atomic<unsigned> flipToggleLogs{};
 // amdflip.1 (SetAmdFlipMeter): amdxc64.dll's AmdExtD3DCreateInterface (null = off) and the mode: 1 auto (FSR's rule, a
@@ -2116,6 +2118,19 @@ bool Register(void* handle, uint64_t generation, ID3D12Device* device, std::stri
                 ",\"enabled\":"+(flipEnabled.load() ? "true" : "false")+",\"lead_ns\":"+std::to_string(flipLeadNs.load())+
                 ",\"first_caller_verified\":"+(firstLayout.load() ? "true" : "false"));
         }
+        // MFGAdaUnlock 1.7.1: XeFG waits on this chain's frame-latency waitable before each output (up to 1 s, 0x21F7B5),
+        // so its limit bounds the queue of outputs ahead of the display: logged, and optionally changed, for the latency work.
+        {
+            uint32_t buffers{}, latency{};
+            NativeCapacity(*owner, buffers, latency);
+            const auto requested = nativeLatencyRequested.load(std::memory_order_acquire);
+            const auto applied = requested && !queueEnabled.load(std::memory_order_acquire) ? RaiseNativeLatency(*owner, requested) : 0;
+            owner->flip.nativeBuffers = buffers;
+            owner->flip.nativeLatency = applied ? applied : latency;
+            xess_mod::WriteLog("native_chain_capacity", "\"generation\":"+std::to_string(generation)+
+                ",\"buffers\":"+std::to_string(buffers)+",\"max_latency\":"+std::to_string(latency)+
+                ",\"requested\":"+std::to_string(requested)+",\"applied\":"+std::to_string(applied));
+        }
         // pacing.1: the flip queue, on every vendor (the gate is plain D3D12); it needs the presentation queue and the
         // verified first-output caller (First() opens each gated batch).
         if (queueEnabled.load(std::memory_order_acquire))
@@ -2257,6 +2272,7 @@ void SetFlipToggleHotkey(bool enabled) noexcept
 void RequestFlipMetering(bool enabled) noexcept { flipRequested.store(enabled, std::memory_order_release); }
 void RequestQueueAhead(bool enabled) noexcept { queueAheadRequested.store(enabled,std::memory_order_release); }
 void RequestSdkDeadlines(bool enabled) noexcept { sdkDeadlinesRequested.store(enabled,std::memory_order_release); }
+void RequestNativeLatency(uint32_t latency) noexcept { nativeLatencyRequested.store(latency<=16?latency:0,std::memory_order_release); }
 FlipStatus Snapshot(void* handle) noexcept {
     FlipStatus status{};
     status.queueAheadRequested=queueAheadRequested.load(std::memory_order_acquire);
@@ -2276,6 +2292,7 @@ FlipStatus Snapshot(void* handle) noexcept {
         std::unique_lock guard(owner->flipMutex,std::try_to_lock);
         if(!guard.owns_lock()) { status.busy=true; return status; }
         status.queueAheadActive=owner->flip.queueAhead; status.queueAheadDeadlines=owner->flip.queueAheadDeadlines;
+        status.nativeBuffers=owner->flip.nativeBuffers; status.nativeLatency=owner->flip.nativeLatency;
         status.configured=owner->flip.configured; status.metered=owner->flip.metered;
         status.refused=owner->flip.refused; status.outputs=owner->flip.outputs;
         status.feedback=owner->flip.feedback; status.status=owner->flip.status; status.calls=owner->flip.calls;

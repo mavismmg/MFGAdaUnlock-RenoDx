@@ -45,7 +45,7 @@ namespace xefg_cuda {
 bool TrySnapshot(Status& out) noexcept { out.state=State::Active; out.major=8; out.minor=9; out.layers=17; out.launches=260040; return true; }
 }
 namespace sdk_pacing {
-void RequestQueueAhead(bool) noexcept {}
+void RequestQueueAhead(bool) noexcept {} void RequestNativeLatency(uint32_t) noexcept {}
 void RequestFlipMetering(bool) noexcept {}
 void RequestSdkDeadlines(bool) noexcept {}
 FlipStatus Snapshot(void*) noexcept {

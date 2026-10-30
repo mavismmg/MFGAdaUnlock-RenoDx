@@ -81,6 +81,8 @@ std::atomic<int> gAddonInputCopy{1};   // MFGAdaUnlock 1.7: SetInputCopy (0 off,
 std::atomic<bool> gAddonGenerate{true};    // MFGAdaUnlock 1.7: SetGenerate
 std::atomic<bool> gAddonPresentMetering{true};   // MFGAdaUnlock 1.7: SetPresentMetering
 std::atomic<InputViewFn> gAddonInputView{nullptr};   // MFGAdaUnlock 1.7: SetInputView
+std::atomic<bool> gAddonGameLatency{false};   // MFGAdaUnlock 1.7.1: SetGameLatency
+std::atomic<bool> gGameLatencyUsed{false};
 
 // ---------------------------------------------------------------- runtime (the player's libxess_fg + libxell)
 struct Runtime
@@ -363,6 +365,17 @@ struct FakeChain
     // on another thread meanwhile reads the frame from here instead of giving the frame's inputs up.
     std::atomic<bool> acquireWaiting{false};
     std::atomic<uint64_t> presentsDone{0};
+    struct AcquireWait
+    {
+        FakeChain& chain;
+        explicit AcquireWait(FakeChain& c) : chain(c) { chain.acquireWaiting = true; }
+        ~AcquireWait() { chain.acquireWaiting = false; }
+    };
+    // MFGAdaUnlock 1.7.1: the frame the game's own sleep was for, and which of its simulation markers XeLL already has.
+    // Under gameMarkers; a marker arriving once the frame is acquired is not this frame's to give.
+    std::mutex gameMarkers;
+    uint32_t gameSleptId = 0;
+    bool gameMarkersOpen = false, gameSimStart = false, gameSimEnd = false;
 };
 
 std::mutex gMutex;
@@ -1693,8 +1706,14 @@ bool AcquireNextImageImpl(VkSwapchainKHR swapchain, uint64_t timeout, VkSemaphor
         // The frame start's sleep (XeLL, or the host's Reflex / Anti-Lag 2: vkreflex.1), then XeFG's frame-latency
         // waitable. xemfgsa.6: both timed, as waits Dynamic MFG reads.
         const int64_t sleepStart = Now();
-        struct Waiting { FakeChain& chain; Waiting(FakeChain& c) : chain(c) { chain.acquireWaiting = true; } ~Waiting() { chain.acquireWaiting = false; } } waiting{*chain};
-        LatencySleep(host, *chain, frameId);
+        FakeChain::AcquireWait waiting{*chain};
+        bool gameSlept = false;   // MFGAdaUnlock 1.7.1
+        {
+            std::lock_guard markers(chain->gameMarkers);
+            gameSlept = chain->gameSleptId == frameId;
+        }
+        gGameLatencyUsed = gameSlept;
+        if (!gameSlept) LatencySleep(host, *chain, frameId);
         const int64_t waitStart = Now();
         chain->sleepMs = Milliseconds(waitStart - sleepStart);
         const DWORD wait = timeout == UINT64_MAX ? 2000 : DWORD(std::min<uint64_t>(timeout / 1'000'000ull, 2000));
@@ -1718,8 +1737,14 @@ bool AcquireNextImageImpl(VkSwapchainKHR swapchain, uint64_t timeout, VkSemaphor
         host.lastFrameId = frameId;
         {
             xess_mod::VulkanHostCallScope scope;
-            gRuntime.xellAddMarkerData(host.xell, chain->frameId, XELL_SIMULATION_START);
-            gRuntime.xellAddMarkerData(host.xell, chain->frameId, XELL_SIMULATION_END);
+            bool simStart = false, simEnd = false;   // MFGAdaUnlock 1.7.1: those the game already gave
+            {
+                std::lock_guard markers(chain->gameMarkers);
+                if (chain->gameSleptId == frameId) { simStart = chain->gameSimStart; simEnd = chain->gameSimEnd; }
+                chain->gameMarkersOpen = false;
+            }
+            if (!simStart) gRuntime.xellAddMarkerData(host.xell, chain->frameId, XELL_SIMULATION_START);
+            if (!simEnd) gRuntime.xellAddMarkerData(host.xell, chain->frameId, XELL_SIMULATION_END);
             gRuntime.xellAddMarkerData(host.xell, chain->frameId, XELL_RENDERSUBMIT_START);
         }
         if (chain->latencyUsed == MFG_XEFG_VK_LATENCY_REFLEX)
@@ -1732,6 +1757,58 @@ bool AcquireNextImageImpl(VkSwapchainKHR swapchain, uint64_t timeout, VkSemaphor
         result = VK_ERROR_OUT_OF_DATE_KHR;
         return true;
     }
+}
+
+// MFGAdaUnlock 1.7.1: only between frames (the previous one presented, this one not acquired): XeLL's sleep may wait for
+// the previous frame's present, which needs this chain's mutex. Any other order leaves the sleep to the acquisition, so
+// each frame sleeps exactly once and XeLL's ids stay consecutive.
+bool GameLatencySleepImpl(VkSwapchainKHR swapchain) noexcept
+{
+    if (!gAddonGameLatency.load()) return false;
+    auto chain = FindFake(swapchain);
+    if (!chain) return false;
+    try {
+        std::lock_guard lock(chain->mutex);
+        if (chain->retired || chain->broken || !chain->proxy || chain->acquired >= 0) return false;
+        const uint32_t frameId = chain->frameId + 1;
+        {
+            std::lock_guard markers(chain->gameMarkers);
+            if (chain->gameSleptId == frameId) return true;
+        }
+        {
+            FakeChain::AcquireWait waiting{*chain};
+            LatencySleep(*chain->owner, *chain, frameId);
+        }
+        std::lock_guard markers(chain->gameMarkers);
+        chain->gameSleptId = frameId;
+        chain->gameMarkersOpen = true;
+        chain->gameSimStart = chain->gameSimEnd = false;
+        static std::atomic<bool> logged{false};
+        if (!logged.exchange(true)) Log("vk_game_latency", "\"frame\":" + std::to_string(frameId));
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+void GameLatencyMarkerImpl(VkSwapchainKHR swapchain, uint32_t marker) noexcept
+{
+    if (!gAddonGameLatency.load()) return;
+    auto chain = FindFake(swapchain);
+    if (!chain) return;
+    try {
+        std::lock_guard markers(chain->gameMarkers);
+        if (!chain->gameMarkersOpen) return;
+        xess_mod::VulkanHostCallScope scope;
+        auto& xell = chain->owner->xell;
+        if (marker == VK_LATENCY_MARKER_SIMULATION_START_NV && !chain->gameSimStart) {
+            gRuntime.xellAddMarkerData(xell, chain->gameSleptId, XELL_SIMULATION_START);
+            chain->gameSimStart = true;
+        } else if (marker == VK_LATENCY_MARKER_SIMULATION_END_NV && chain->gameSimStart && !chain->gameSimEnd) {
+            gRuntime.xellAddMarkerData(xell, chain->gameSleptId, XELL_SIMULATION_END);
+            chain->gameSimEnd = true;
+        }
+    } catch (...) {}
 }
 
 bool SetHdrMetadataImpl(VkSwapchainKHR swapchain, const void* metadata) noexcept
@@ -2403,6 +2480,10 @@ bool RecordDlssInputs(VkCommandBuffer command, const DlssInputs& in) noexcept
     }
 }
 
+void SetGameLatency(bool enabled) noexcept { gAddonGameLatency = enabled; }
+bool GameLatencySleep(VkSwapchainKHR swapchain) noexcept { return GameLatencySleepImpl(swapchain); }
+void GameLatencyMarker(VkSwapchainKHR swapchain, uint32_t marker) noexcept { GameLatencyMarkerImpl(swapchain, marker); }
+
 bool CaptureDlssEvaluate(void* command, const NVSDK_NGX_Parameter* parameters) noexcept
 {
     if (!command || !parameters || !gEnabled.load()) return false;
@@ -2516,6 +2597,7 @@ Snapshot ReadSnapshot() noexcept
             : snapshot.hosted ? "waiting"
             : (snapshot.enabled ? (snapshot.deviceReady ? "waiting" : "no_device") : "off");
         snapshot.reason = gLastReason;
+        snapshot.gameLatency = gGameLatencyUsed.load();
         if (gRuntimeTried.load() && !gRuntime.ready) {
             snapshot.runtimeSearch = xess_runtime_search::Utf8(gRuntime.search.recommended.wstring());
             snapshot.runtimeGame = xess_runtime_search::Utf8(gRuntime.search.gameFolder.wstring());

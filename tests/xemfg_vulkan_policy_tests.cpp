@@ -45,6 +45,12 @@ int main() {
   CHECK(!ReadInstanceVersion(0x1300).raised && ReadInstanceVersion(0x1300).minor==3);
   CHECK(!ReadInstanceVersion(0x1400).raised);
 
+  CHECK(LimitFps(0)==0);
+  CHECK(LimitFps(16667)==59);       // never above the interval's rate
+  CHECK(LimitFps(16666)==60);
+  CHECK(LimitFps(4300)==232);
+  CHECK(LimitFps(2000000)==1);      // a very long interval still limits
+
   PrivateDataStore store;
   CHECK(store.Get(1,10)==0);
   CHECK(store.Set(1,10,111) && store.Set(1,11,112) && store.Set(2,10,222));

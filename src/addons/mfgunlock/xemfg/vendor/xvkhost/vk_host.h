@@ -90,6 +90,12 @@ void SetInputCopy(int mode) noexcept;
 void SetGenerate(bool enabled) noexcept;
 // MFGAdaUnlock 1.7: NVIDIA's present metering on the layer's swap chain (VK_NV_present_metering), on by default.
 void SetPresentMetering(bool enabled) noexcept;
+// MFGAdaUnlock 1.7.1: [XeFG] VulkanGameLatency. The game's vkLatencySleepNV and simulation markers on a taken-over chain
+// drive XeLL (off by default: the frame sleeps at its acquisition and its markers are all stamped there).
+void SetGameLatency(bool enabled) noexcept;
+// True when the game's sleep was taken as this frame's; it then skips the sleep at the acquisition.
+bool GameLatencySleep(VkSwapchainKHR swapchain) noexcept;
+void GameLatencyMarker(VkSwapchainKHR swapchain, uint32_t marker) noexcept;
 // MFGAdaUnlock 1.7: the view the input copy samples for a DLSS input image (depth: its depth aspect alone).
 using InputViewFn = VkImageView (*)(VkImage image, VkFormat format, bool depth) noexcept;
 void SetInputView(InputViewFn view) noexcept;
@@ -160,6 +166,7 @@ struct Snapshot
     // xemfgsa.6: Dynamic MFG runs (frames is its count, 1 = generation off), its target (FPS x 1000) and its cap mode.
     bool dynamic = false, dynamicCap = false;
     uint32_t dynamicTargetMilli = 0;
+    bool gameLatency = false;     // MFGAdaUnlock 1.7.1: the game's own sleep drove XeLL on the last frame
     std::string state = "off";
     std::string reason;
     // alpha.15 (B4-12), after a failed search: the RTXMFG-XeSS folder beside MFG Unlocker, the game's EXE folder and

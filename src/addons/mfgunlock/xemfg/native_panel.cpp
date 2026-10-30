@@ -41,13 +41,23 @@ void Draw() {
   if(const auto vk=vulkan::Status();vk.game) {
     vulkanGame=true;
     const bool vkGenerating=vk.active && vk.frames>1;
-    const char* waiting=unavailable?"XeMFG unavailable":vk.active?"Frame generation is off in the game"
+    const char* waiting=unavailable?"XeMFG unavailable":vk.active && vk.dynamic?"Dynamic MFG has paused generation":vk.active?"Frame generation is off in the game"
         :vk.reason=="no_dlss_inputs"?"Waiting for DLSS (turn DLSS on in the game)"
         :vk.reason=="game_frame_generation"?"Waiting for the game's frame generation switch":"Waiting for the game";
     ui::Hero(multiplier.c_str(),"XeMFG","Vulkan",vkGenerating?"Generating frames":waiting,vkGenerating);
     if(vk.active && vk.baseFpsMilli && vk.outputFpsMilli) {
       char line[96];
       snprintf(line,sizeof(line),"%.0f base fps -> %.0f fps output",vk.baseFpsMilli/1000.0,vk.outputFpsMilli/1000.0);
+      ui::Description(line);
+    }
+    if(vk.active && vk.dynamic) {
+      char line[96];
+      snprintf(line,sizeof(line),"Dynamic MFG: %ux now, target %.0f fps",vk.frames,vk.dynamicTargetMilli/1000.0);
+      ui::Description(line);
+    }
+    if(vk.active && vk.fpsLimit) {
+      char line[64];
+      snprintf(line,sizeof(line),"Output limited to %u fps",vk.fpsLimit);
       ui::Description(line);
     }
     if(!vk.active && !vk.reason.empty() && vk.reason!="no_dlss_inputs" && vk.reason!="active") {

@@ -95,6 +95,7 @@ sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id,
       frame.failed=true; return sl::Result::eErrorReflexAPI;
     }
     frame.sleeping=true; frame.sleepUs=sleepUs; frame.latencyOutput=route; ++s.latencySleeps;
+    o->summarySleepUs+=sleepUs; ++o->summarySleepCalls;
     if(reflex) { ++s.reflexSleeps; if(s.gameReflexMode!=0) s.reflexOutputTick=GetTickCount64(); }
     else { ++s.xellSleeps; s.outputTick=GetTickCount64(); }
   }

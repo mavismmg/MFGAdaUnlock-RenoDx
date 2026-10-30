@@ -36,6 +36,18 @@ void Report(const char* reason) {
 std::shared_ptr<Output> Active() {
   auto& s=State(); std::lock_guard lock(s.lock); return s.output.lock();
 }
+uint32_t WindowRefreshMilliHz(HWND window) noexcept {
+  const auto monitor=window?MonitorFromWindow(window,MONITOR_DEFAULTTONEAREST):nullptr;
+  if(!monitor) return 0;
+  MONITORINFOEXW info{}; info.cbSize=sizeof(info); DEVMODEW mode{}; mode.dmSize=sizeof(mode);
+  return GetMonitorInfoW(monitor,&info) && EnumDisplaySettingsW(info.szDevice,ENUM_CURRENT_SETTINGS,&mode)
+      && mode.dmDisplayFrequency>1 && mode.dmDisplayFrequency<=1000?mode.dmDisplayFrequency*1000:0;
+}
+// 1.7.1 (plan B.3): the display cap of a Vulkan game's window; the panel reads the refresh.
+uint32_t DisplayCapIntervalForWindow(HWND window) noexcept {
+  State().displayRefreshMilliHz=WindowRefreshMilliHz(window);
+  return DisplayCapIntervalForOutput();
+}
 bool Hook(void* entry,void* replacement,void** original) {
   static std::recursive_mutex lock; std::lock_guard guard(lock);
   static std::set<void*> installed;
@@ -305,7 +317,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
         +",\"fullscreen\":true,\"at_creation\":true,\"window\":"+(o->window?"true":"false"));
   }
   *result=Wrap(std::move(chain),o);
-  { std::lock_guard guard(s.lock); s.output=o; s.status.output=true; s.status.xell=true; }
+  { std::lock_guard guard(s.lock); s.output=o; s.hasOutput=true; s.status.output=true; s.status.xell=true; }
   if(!ffx::CreatingOutput()) ngx::OutputCreated(o);
   Report("XeMFG swapchain ready; waiting for Streamline inputs and XeLL markers");
   return S_OK;
@@ -489,7 +501,7 @@ static void DeviceEvent(reshade::api::device* device) {
 }
 static void OutputPresent(reshade::api::command_queue*,reshade::api::swapchain*,const reshade::api::rect*,
     const reshade::api::rect*,uint32_t,const reshade::api::rect*) {
-  if(Active()) ++State().outputPresents;
+  if(State().hasOutput.load(std::memory_order_relaxed)) State().outputPresents.fetch_add(1,std::memory_order_relaxed);
 }
 static DWORD WINAPI DiscoverWorker(void*) {
   LogSession();

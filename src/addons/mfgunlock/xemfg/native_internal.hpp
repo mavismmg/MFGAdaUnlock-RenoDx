@@ -116,6 +116,9 @@ struct Output {
   // presents). Each field holds the totals at the previous summary.
   uint64_t summaryTick{}, summaryFrames{}, summaryRejectedFrames{}, summarySleeps{};
   uint64_t summaryTagsRejected{}, summaryTagsRemoved{}, summaryReservedStates{}, summaryHudFiltered{};
+  // 1.7.1: where a source frame's time goes, averaged per native_summary (latency work).
+  std::atomic<uint64_t> summaryPresentUs{}, summaryPresentCalls{};
+  uint64_t summarySleepUs{}, summarySleepCalls{};
   uint32_t sleepAssociationLogBudget{};
   uint32_t unsleptSimulationStarts{};
   uint32_t sleepRejectLogBudget{},boundarySkipLogBudget{};
@@ -200,6 +203,7 @@ struct Bridge {
   std::atomic<uint64_t> reflexOutputTick{0},reflexSleeps{0},xellSleeps{0};
   std::atomic<uint32_t> multiplier{4}, limitUs{0};
   std::atomic<uint64_t> outputPresents{0};
+  std::atomic<bool> hasOutput{false}; // lock-free view of `output` for the output-rate Present event
   std::atomic<uint64_t> latencySleeps{0}, latencyMarkers{0}, inputTick{0}, outputTick{0};
   // Last Streamline latency marker (GetTickCount64) and whether the game's
   // selected viewport requests DLSS-G. Both together mean the Streamline route
@@ -236,6 +240,12 @@ inline uint32_t DisplayCapIntervalForOutput() noexcept {
   if(!s.displayCap.load(std::memory_order_relaxed) || s.latencyOutput.load()!=LatencyOutput::XeLL) return 0;
   return DisplayCapIntervalUs(s.displayRefreshMilliHz.load(),s.multiplier.load());
 }
+inline uint64_t QpcMicroseconds(int64_t ticks) noexcept {
+  static const int64_t frequency=[] { LARGE_INTEGER f{}; QueryPerformanceFrequency(&f); return f.QuadPart?f.QuadPart:1; }();
+  return uint64_t(ticks)*1000000/uint64_t(frequency);
+}
+// Refresh of the display showing the window (mHz), 0 when unknown.
+uint32_t WindowRefreshMilliHz(HWND window) noexcept;
 inline Frame* FindFrame(Output& o,uint32_t id) {
   return o.frames.Acquire(id);
 }
