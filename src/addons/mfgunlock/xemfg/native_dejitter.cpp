@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "native_dejitter.hpp"
+#include "native_gpu.hpp"
 #include "native_dejitter_cs.h" // fxc /Fh output: g_native_dejitter_cs
 #include <iterator>
 
@@ -18,13 +19,6 @@ DXGI_FORMAT ReadFormat(DXGI_FORMAT format) {
 // Half precision inputs stay half precision; anything else converts to 32-bit.
 DXGI_FORMAT OutputFormat(DXGI_FORMAT read) {
   return read==DXGI_FORMAT_R16G16_FLOAT || read==DXGI_FORMAT_R16G16B16A16_FLOAT?DXGI_FORMAT_R16G16_FLOAT:DXGI_FORMAT_R32G32_FLOAT;
-}
-void Transition(ID3D12GraphicsCommandList* list,ID3D12Resource* resource,D3D12_RESOURCE_STATES from,D3D12_RESOURCE_STATES to) {
-  if(from==to) return;
-  D3D12_RESOURCE_BARRIER barrier{};
-  barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-  barrier.Transition={resource,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,from,to};
-  list->ResourceBarrier(1,&barrier);
 }
 }
 MotionDejitter::~MotionDejitter() { Drain(1000); if(event) CloseHandle(event); }
@@ -92,10 +86,7 @@ ID3D12GraphicsCommandList* MotionDejitter::Convert(ID3D12Resource* source,D3D12_
     const DejitterRegion& region,DejitterVector delta,ID3D12Resource** output) {
   if(open || !region.width || !region.height) { Fail(E_INVALIDARG); return nullptr; }
   slot=(slot+1)%kSlots;
-  if(fence->GetCompletedValue()<fenceValues[slot]) {
-    fence->SetEventOnCompletion(fenceValues[slot],event);
-    if(WaitForSingleObject(event,250)!=WAIT_OBJECT_0) { Fail(HRESULT_FROM_WIN32(WAIT_TIMEOUT)); return nullptr; }
-  }
+  if(!WaitFence(fence.Get(),fenceValues[slot],event,250)) { Fail(HRESULT_FROM_WIN32(WAIT_TIMEOUT)); return nullptr; }
   const auto read=ReadFormat(source->GetDesc().Format);
   auto& target=outputs[slot];
   if(!EnsureTexture(target,OutputFormat(read),region.width,region.height,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
@@ -142,8 +133,6 @@ bool MotionDejitter::Submit(ID3D12CommandQueue* queue) {
 }
 bool MotionDejitter::Drain(uint32_t timeoutMs) {
   if(!fence || nextFence==1) return true;
-  if(fence->GetCompletedValue()>=nextFence-1) return true;
-  if(!event || FAILED(fence->SetEventOnCompletion(nextFence-1,event))) return false;
-  return WaitForSingleObject(event,timeoutMs)==WAIT_OBJECT_0;
+  return WaitFence(fence.Get(),nextFence-1,event,timeoutMs);
 }
 }

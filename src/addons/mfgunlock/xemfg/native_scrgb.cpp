@@ -1,19 +1,11 @@
 // SPDX-License-Identifier: MIT
 #include "native_scrgb.hpp"
+#include "native_gpu.hpp"
 #include "native_scrgb_vs.h" // fxc /Fh output: g_native_scrgb_vs
 #include "native_scrgb_ps.h" // fxc /Fh output: g_native_scrgb_ps
 
 using Microsoft::WRL::ComPtr;
 namespace mfgunlock::xemfg::native {
-namespace {
-void Transition(ID3D12GraphicsCommandList* list,ID3D12Resource* resource,D3D12_RESOURCE_STATES from,D3D12_RESOURCE_STATES to) {
-  if(from==to) return;
-  D3D12_RESOURCE_BARRIER barrier{};
-  barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-  barrier.Transition={resource,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,from,to};
-  list->ResourceBarrier(1,&barrier);
-}
-}
 ScrgbEncoder::~ScrgbEncoder() { Drain(1000); if(event) CloseHandle(event); }
 bool ScrgbEncoder::Initialize(ID3D12Device* target) {
   device=target;
@@ -56,10 +48,7 @@ bool ScrgbEncoder::Encode(ID3D12CommandQueue* queue,ID3D12Resource* source,D3D12
     ID3D12Resource* target,D3D12_RESOURCE_STATES targetState) {
   const auto out=target->GetDesc();
   slot=(slot+1)%kSlots;
-  if(fence->GetCompletedValue()<fenceValues[slot]) {
-    fence->SetEventOnCompletion(fenceValues[slot],event);
-    if(WaitForSingleObject(event,250)!=WAIT_OBJECT_0) return Fail(HRESULT_FROM_WIN32(WAIT_TIMEOUT));
-  }
+  if(!WaitFence(fence.Get(),fenceValues[slot],event,250)) return Fail(HRESULT_FROM_WIN32(WAIT_TIMEOUT));
   HRESULT hr=allocators[slot]->Reset();
   if(SUCCEEDED(hr)) hr=list->Reset(allocators[slot].Get(),pipeline.Get());
   if(FAILED(hr)) return Fail(hr);
@@ -96,8 +85,6 @@ bool ScrgbEncoder::Encode(ID3D12CommandQueue* queue,ID3D12Resource* source,D3D12
 }
 bool ScrgbEncoder::Drain(uint32_t timeoutMs) {
   if(!fence || nextFence==1) return true;
-  if(fence->GetCompletedValue()>=nextFence-1) return true;
-  if(!event || FAILED(fence->SetEventOnCompletion(nextFence-1,event))) return false;
-  return WaitForSingleObject(event,timeoutMs)==WAIT_OBJECT_0;
+  return WaitFence(fence.Get(),nextFence-1,event,timeoutMs);
 }
 }

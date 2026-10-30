@@ -1,17 +1,9 @@
 // SPDX-License-Identifier: MIT
 #include "native_hud_copy.hpp"
+#include "native_gpu.hpp"
 
 using Microsoft::WRL::ComPtr;
 namespace mfgunlock::xemfg::native {
-namespace {
-void Transition(ID3D12GraphicsCommandList* list,ID3D12Resource* resource,D3D12_RESOURCE_STATES from,D3D12_RESOURCE_STATES to) {
-  if(from==to) return;
-  D3D12_RESOURCE_BARRIER barrier{};
-  barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-  barrier.Transition={resource,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,from,to};
-  list->ResourceBarrier(1,&barrier);
-}
-}
 HudCopy::~HudCopy() { Drain(1000); if(event) CloseHandle(event); }
 bool HudCopy::Initialize(ID3D12Device* target) {
   device=target;
@@ -61,10 +53,7 @@ ID3D12Resource* HudCopy::Target(unsigned kind,uint32_t frame,DXGI_FORMAT format,
 ID3D12GraphicsCommandList* HudCopy::Begin() {
   if(open) { Fail(E_UNEXPECTED); return nullptr; }
   slot=(slot+1)%kSlots;
-  if(fence->GetCompletedValue()<fenceValues[slot]) {
-    fence->SetEventOnCompletion(fenceValues[slot],event);
-    if(WaitForSingleObject(event,250)!=WAIT_OBJECT_0) { Fail(HRESULT_FROM_WIN32(WAIT_TIMEOUT)); return nullptr; }
-  }
+  if(!WaitFence(fence.Get(),fenceValues[slot],event,250)) { Fail(HRESULT_FROM_WIN32(WAIT_TIMEOUT)); return nullptr; }
   HRESULT hr=allocators[slot]->Reset();
   if(SUCCEEDED(hr)) hr=list->Reset(allocators[slot].Get(),nullptr);
   if(FAILED(hr)) { Fail(hr); return nullptr; }
@@ -84,8 +73,6 @@ bool HudCopy::Submit(ID3D12CommandQueue* queue) {
 }
 bool HudCopy::Drain(uint32_t timeoutMs) {
   if(!fence || nextFence==1) return true;
-  if(fence->GetCompletedValue()>=nextFence-1) return true;
-  if(!event || FAILED(fence->SetEventOnCompletion(nextFence-1,event))) return false;
-  return WaitForSingleObject(event,timeoutMs)==WAIT_OBJECT_0;
+  return WaitFence(fence.Get(),nextFence-1,event,timeoutMs);
 }
 }

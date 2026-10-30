@@ -1,18 +1,12 @@
 // SPDX-License-Identifier: MIT
 #include "native_ui_mask.hpp"
+#include "native_gpu.hpp"
 #include "native_ui_mask_cs.h" // fxc /Fh output: g_native_ui_mask_cs
 #include <iterator>
 
 using Microsoft::WRL::ComPtr;
 namespace mfgunlock::xemfg::native {
 namespace {
-void Transition(ID3D12GraphicsCommandList* list,ID3D12Resource* resource,D3D12_RESOURCE_STATES from,D3D12_RESOURCE_STATES to) {
-  if(from==to) return;
-  D3D12_RESOURCE_BARRIER barrier{};
-  barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-  barrier.Transition={resource,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,from,to};
-  list->ResourceBarrier(1,&barrier);
-}
 constexpr auto kReadable=D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 }
 bool UiMask::SupportedFormat(DXGI_FORMAT value) {
@@ -74,10 +68,7 @@ ID3D12GraphicsCommandList* UiMask::Record(ID3D12Resource* backbuffer,D3D12_RESOU
   if(open || !backbuffer || bd.Format!=format || !bd.Width || !bd.Height) { Fail(E_INVALIDARG); return nullptr; }
   const uint32_t previous=slot;
   slot=(slot+1)%kSlots;
-  if(fence->GetCompletedValue()<fenceValues[slot]) {
-    fence->SetEventOnCompletion(fenceValues[slot],event);
-    if(WaitForSingleObject(event,250)!=WAIT_OBJECT_0) { Fail(HRESULT_FROM_WIN32(WAIT_TIMEOUT)); return nullptr; }
-  }
+  if(!WaitFence(fence.Get(),fenceValues[slot],event,250)) { Fail(HRESULT_FROM_WIN32(WAIT_TIMEOUT)); return nullptr; }
   const auto width=uint32_t(bd.Width), height=bd.Height;
   if(!Ensure(hudless[slot],format,width,height,D3D12_RESOURCE_FLAG_NONE,kReadable)
       || !Ensure(ui[slot],format,width,height,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,kReadable)
@@ -170,8 +161,6 @@ bool UiMask::Submit(ID3D12CommandQueue* queue) {
 }
 bool UiMask::Drain(uint32_t timeoutMs) {
   if(!fence || nextFence==1) return true;
-  if(fence->GetCompletedValue()>=nextFence-1) return true;
-  if(!event || FAILED(fence->SetEventOnCompletion(nextFence-1,event))) return false;
-  return WaitForSingleObject(event,timeoutMs)==WAIT_OBJECT_0;
+  return WaitFence(fence.Get(),nextFence-1,event,timeoutMs);
 }
 }
