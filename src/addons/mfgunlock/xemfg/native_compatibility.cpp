@@ -5,6 +5,9 @@
 #include "backend_api.hpp"
 #include "../backend_selection.hpp"
 #include "vendor/sha256_util.h"
+#ifdef MFGUNLOCK_XEMFG_VULKAN
+#include "native_vulkan.hpp"
+#endif
 #include <nlohmann/json.hpp>
 #include <filesystem>
 #include <fstream>
@@ -14,6 +17,16 @@
 namespace mfgunlock::xemfg::native {
 using Json=nlohmann::ordered_json;
 namespace {
+// 1.7.1: a Vulkan game has no DX12 output; the host's state is what explains it.
+Json VulkanReport() {
+#ifdef MFGUNLOCK_XEMFG_VULKAN
+  const auto vk=vulkan::Status();
+  return {{"game",vk.game},{"active",vk.active},{"frames",vk.frames},{"input_frames",vk.inputFrames},
+      {"base_fps_milli",vk.baseFpsMilli},{"output_fps_milli",vk.outputFpsMilli},{"reason",vk.reason}};
+#else
+  return {{"game",false}};
+#endif
+}
 Json Module(HMODULE module) {
   if(!module)return {{"state","unavailable"}};
   wchar_t path[32768]{};
@@ -38,6 +51,7 @@ std::string CompatibilityReport(const char* exportReason) {
   auto& s=State();const auto status=Snapshot();
   Json report={{"schema","mfgunlock.compatibility"},{"version",1},{"build","1.7.0"},
       {"export_reason",exportReason?exportReason:"user"},
+      {"vulkan",VulkanReport()},
       {"adapter",status.output?"streamline_d3d12":"none"},{"fallback","xemfg_selected_passthrough"},
       {"status",status.detail},
       {"displayed_frames_measured",false},{"physical_latency_measured",false},

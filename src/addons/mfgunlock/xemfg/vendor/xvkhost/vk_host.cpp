@@ -10,6 +10,7 @@
 //           timeline; the application queue waits for it, the frame's inputs and constants are tagged, and the
 //           proxy presents. XeFG renders the generated frames and presents through the layer's VkSwapchainKHR.
 #include "vk_host.h"
+#include "../../vulkan_policy.hpp"
 #include "mfg_xefg_vk.h"
 #include "xvk_internal.h"
 #include "vk_input_copy_spv.h"
@@ -358,6 +359,10 @@ struct FakeChain
     double sleepMs = 0.0, waitableMs = 0.0, lastPresentMs = 0.0;
     uint32_t refreshHz = 0;
     uint64_t refreshCheckedMs = 0, dynamicLogMs = 0;
+    // MFGAdaUnlock 1.7.1: the acquisition holds the chain's mutex through its sleep and XeFG's waitable. A DLSS evaluation
+    // on another thread meanwhile reads the frame from here instead of giving the frame's inputs up.
+    std::atomic<bool> acquireWaiting{false};
+    std::atomic<uint64_t> presentsDone{0};
 };
 
 std::mutex gMutex;
@@ -1673,7 +1678,13 @@ bool AcquireNextImageImpl(VkSwapchainKHR swapchain, uint64_t timeout, VkSemaphor
         if (chain->retired || chain->broken || !chain->proxy) { result = VK_ERROR_OUT_OF_DATE_KHR; return true; }
         if (chain->acquired >= 0) {
             // One back buffer at a time (DXGI's model): a second acquisition before presenting gives the chain back.
+            // MFGAdaUnlock 1.7.1: for the session, as presentqueue.1: the game would acquire ahead again on a new chain.
             chain->broken = true;
+            {
+                std::lock_guard hostLock(host.mutex);
+                host.failure = "second_acquire";
+            }
+            NoteReason("second_acquire");
             Log("vk_takeover_released", "\"reason\":\"second_acquire\"");
             result = VK_ERROR_OUT_OF_DATE_KHR;
             return true;
@@ -1682,6 +1693,7 @@ bool AcquireNextImageImpl(VkSwapchainKHR swapchain, uint64_t timeout, VkSemaphor
         // The frame start's sleep (XeLL, or the host's Reflex / Anti-Lag 2: vkreflex.1), then XeFG's frame-latency
         // waitable. xemfgsa.6: both timed, as waits Dynamic MFG reads.
         const int64_t sleepStart = Now();
+        struct Waiting { FakeChain& chain; Waiting(FakeChain& c) : chain(c) { chain.acquireWaiting = true; } ~Waiting() { chain.acquireWaiting = false; } } waiting{*chain};
         LatencySleep(host, *chain, frameId);
         const int64_t waitStart = Now();
         chain->sleepMs = Milliseconds(waitStart - sleepStart);
@@ -2001,6 +2013,7 @@ bool QueuePresentImpl(VkQueue queue, const VkPresentInfoKHR* info, VkResult& res
             if ((chain->presents & 63) == 0) rt.xefgSwapChainGetLastPresentStatus(chain->fg, &chain->status);
         }
         ++chain->presents;
+        chain->presentsDone = chain->presents;   // MFGAdaUnlock 1.7.1
         ++gBasePresents;
         {
             std::lock_guard fpsLock(gFpsMutex);   // xemfgsa.5
@@ -2255,8 +2268,13 @@ bool RecordInputsFor(const std::shared_ptr<HostDevice>& hostPtr, const std::shar
         {
             // The base frame being recorded is the one the next present of the chain shows.
             std::unique_lock chainLock(chain->mutex, std::try_to_lock);
-            if (!chainLock.owns_lock()) return false;
-            frame = chain->presents + 1;
+            if (chainLock.owns_lock()) frame = chain->presents + 1;
+            else if (chain->acquireWaiting.load()) frame = chain->presentsDone.load() + 1;   // MFGAdaUnlock 1.7.1
+            else {
+                static std::atomic<uint32_t> logged{0};
+                if (logged++ < 8) Log("vk_input_skipped", "\"presents\":" + std::to_string(chain->presentsDone.load()));
+                return false;
+            }
         }
         InputSlot& slot = host.slots[frame % kInputSlots];
         if (!PrepareSlot(host, slot, in)) {
@@ -2369,8 +2387,12 @@ bool RecordDlssInputs(VkCommandBuffer command, const DlssInputs& in) noexcept
         std::shared_ptr<FakeChain> chain;
         {
             std::lock_guard lock(gMutex);
-            if (gDevices.size() != 1) return false;
-            hostPtr = gDevices.begin()->second;
+            // MFGAdaUnlock 1.7.1: a game may keep another device alive; the command buffer's dispatch table names its own.
+            if (gDevices.size() == 1) hostPtr = gDevices.begin()->second;
+            else for (const auto& [device, candidate] : gDevices)
+                if (mfgunlock::xemfg::native::vulkan::policy::DispatchKey(device) ==
+                    mfgunlock::xemfg::native::vulkan::policy::DispatchKey(command)) hostPtr = candidate;
+            if (!hostPtr) return false;
             if (hostPtr->hosted) return false;   // OptiScaler provides that device's inputs (hosted::RecordFrame)
             chain = hostPtr->active.lock();
             if (chain && !gFakes.contains(reinterpret_cast<VkSwapchainKHR>(chain.get()))) chain.reset();
