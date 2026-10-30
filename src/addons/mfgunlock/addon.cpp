@@ -1196,8 +1196,18 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       mfgunlock::backend::active = mfgunlock::backend::Effective(saved_backend);
       if (mfgunlock::backend::active != mfgunlock::backend::Kind::DlssG) {
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
-        if(mfgunlock::backend::active==mfgunlock::backend::Kind::XeMfg)
+        if(mfgunlock::backend::active==mfgunlock::backend::Kind::XeMfg) {
+          // XeMFG pins this module, so DllMain never runs again in this process.
+          // A game that unloads ReShade (RDR2 with another addon present) would
+          // leave a later ReShade instance without this addon; ReShade stays too.
+          HMODULE reshade_module = nullptr;
+          if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                  reinterpret_cast<LPCWSTR>(reshade::internal::get_reshade_module_handle()), &reshade_module)) {
+            reshade::log::message(reshade::log::level::warning,
+                "mfgunlock: could not keep ReShade resident; the addon may not survive a ReShade reload.");
+          }
           mfgunlock::xemfg::native::Attach(h_module);
+        }
 #endif
         reshade::register_overlay("MFG Unlock", OnRegisterOverlay);
         reshade::log::message(reshade::log::level::info,

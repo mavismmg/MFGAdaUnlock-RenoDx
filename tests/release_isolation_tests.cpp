@@ -27,6 +27,10 @@ int main() {
   CHECK(addon.find("Release 1.4.5 - Engineering & Reliability") != std::string::npos);
   CHECK(addon.find("Release 1.4.2 - Local Stability & CPU Overhead") != std::string::npos);
   CHECK(addon.find("Stability Lab experimental") == std::string::npos);
+  // XeMFG pins the addon; a reloaded ReShade could not get it registered again (RDR2 with RenoDX).
+  const auto keep_reshade = addon.find("reshade::internal::get_reshade_module_handle()");
+  CHECK(keep_reshade != std::string::npos);
+  CHECK(keep_reshade < addon.find("mfgunlock::xemfg::native::Attach(h_module)"));
   const auto build = Read(root / "tests/CMakeLists.txt");
   CHECK(build.find("MFGUNLOCK_RELEASE_1_4_4") != std::string::npos);
   CHECK(build.find("MFGUNLOCK_RELEASE_1_4_5") != std::string::npos);
