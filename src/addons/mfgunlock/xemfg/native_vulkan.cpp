@@ -748,7 +748,7 @@ std::string ThreadStack(HANDLE thread) {
   if(!GetThreadContext(thread,&context)) return {};
   std::string frames="\"rip:"+ModuleOffset(context.Rip)+"\"";
   const auto* stack=reinterpret_cast<const uint64_t*>(context.Rsp);
-  for(unsigned i=0,found=0;i<512 && found<16;++i) {
+  for(unsigned i=0,found=0;i<8192 && found<160;++i) {
     uint64_t value{};
     if(!ReadProcessMemory(GetCurrentProcess(),stack+i,&value,sizeof(value),nullptr)) break;
     const auto name=ModuleOffset(value);
@@ -772,7 +772,7 @@ DWORD WINAPI HangWatch(void*) {
     if(threads==INVALID_HANDLE_VALUE) continue;
     THREADENTRY32 entry{sizeof(entry)};
     unsigned logged=0;
-    for(BOOL ok=Thread32First(threads,&entry);ok && logged<64;ok=Thread32Next(threads,&entry)) {
+    for(BOOL ok=Thread32First(threads,&entry);ok && logged<256;ok=Thread32Next(threads,&entry)) {
       if(entry.th32OwnerProcessID!=GetCurrentProcessId() || entry.th32ThreadID==self) continue;
       const HANDLE thread=OpenThread(THREAD_SUSPEND_RESUME|THREAD_GET_CONTEXT|THREAD_QUERY_INFORMATION,FALSE,entry.th32ThreadID);
       if(!thread) continue;

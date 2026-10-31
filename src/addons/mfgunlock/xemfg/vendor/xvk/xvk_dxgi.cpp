@@ -365,6 +365,8 @@ private:
     struct QueuedPresent { uint32_t staged; uint64_t value; bool sync; uint64_t frame; bool generated; };
     static constexpr uint32_t kStaged = 3;
     std::vector<Resource*> staged_;
+    bool recreating_ = false;      // the present thread is remaking the chain: Present1 drops its frame (queueMutex_)
+    uint32_t present1Active_ = 0;  // Present1 calls past that check (queueMutex_)
     std::array<bool, kStaged> stagedBusy_{};       // the present thread is copying out of it (queueMutex_)
     std::array<uint64_t, kStaged> stagedRead_{};   // presentTimeline_ value after which it may be rewritten (queueMutex_)
     std::vector<Frame> threadFrames_;               // present-thread ring (its own pool: pools are per thread)
@@ -382,6 +384,8 @@ private:
     bool presenting_ = false;
     bool stopPresenter_ = false;
     std::atomic<bool> outOfDate_{false};
+    bool noArea_ = false;   // the window has no area, so no chain is made for it
+    bool WindowHasNoArea();
     bool broken_ = false;                      // present thread: the first VkSwapchainKHR failed; frames are dropped
     VkSwapchainKHR owned_ = VK_NULL_HANDLE;   // swapchain_ as published to the surface (gSurfaceMutex): the present
                                               // thread can recreate swapchain_ while Present1 checks for retirement
@@ -601,6 +605,7 @@ HRESULT SwapChain::Init()
 // Present thread, first frame: the swap chain on the window, retiring the live layer chain there or the game's own.
 HRESULT SwapChain::CreateFirstSwapchain()
 {
+    if (WindowHasNoArea()) return S_FALSE;   // before the game's chain is claimed for retiring
     VkSwapchainKHR old = VK_NULL_HANDLE;
     {
         std::lock_guard lock(gSurfaceMutex);
@@ -641,7 +646,7 @@ void SwapChain::PresentThread()
             presenting_ = true;
         }
         shownPresents_ = item.value;
-        if (broken_ || (!swapchain_ && FAILED(CreateFirstSwapchain()))) {
+        if (broken_ || (!swapchain_ && (FAILED(CreateFirstSwapchain()) || !swapchain_))) {
             // No swap chain on the window: the frame is dropped (the host sees the surface broken and gives the
             // window back to the game).
             {
@@ -655,14 +660,32 @@ void SwapChain::PresentThread()
         }
         Frame& frame = threadFrames_[frameIndex++ % threadFrames_.size()];
         bool stalled = false;
+        uint64_t readValue = 0;
+        // MFGAdaUnlock 1.7.1: remaking the chain frees its images in the driver and holds a driver lock meanwhile, and that
+        // can wait for GPU work that needs XeFG to go on (alt-tab froze Indiana Jones here). So Present1 neither waits for
+        // this slot nor enters the driver until the chain is made: running calls finish first, later ones drop their frame.
+        auto beginRecreate = [&] {
+            std::unique_lock lock(queueMutex_);
+            if (readValue) stagedRead_[item.staged] = readValue;
+            stagedBusy_[item.staged] = false;
+            recreating_ = true;
+            queueChanged_.notify_all();
+            queueChanged_.wait(lock, [&] { return !present1Active_; });
+        };
+        auto endRecreate = [&] {
+            std::lock_guard lock(queueMutex_);
+            recreating_ = false;
+        };
         BoundedWait("copy fence", window_, [&](uint64_t ns) { return vk.vkWaitForFences(device, 1, &frame.fence, VK_TRUE, ns); }, stalled);
         uint32_t image = 0;
         auto acquire = [&](uint64_t ns) { return vk.vkAcquireNextImageKHR(device, swapchain_, ns, frame.acquire, VK_NULL_HANDLE, &image); };
         VkResult result = stalled ? VK_TIMEOUT : BoundedWait("vkAcquireNextImageKHR", window_, acquire, stalled);
         if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+            // The slot may be rewritten from here on, so this frame is dropped; the next one acquires on the new chain.
+            beginRecreate();
             WaitThreadIdle();
-            if (SUCCEEDED(CreateSwapchain(swapchain_)))
-                result = BoundedWait("vkAcquireNextImageKHR", window_, acquire, stalled);
+            CreateSwapchain(swapchain_);
+            endRecreate();
         }
         if (stalled) {
             // stallguard.1: the frame is dropped and so is every later one (broken_), as when no swap chain could be made.
@@ -680,7 +703,6 @@ void SwapChain::PresentThread()
             queueChanged_.notify_all();
             continue;
         }
-        uint64_t readValue = 0;
         LARGE_INTEGER start{}, end{};
         QueryPerformanceCounter(&start);
         if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
@@ -791,19 +813,23 @@ void SwapChain::PresentThread()
                 else Log("vkQueuePresentKHR %d", int(result));
             }
         } else {
-            Log("vkAcquireNextImageKHR %d (frame dropped)", int(result));
+            if (!noArea_) Log("vkAcquireNextImageKHR %d (frame dropped)", int(result));
         }
         if (outOfDate_.exchange(false)) {
             // Recreate before clearing presenting_, so ResizeBuffers (which drains first) never races it.
+            beginRecreate();
             WaitThreadIdle();
             CreateSwapchain(swapchain_);
+            endRecreate();
         } else if (swapchain_ && !latencyMode_ && !latencyUpgraded_ && gReflexOn.load(std::memory_order_relaxed) &&
                    device_->lowLatency2() && item.value >= kLatencyAfterPresents) {
             // vkreflex.1: a chain made before Reflex was on, or in its first presents, takes low latency mode now (once).
             latencyUpgraded_ = true;
             Log("Reflex: the swap chain takes low latency mode after %llu presents", item.value);
+            beginRecreate();
             WaitThreadIdle();
             CreateSwapchain(swapchain_);
+            endRecreate();
         }
         QueryPerformanceCounter(&end);
         {
@@ -823,8 +849,19 @@ void SwapChain::DrainPresents()
     queueChanged_.wait(lock, [&] { return queued_.empty() && !presenting_; });
 }
 
+// MFGAdaUnlock 1.7.1: a minimized window has a 0x0 extent, which a swap chain may not have, and every chain made is a
+// chance of the driver hang in beginRecreate. The old chain stays and frames are dropped until the window has area.
+bool SwapChain::WindowHasNoArea()
+{
+    VkSurfaceCapabilitiesKHR caps{};
+    device_->vk().vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device_->physical(), surface_->surface, &caps);
+    noArea_ = !caps.currentExtent.width || !caps.currentExtent.height;
+    return noArea_;
+}
+
 HRESULT SwapChain::CreateSwapchain(VkSwapchainKHR old)
 {
+    if (WindowHasNoArea()) return S_FALSE;
     const auto& vk = device_->vk();
     const VkDevice device = device_->vkDevice();
     const VkPhysicalDevice physical = device_->physical();
@@ -1104,6 +1141,31 @@ HRESULT STDMETHODCALLTYPE SwapChain::Present1(UINT sync, UINT flags, const DXGI_
         std::lock_guard surfaceLock(gSurfaceMutex);
         if (surface_->current != owned_) return DXGI_ERROR_INVALID_CALL;   // retired by a newer chain on this window
     }
+    // MFGAdaUnlock 1.7.1: see beginRecreate in PresentThread.
+    auto dropFrame = [&] {
+        if (latency_) ReleaseSemaphore(latency_, 1, nullptr);
+        current_ = (current_ + 1) % desc_.BufferCount;
+        return S_OK;
+    };
+    {
+        std::lock_guard queueLock(queueMutex_);
+        if (recreating_) {
+            ++dropped_;
+            return dropFrame();
+        }
+        ++present1Active_;
+    }
+    struct Leave {
+        SwapChain* self;
+        ~Leave()
+        {
+            {
+                std::lock_guard queueLock(self->queueMutex_);
+                --self->present1Active_;
+            }
+            self->queueChanged_.notify_all();
+        }
+    } leave{this};
     LARGE_INTEGER t0{}, t1{}, t2{}, t3{}, t4{};
     QueryPerformanceCounter(&t0);
     Frame& frame = frames_[presentCount_ % frames_.size()];
@@ -1122,8 +1184,12 @@ HRESULT STDMETHODCALLTYPE SwapChain::Present1(UINT sync, UINT flags, const DXGI_
         auto queuedHere = [&] {
             return std::any_of(queued_.begin(), queued_.end(), [&](const QueuedPresent& q) { return q.staged == slot && q.sync; });
         };
-        for (bool logged = false; !queueChanged_.wait_for(queueLock, std::chrono::seconds(1), [&] { return stopPresenter_ || !queuedHere(); });)
+        for (bool logged = false; !queueChanged_.wait_for(queueLock, std::chrono::seconds(1), [&] { return stopPresenter_ || recreating_ || !queuedHere(); });)
             if (!std::exchange(logged, true)) Log("Present1: V-Sync frame in slot %u not taken by the present thread after 1 s", slot);
+        if (recreating_ && queuedHere()) {
+            ++dropped_;
+            return dropFrame();
+        }
         for (auto it = queued_.begin(); it != queued_.end();) {
             if (it->staged == slot) { it = queued_.erase(it); ++dropped_; }
             else ++it;
