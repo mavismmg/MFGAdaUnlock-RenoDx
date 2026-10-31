@@ -68,6 +68,8 @@ Status: `pendente`, `em andamento`, `feito`, `adiado`. **[você]** precisa de jo
 - **2026-10-31 · Elden Ring** Relato de campo com a build de teste: com quedas fortes de FPS, a geração fica limpa e lisa. Sem log, e sem saber qual mudança da 1.7.1 causou a melhora.
 - **2026-10-31 · Vulkan 1.7.0** No mesmo log, uma sessão teve `device fault: present thread submit` (`0x887a0005`) cerca de 200 ms após o takeover e voltou ao nativo (`vk_takeover_released`). As outras sessões Vulkan não tiveram isso. Sem causa atribuída. O item 2 do campo não roda RDR2 em Vulkan, então esta falha fica sem verificação na 1.7.1.
 
+- **2026-10-31 · release** Usuário autorizou a 1.7.1 com o congelamento em Vulkan como limitação conhecida e sem comparar a latência com a 1.7.0. Itens 4 e a matriz de latência do item 5 ficam para depois.
+
 ## Campo pendente, numa sessão só
 
 1. RDR2 em D3D12 com build de teste: feito.

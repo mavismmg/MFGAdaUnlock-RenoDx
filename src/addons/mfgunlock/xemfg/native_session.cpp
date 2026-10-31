@@ -64,7 +64,7 @@ void LogSession() noexcept {
             std::to_string(HIWORD(umd.HighPart))+'.'+std::to_string(LOWORD(umd.HighPart))+'.'+std::to_string(HIWORD(umd.LowPart))+'.'+std::to_string(LOWORD(umd.LowPart)):
             std::string("unavailable"))+"\"";
     }
-    fields+=",\"addon\":\"1.7.0\"";
+    fields+=",\"addon\":\"1.7.1\"";
     xess_mod::WriteLog("native_session",fields);
   } catch(...) {}
 }

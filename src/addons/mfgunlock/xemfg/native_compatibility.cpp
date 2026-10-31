@@ -50,7 +50,7 @@ Json Module(HMODULE module) {
 }
 std::string CompatibilityReport(const char* exportReason) {
   auto& s=State();const auto status=Snapshot();
-  Json report={{"schema","mfgunlock.compatibility"},{"version",1},{"build","1.7.0"},
+  Json report={{"schema","mfgunlock.compatibility"},{"version",1},{"build","1.7.1"},
       {"export_reason",exportReason?exportReason:"user"},
       {"vulkan",VulkanReport()},
       {"adapter",status.output?"streamline_d3d12":"none"},{"fallback","xemfg_selected_passthrough"},
