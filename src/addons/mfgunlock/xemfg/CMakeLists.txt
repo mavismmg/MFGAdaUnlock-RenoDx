@@ -239,6 +239,8 @@ add_executable(xemfg_fence_wait_tests "${CMAKE_SOURCE_DIR}/xemfg_fence_wait_test
 target_compile_definitions(xemfg_fence_wait_tests PRIVATE NOMINMAX)
 target_link_libraries(xemfg_fence_wait_tests PRIVATE d3d12 dxgi)
 add_test(NAME xemfg_fence_wait COMMAND xemfg_fence_wait_tests)
+add_executable(xemfg_synthetic_queue_tests "${CMAKE_SOURCE_DIR}/xemfg_synthetic_queue_tests.cpp")
+add_test(NAME xemfg_synthetic_queue COMMAND xemfg_synthetic_queue_tests)
 add_executable(xemfg_diagnostics_tests "${CMAKE_SOURCE_DIR}/xemfg_diagnostics_tests.cpp" native_diagnostics.cpp)
 add_test(NAME xemfg_cpu_diagnostics COMMAND xemfg_diagnostics_tests)
 add_executable(xemfg_panel_preview "${CMAKE_SOURCE_DIR}/xemfg_panel_preview.cpp" native_panel.cpp native_controls.cpp native_diagnostics.cpp native_session.cpp native_compatibility.cpp native_trace.cpp native_reframework.cpp dependency_manager.cpp
@@ -291,7 +293,9 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
     ffx-with-reflex ffx-with-dlssg
     # 1.5.8: exclusive fullscreen on a DLSS-SR output (Metro Exodus report),
     # kept by the game and served as borderless.
-    exclusive-transition exclusive-first exclusive-borderless exclusive-borderless-first exclusive-borderless-create)
+    exclusive-transition exclusive-first exclusive-borderless exclusive-borderless-first exclusive-borderless-create
+    # 1.7.1: evaluations ahead of their Presents (RDR2 on D3D12), and two evaluations in one frame.
+    dlss-sr-pipelined dlss-sr-double)
   set(XEMFG_BACKLOG)
   foreach(case IN LISTS XEMFG_CONFORMANCE)
     set(fixture $<TARGET_FILE:xemfg_streamline_fixture>)
@@ -303,7 +307,7 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
     if(case MATCHES "^ffx-")
       set(extra --ffx-fixture $<TARGET_FILE:xemfg_ffx_fixture>)
     endif()
-    if(case STREQUAL "dlss-sr-adapter" OR case STREQUAL "dlss-sr-default-off" OR case MATCHES "^exclusive-")
+    if(case MATCHES "^dlss-sr-" OR case MATCHES "^exclusive-")
       # No Streamline in this process: a dedicated NGX game executable.
       set(extra --ngx-fixture $<TARGET_FILE:xemfg_ngx_fixture>)
       set(executable $<TARGET_FILE:xemfg_ngx_smoke>)

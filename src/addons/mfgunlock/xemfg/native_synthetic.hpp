@@ -6,7 +6,8 @@
 // (FidelityFX FG, plan 5.3; DLSS-SR, plan 5.4). User decision 2026-10-22:
 // markers and the XeLL wait are synthesized around the source Present.
 // Ids are consecutive from 1: xellSleep + SIMULATION_START right after the
-// previous Present (or at the first submission), SIMULATION_END and
+// previous Present (or at the submission, when it comes first: see
+// synthetic_queue.hpp), SIMULATION_END and
 // RENDERSUBMIT_START when the adapter has the frame's inputs,
 // RENDERSUBMIT_END/PRESENT_START before and PRESENT_END after Present.
 namespace mfgunlock::xemfg::native::synthetic {
@@ -28,4 +29,7 @@ uint32_t SubmitFrame(const std::shared_ptr<Output>& o,const char* adapter);
 bool Driving(const char* adapter) noexcept;
 void BeforeSourcePresent(const std::shared_ptr<Output>& o);
 void AfterSourcePresent(const std::shared_ptr<Output>& o);
+// 1.7.1: totals for native_summary. Never waits: the caller may hold Output::io.
+struct Counters { uint64_t evaluations,merged,emptyPresents; bool pipelined,refused; };
+bool TryReadCounters(Counters& out);
 }

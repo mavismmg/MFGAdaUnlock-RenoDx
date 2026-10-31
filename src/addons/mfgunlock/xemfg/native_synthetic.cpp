@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "native_synthetic.hpp"
+#include "synthetic_queue.hpp"
 
 namespace mfgunlock::xemfg::native::synthetic {
 namespace {
@@ -10,9 +11,9 @@ std::weak_ptr<Output> owned;
 std::atomic<const Output*> ownedOutput{};
 std::atomic<const char*> ownerName{};
 std::atomic<bool> active{};
-uint32_t building{}, pendingPresent{};
-bool started{}, deferredLogged{};
-uint32_t sleepLogBudget{};
+FrameQueue queue;
+bool deferredLogged{};
+std::atomic<uint32_t> sleepLogBudget{};
 // A game can create an FSR swapchain it never uses for frame generation while
 // running DLSS-G through Streamline (Darktide). A DLSS-G request with recent
 // Streamline markers means that route owns the frames; markers without one are
@@ -21,18 +22,24 @@ constexpr uint64_t kStreamlineQuietMs=1000;
 void StartFrame(const std::shared_ptr<Output>& o,uint32_t id) {
   const auto result=SleepSourceFrame(o,id);
   ForwardSourceMarker(o,id,XELL_SIMULATION_START);
-  if(result!=sl::Result::eOk && sleepLogBudget<8) {
-    ++sleepLogBudget;
-    xess_mod::WriteLog("native_synthetic_sleep","\"adapter\":\""+std::string(ownerName.load())+"\",\"id\":"+std::to_string(id)
+  // Can run unlocked (SubmitFrame), where End may have cleared the owner.
+  const char* name=ownerName.load();
+  if(result!=sl::Result::eOk && name && sleepLogBudget.fetch_add(1)<8) {
+    xess_mod::WriteLog("native_synthetic_sleep","\"adapter\":\""+std::string(name)+"\",\"id\":"+std::to_string(id)
         +",\"result\":"+std::to_string(uint32_t(result)));
   }
-  started=true; building=id;
+}
+void LogQueueChange() {
+  if(!queue.TakeChanged()) return;
+  xess_mod::WriteLog(queue.Pipelined()?"native_synthetic_pipelined":"native_synthetic_merged",
+      "\"adapter\":\""+std::string(ownerName.load())+"\",\"evaluations\":"+std::to_string(queue.evaluations)
+      +",\"merged\":"+std::to_string(queue.mergedEvaluations)+",\"empty_presents\":"+std::to_string(queue.emptyPresents));
 }
 }
 void Begin(const std::shared_ptr<Output>& o,const char* adapter) {
   std::lock_guard guard(lock);
   owned=o; ownedOutput=o.get(); ownerName=adapter; active=false;
-  started=false; deferredLogged=false; building=pendingPresent=0; sleepLogBudget=0;
+  queue=FrameQueue{}; deferredLogged=false; sleepLogBudget=0;
   xess_mod::WriteLog("native_synthetic_frames","\"adapter\":\""+std::string(adapter)+"\",\"output\":"+std::to_string(o->diagnosticOutput)+",\"active\":false");
 }
 void End(const Output* o) {
@@ -46,7 +53,7 @@ const char* Owner() noexcept {
   return o && Active().get()==o?ownerName.load():nullptr;
 }
 uint32_t SubmitFrame(const std::shared_ptr<Output>& o,const char* adapter) {
-  std::lock_guard guard(lock);
+  std::unique_lock guard(lock);
   if(owned.lock()!=o || !o || ownerName.load()!=adapter) return 0;
   if(!active) {
     auto& s=State();
@@ -60,18 +67,29 @@ uint32_t SubmitFrame(const std::shared_ptr<Output>& o,const char* adapter) {
     active=true; s.nativeOff=true; s.reflexOptionsReady=true; s.reflexOff=true;
     xess_mod::WriteLog("native_synthetic_active","\"adapter\":\""+std::string(adapter)+"\",\"output\":"+std::to_string(o->diagnosticOutput));
   }
-  if(!started) StartFrame(o,1);
-  const auto id=building;
+  const auto submission=queue.Submit();
+  const auto id=submission.id;
+  LogQueueChange();
+  if(submission.start) {
+    // Unlocked: this sleep can precede the previous frame's Present, which needs
+    // this lock, and XeLL's sleep may wait for that frame's markers. The frame
+    // is not committed yet, so that Present does not take it or open another.
+    guard.unlock();
+    StartFrame(o,id);
+    guard.lock();
+    if(owned.lock()!=o) return 0;
+  }
   ForwardSourceMarker(o,id,XELL_SIMULATION_END);
   ForwardSourceMarker(o,id,XELL_RENDERSUBMIT_START);
   State().recording=id;
-  pendingPresent=id;
+  queue.Commit(id);
   return id;
 }
 void BeforeSourcePresent(const std::shared_ptr<Output>& o) {
   std::lock_guard guard(lock);
   if(!active || owned.lock()!=o) return;
-  const auto id=pendingPresent;
+  const auto id=queue.BeforePresent();
+  LogQueueChange();
   State().presenting=id;
   if(!id) return;
   ForwardSourceMarker(o,id,XELL_RENDERSUBMIT_END);
@@ -79,9 +97,16 @@ void BeforeSourcePresent(const std::shared_ptr<Output>& o) {
 }
 void AfterSourcePresent(const std::shared_ptr<Output>& o) {
   std::lock_guard guard(lock);
-  if(!active || owned.lock()!=o || !pendingPresent) return;
-  const auto id=pendingPresent; pendingPresent=0;
-  ForwardSourceMarker(o,id,XELL_PRESENT_END);
-  StartFrame(o,id+1);
+  if(!active || owned.lock()!=o) return;
+  const auto presented=queue.AfterPresent();
+  if(!presented.id) return;
+  ForwardSourceMarker(o,presented.id,XELL_PRESENT_END);
+  if(presented.start) StartFrame(o,presented.start);
+}
+bool TryReadCounters(Counters& out) {
+  std::unique_lock guard(lock,std::try_to_lock);
+  if(!guard.owns_lock()) return false;
+  out={queue.evaluations,queue.mergedEvaluations,queue.emptyPresents,queue.Pipelined(),queue.Refused()};
+  return true;
 }
 }

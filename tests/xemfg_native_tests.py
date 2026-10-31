@@ -60,6 +60,8 @@ ap.add_argument('--dlss-sr-default-off',action='store_true')
 # Metro Exodus field report: the DLSS-SR output enters exclusive fullscreen.
 ap.add_argument('--exclusive-transition',action='store_true')
 ap.add_argument('--exclusive-first',action='store_true')
+ap.add_argument('--dlss-sr-pipelined',action='store_true')
+ap.add_argument('--dlss-sr-double',action='store_true')
 # 1.5.8: [XeFG] ExclusiveAsBorderless=1 (transition, first frame, creation).
 for name in ('--exclusive-borderless','--exclusive-borderless-first','--exclusive-borderless-create'):
     ap.add_argument(name,action='store_true')
@@ -88,7 +90,7 @@ ap.add_argument('--ref-v1',type=Path)
 ap.add_argument('--ref-legacy',type=Path)
 args=ap.parse_args()
 exclusive_borderless=args.exclusive_borderless or args.exclusive_borderless_first or args.exclusive_borderless_create
-if args.exclusive_transition or args.exclusive_first or exclusive_borderless: args.dlss_sr_adapter=True
+if args.exclusive_transition or args.exclusive_first or exclusive_borderless or args.dlss_sr_pipelined or args.dlss_sr_double: args.dlss_sr_adapter=True
 d=args.directory.resolve()/datetime.datetime.now().strftime('native-%Y%m%d-%H%M%S-%f')
 d.mkdir(parents=True)
 executable_name='DS2.exe' if args.jittered_motion else args.exe.name
@@ -152,7 +154,7 @@ if args.reframework: flags+=['--ref-'+args.reframework]
 if args.steam_observer: flags+=['--steam-observer']
 if args.stale_input: flags+=['--stale-input']
 if args.active_support: flags+=['--active-support']
-for name in ('game_vsync','legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output','native_game_xefg','ffx_adapter','dlss_sr_adapter','dlss_sr_default_off','duplicate_tags','reserved_state','hud_srgb','hud_typeless','display_cap','scrgb_hudless','game_xefg_probe','ffx_with_streamline','ffx_with_reflex','ffx_with_dlssg','exclusive_transition','exclusive_first','hdr10','exclusive_borderless','exclusive_borderless_first','exclusive_borderless_create'):
+for name in ('game_vsync','legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output','native_game_xefg','ffx_adapter','dlss_sr_adapter','dlss_sr_default_off','duplicate_tags','reserved_state','hud_srgb','hud_typeless','display_cap','scrgb_hudless','game_xefg_probe','ffx_with_streamline','ffx_with_reflex','ffx_with_dlssg','exclusive_transition','exclusive_first','dlss_sr_pipelined','dlss_sr_double','hdr10','exclusive_borderless','exclusive_borderless_first','exclusive_borderless_create'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
@@ -186,6 +188,8 @@ if args.dlss_sr_adapter:
         and any(e.get('event')=='native_ngx_hooks' and e.get('hooked') is True for e in events)
         and any(e.get('event')=='native_ngx_feature' for e in events)
         and any(e.get('event')=='native_synthetic_frames' and e.get('adapter')=='dlss_sr' for e in events)
+        and (not args.dlss_sr_pipelined or any(e.get('event')=='native_synthetic_pipelined' for e in events))
+        and (not args.dlss_sr_double or not any(e.get('event')=='native_synthetic_pipelined' for e in events))
         and not any(e.get('event')=='native_synthetic_sleep' for e in events))
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
         dlss_sr_adapter_verified=verified),indent=2))

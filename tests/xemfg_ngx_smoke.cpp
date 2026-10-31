@@ -66,6 +66,7 @@ int main(int argc,char** argv) {
   try {
     const unsigned multiplier=argc>1?unsigned(std::stoul(argv[1])):4;
     bool expectOff=false,exclusive=false,exclusiveFirst=false,exclusiveCreate=false,borderless=false,hdr10=false;
+    bool pipelined=false,doubleEvaluate=false;
     for(int i=2;i<argc;++i) {
       const std::string arg=argv[i];
       expectOff|=arg=="--dlss-sr-default-off";
@@ -78,6 +79,10 @@ int main(int argc,char** argv) {
       // 1.5.8: [XeFG] ExclusiveAsBorderless=1 serves the request as borderless.
       borderless|=arg.rfind("--exclusive-borderless",0)==0;
       hdr10|=arg=="--hdr10";
+      // 1.7.1: RDR2 on D3D12 records a frame's DLSS before the previous frame's Present.
+      pipelined|=arg=="--dlss-sr-pipelined";
+      // Two DLSS evaluations in one frame are one source frame.
+      doubleEvaluate|=arg=="--dlss-sr-double";
     }
     exclusiveFirst|=exclusiveCreate; exclusive|=exclusiveFirst;
     auto reshade=LoadLibraryW(L".\\dxgi.dll"); Require(reshade,"ReShade");
@@ -195,7 +200,58 @@ int main(int argc,char** argv) {
     NVSDK_NGX_Handle* feature{};
     Require(NVSDK_NGX_SUCCEED(create(list.Get(),NVSDK_NGX_Feature_SuperSampling,&params,&feature)) && feature,"DLSS-SR feature");
     submit();
-    unsigned frame{};
+    unsigned frame{},evaluated{};
+    const auto evaluateFrame=[&] {
+      Check(allocator->Reset(),"allocator reset"); Check(list->Reset(allocator.Get(),nullptr),"list reset");
+      params.Set(NVSDK_NGX_Parameter_Depth,depth.Get()); params.Set(NVSDK_NGX_Parameter_MotionVectors,motion.Get());
+      params.Set(NVSDK_NGX_Parameter_Jitter_Offset_X,evaluated%2?.25f:-.25f); params.Set(NVSDK_NGX_Parameter_Jitter_Offset_Y,evaluated%2?-.25f:.25f);
+      params.Set(NVSDK_NGX_Parameter_MV_Scale_X,1.f); params.Set(NVSDK_NGX_Parameter_MV_Scale_Y,1.f);
+      params.Set(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Width,desc.Width);
+      params.Set(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Height,desc.Height);
+      params.Set(NVSDK_NGX_Parameter_Reset,int(evaluated==0));
+      Require(NVSDK_NGX_SUCCEED(evaluate(list.Get(),feature,&params,nullptr)),"DLSS-SR evaluation");
+      ++evaluated; submit();
+    };
+    const auto presentFrame=[&] {
+      Check(allocator->Reset(),"allocator reset"); Check(list->Reset(allocator.Get(),nullptr),"list reset");
+      ComPtr<ID3D12Resource> back; Check(chain->GetBuffer(chain->GetCurrentBackBufferIndex(),IID_PPV_ARGS(&back)),"back buffer");
+      auto handle=rtv->GetCPUDescriptorHandleForHeapStart(); device->CreateRenderTargetView(back.Get(),nullptr,handle);
+      Barrier(list.Get(),back.Get(),D3D12_RESOURCE_STATE_PRESENT,D3D12_RESOURCE_STATE_RENDER_TARGET);
+      const float color[]={.1f,.2f,.3f,1.f}; list->ClearRenderTargetView(handle,color,0,nullptr);
+      Barrier(list.Get(),back.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_PRESENT);
+      submit(); back.Reset();
+      Check(chain->Present(0,0),"Present");
+      MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
+    };
+    if(pipelined || doubleEvaluate) {
+      // The order the D3D12 log of RDR2 implies: two frames' evaluations before
+      // their Presents, twice in five (E E P P E E P P E P), so without a queue
+      // two of five Presents have no frame and generation never settles.
+      constexpr unsigned kCycles=24,kWarmup=4;
+      unsigned presents{},ready_{};
+      const auto present=[&](unsigned cycle) {
+        presentFrame(); bridgeStatus(&ready,sizeof(ready));
+        if(cycle>=kWarmup) { ++presents; if(ready.enabled) ++ready_; }
+      };
+      for(unsigned cycle=0;cycle<kCycles;++cycle) {
+        if(doubleEvaluate) { evaluateFrame(); evaluateFrame(); present(cycle); continue; }
+        evaluateFrame(); evaluateFrame(); present(cycle); present(cycle);
+        evaluateFrame(); evaluateFrame(); present(cycle); present(cycle);
+        evaluateFrame(); present(cycle);
+      }
+      Sleep(200);
+      mfgunlock::xemfg::Status ms; modelStatus(&ms,sizeof(ms));
+      std::cout<<"DLSS-SR order presents="<<presents<<" ready="<<ready_<<" evaluations="<<evaluations()
+          <<" generated="<<ms.generated<<" result="<<ms.result<<" detail="<<ready.detail<<std::endl;
+      Require(evaluations()==evaluated,"DLSS-SR itself did not run every evaluation");
+      Require(ready_*10>=presents*9,"generation did not stay on through this order of evaluations and Presents");
+      Require(ms.generated==multiplier-1 && ms.result==0,"DLSS-SR output presented no generated frames");
+      Require(NVSDK_NGX_SUCCEED(release(feature)),"DLSS-SR release");
+      chain.Reset(); DestroyWindow(hwnd);
+      Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"log flush");
+      std::cout<<"PASS: DLSS-SR adapter reached ready"<<std::endl;
+      return 0;
+    }
     const auto run=[&](unsigned count) {
     unsigned readyFrames{};
     for(const unsigned end=frame+count;frame<end;++frame) {

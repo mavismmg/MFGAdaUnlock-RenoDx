@@ -954,7 +954,9 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
   if(ready) Report(nativeReflex?"XeMFG active: Streamline inputs and native Reflex; pacing state is reported separately":
       "XeMFG active: Streamline inputs and XeLL; pacing state is reported separately");
   else Report(compatibility::Description(o->blocker));
-  o->last=id;
+  // 1.7.1: a Present without a frame is not a gap in the frames of an adapter:
+  // its next id still follows this one, so history is not reset for it.
+  if(id || !synthetic::Owner()) o->last=id;
 }
 // 1.5.5: one native_summary per [Diagnostics] SummaryIntervalMs (10 s) while
 // this output presents. Per-event logs keep only their first entries; the
@@ -975,6 +977,8 @@ static void WriteSummary(Output& o,const xefg_swapchain_present_status_t& status
   const auto sync=s.gameSyncInterval.load();
   const auto presents=o.summaryPresentCalls.load();
   const auto flip=sdk_pacing::Snapshot(o.fg);
+  synthetic::Counters order{};
+  const bool orderKnown=synthetic::Owner() && synthetic::TryReadCounters(order);
   xess_mod::WriteLog("native_summary","\"output\":"+std::to_string(o.diagnosticOutput)+",\"interval_ms\":"+std::to_string(tick-o.summaryTick)
       +",\"frames\":"+std::to_string(uint32_t(frames-uint32_t(o.summaryFrames)))
       +",\"frames_without_fg\":"+std::to_string(uint32_t(withoutFg-uint32_t(o.summaryRejectedFrames)))
@@ -992,7 +996,10 @@ static void WriteSummary(Output& o,const xefg_swapchain_present_status_t& status
       +",\"present_call_us\":"+std::to_string(presents?o.summaryPresentUs.load()/presents:0)
       +",\"latency_output\":"+std::to_string(uint32_t(s.latencyOutput.load()))
       +",\"native_buffers\":"+std::to_string(flip.nativeBuffers)+",\"native_latency\":"+std::to_string(flip.nativeLatency)
-      +",\"flip_metered\":"+std::to_string(flip.metered)+",\"queue_ahead\":"+std::to_string(flip.queueAheadActive));
+      +",\"flip_metered\":"+std::to_string(flip.metered)+",\"queue_ahead\":"+std::to_string(flip.queueAheadActive)
+      +(orderKnown?",\"evaluations\":"+std::to_string(order.evaluations)+",\"merged_evaluations\":"+std::to_string(order.merged)
+          +",\"empty_presents\":"+std::to_string(order.emptyPresents)+",\"pipelined\":"+std::to_string(order.pipelined)
+          +",\"pipelined_refused\":"+std::to_string(order.refused):std::string()));
   baseline();
 }
 void AfterPresent(const std::shared_ptr<Output>& o,CpuProbe* probe,HRESULT result) {
