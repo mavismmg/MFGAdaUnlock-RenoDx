@@ -252,7 +252,7 @@ necessarily been tested with the other.
 | Borderlands 4 | Working |
 | Payday 3 | Working |
 | Ghost of Tsushima | Working |
-| Crimson Desert | Maybe |
+| Crimson Desert | Working |
 | Gothic 1 Remake | Working |
 | Jusant | Working with HDR fix |
 | Hogwarts Legacy | Working with HDR fix |
@@ -300,6 +300,8 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Elden Ring | DX12 | Working with the DLSS-SR input and the EldenRingDLSS addon, offline with Easy Anti-Cheat off; turn on **Force game VSync off** in the panel for correct frame pacing (see [Elden Ring](#elden-ring)) |
 | Metro Exodus Enhanced Edition | DX12 | Working with the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) |
 | Indiana Jones and the Great Circle | Vulkan | Working (experimental, 1.7): turn DLSS on (Super Resolution or Ray Reconstruction); the game's Frame Generation switch turns XeMFG on and off. Launch with `+r_allowBlackListedLayers 1` so ReShade can load |
+| Crimson Desert | DX12 | Working |
+| Phantom Blade Zero | DX12 | Maybe |
 
 These games were tested with the XeMFG backend of this fork. This is not a
 claim of universal compatibility. The XeMFG backend needs a game that
