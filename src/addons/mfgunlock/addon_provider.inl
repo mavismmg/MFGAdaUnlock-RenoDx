@@ -898,6 +898,7 @@ void TryPatchMidpoint() {
 // wait here: if maintenance is already in progress it requests another pass
 // and returns, avoiding a lock-order inversion with the Windows loader lock.
 void ProcessLoadedDlssgModule(HMODULE mod) {
+  mfgunlock::xmx::Attach(mod);
   if (!TryAcquireSRWLockExclusive(&g_provider_maintenance_lock)) {
     g_provider_rescan_requested.store(true, std::memory_order_release);
     return;
