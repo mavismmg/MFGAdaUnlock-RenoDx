@@ -52,6 +52,40 @@ void StatusRow(const char* label, const char* value, const ImVec4& color) {
   ImGui::PopStyleColor();
 }
 
+// 1.8: a live table whose height never changes. Values refresh a few times per
+// second on one line each; wrapped text changing every frame moved the controls
+// above it and could toggle the window's scrollbar. Clipped text is in a tooltip.
+struct StableStatusRows {
+  struct Row { std::string label, value; ImVec4 color; };
+  std::vector<Row> rows;
+  ULONGLONG next{};
+  bool Due() {
+    const auto now = GetTickCount64();
+    if (now < next) return false;
+    next = now + 250;
+    rows.clear();
+    return true;
+  }
+  void Add(const char* label, const char* value, const ImVec4& color) {
+    rows.push_back({label, value, color});
+  }
+  void Draw() const {
+    for (const auto& row : rows) {
+      ImGui::TableNextRow();
+      ImGui::TableNextColumn();
+      ImGui::TextDisabled("%s", row.label.c_str());
+      ImGui::TableNextColumn();
+      ImGui::PushStyleColor(ImGuiCol_Text, row.color);
+      ImGui::TextUnformatted(row.value.c_str());
+      ImGui::PopStyleColor();
+      if (ImGui::IsItemHovered() &&
+          ImGui::CalcTextSize(row.value.c_str()).x >
+              ImGui::GetColumnWidth())
+        ImGui::SetTooltip("%s", row.value.c_str());
+    }
+  }
+};
+
 void StatusSectionRow(const char* label) {
   ImGui::TableNextRow();
   ImGui::TableNextColumn();
@@ -1137,20 +1171,15 @@ void DrawReflexPacingLabControl(reshade::api::effect_runtime* runtime) {
   HelpMarker(
       "Uses Reflex's final/output limiter and preserves every stricter game, user or Latency Guard cap. It activates only while NVAPI reports VRR/G-SYNC.");
 
-  const auto state = reflexpacing::g_waitable_state.load(
-      std::memory_order_acquire);
-  const auto reason = reflexpacing::g_fallback_reason.load(
-      std::memory_order_relaxed);
-  const auto sleep_intervals = reflexpacing::g_sleep_intervals.Stats();
-  const auto sleep_durations = reflexpacing::g_sleep_durations.Stats();
-  const auto present_intervals = reflexpacing::g_present_intervals.Stats();
-  ImGui::Spacing();
-  if (ImGui::BeginTable("##reflex_pacing_lab_status", 2,
-                        ImGuiTableFlags_SizingStretchProp |
-                            ImGuiTableFlags_RowBg)) {
-    ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthStretch, 0.45f);
-    ImGui::TableSetupColumn("Effective", ImGuiTableColumnFlags_WidthStretch,
-                            0.55f);
+  static StableStatusRows rows;
+  if (rows.Due()) {
+    const auto state = reflexpacing::g_waitable_state.load(
+        std::memory_order_acquire);
+    const auto reason = reflexpacing::g_fallback_reason.load(
+        std::memory_order_relaxed);
+    const auto sleep_intervals = reflexpacing::g_sleep_intervals.Stats();
+    const auto sleep_durations = reflexpacing::g_sleep_durations.Stats();
+    const auto present_intervals = reflexpacing::g_present_intervals.Stats();
     const bool fg_safe_off =
         pacing::NormalizeReflexModeOverride(
             reflexpacing::g_mode_override.load(std::memory_order_relaxed)) ==
@@ -1167,7 +1196,7 @@ void DrawReflexPacingLabControl(reshade::api::effect_runtime* runtime) {
                 state == reflexpacing::WaitableState::kFallback)) {
       pacing_status += "; FG-safe bypass while waitable unavailable";
     }
-    StatusRow("Pacing", pacing_status.c_str(),
+    rows.Add("Pacing", pacing_status.c_str(),
               state == reflexpacing::WaitableState::kActive
                   ? kUiPositive
                   : (sleep_dispatch == reflexpacing::SleepDispatch::kBypass
@@ -1188,7 +1217,7 @@ void DrawReflexPacingLabControl(reshade::api::effect_runtime* runtime) {
               (reflexpacing::g_mode_rejected.load(std::memory_order_relaxed)
                    ? " (override rejected)"
                    : "");
-    StatusRow("Reflex game -> effective", reflex_mode.c_str(),
+    rows.Add("Reflex game -> effective", reflex_mode.c_str(),
               reflexpacing::g_mode_rejected.load(std::memory_order_relaxed)
                   ? kUiWarning
                   : (reflexpacing::g_mode_applied.load(
@@ -1205,24 +1234,27 @@ void DrawReflexPacingLabControl(reshade::api::effect_runtime* runtime) {
                           : "Low latency Off") +
           (nvapi_status.sleep.game_sleep != 0 ? "; game sleeps"
                                               : "; no game sleep");
-      StatusRow("Driver Reflex", driver_reflex.c_str(), kUiMuted);
+      rows.Add("Driver Reflex", driver_reflex.c_str(), kUiMuted);
     } else {
-      StatusRow("Driver Reflex", "Not reported", kUiMuted);
+      rows.Add("Driver Reflex", "Not reported", kUiMuted);
     }
-    if (state == reflexpacing::WaitableState::kFallback)
-      StatusRow("Fallback reason", ReflexWaitableFallbackText(reason),
-                kUiWarning);
+    rows.Add("Fallback reason",
+             state == reflexpacing::WaitableState::kFallback
+                 ? ReflexWaitableFallbackText(reason)
+                 : "None",
+             state == reflexpacing::WaitableState::kFallback ? kUiWarning
+                                                             : kUiMuted);
     const std::string probe = std::to_string(
         reflexpacing::g_probe_samples.load(std::memory_order_relaxed)) +
         "/120";
-    StatusRow("Waitable probe", probe.c_str(), kUiMuted);
+    rows.Add("Waitable probe", probe.c_str(), kUiMuted);
     const std::string dxgi_latency = std::to_string(
         reflexpacing::g_native_maximum_latency.load(
             std::memory_order_relaxed)) +
         " -> " + std::to_string(
             reflexpacing::g_effective_maximum_latency.load(
                 std::memory_order_relaxed));
-    StatusRow("DXGI MaximumFrameLatency", dxgi_latency.c_str(), kUiMuted);
+    rows.Add("DXGI MaximumFrameLatency", dxgi_latency.c_str(), kUiMuted);
     const std::string wait_health =
         std::string(reflexpacing::g_waitable_handle.load(
                         std::memory_order_acquire) != nullptr
@@ -1234,7 +1266,7 @@ void DrawReflexPacingLabControl(reshade::api::effect_runtime* runtime) {
         "; failures=" +
         std::to_string(reflexpacing::g_wait_failure_count.load(
             std::memory_order_relaxed));
-    StatusRow("Waitable health", wait_health.c_str(), kUiMuted);
+    rows.Add("Waitable health", wait_health.c_str(), kUiMuted);
     const uint32_t refresh = reflexpacing::g_refresh_millihz.load(
         std::memory_order_relaxed);
     std::ostringstream display;
@@ -1243,7 +1275,7 @@ void DrawReflexPacingLabControl(reshade::api::effect_runtime* runtime) {
             << (reflexpacing::g_vrr_active.load(std::memory_order_relaxed)
                     ? "active"
                     : "inactive/unavailable");
-    StatusRow("Display", display.str().c_str(), kUiMuted);
+    rows.Add("Display", display.str().c_str(), kUiMuted);
     const uint32_t headroom_limit = reflexpacing::g_headroom_limit_us.load(
         std::memory_order_relaxed);
     const std::string cap = headroom_limit == 0
@@ -1251,7 +1283,7 @@ void DrawReflexPacingLabControl(reshade::api::effect_runtime* runtime) {
         : std::to_string(headroom_limit) + " us (" +
               std::to_string(pacing::FrameLimitUsToFps(headroom_limit)) +
               " FPS approx.)";
-    StatusRow("VRR headroom", cap.c_str(),
+    rows.Add("VRR headroom", cap.c_str(),
               headroom_limit != 0 ? kUiPositive : kUiMuted);
     auto cadence_text = [](const reflexpacing::SampleStats& stats) {
       if (stats.count == 0) return std::string("No samples");
@@ -1264,12 +1296,21 @@ void DrawReflexPacingLabControl(reshade::api::effect_runtime* runtime) {
     const auto sleep_interval_text = cadence_text(sleep_intervals);
     const auto sleep_duration_text = cadence_text(sleep_durations);
     const auto present_interval_text = cadence_text(present_intervals);
-    StatusRow("Sleep interval med/p95/p99", sleep_interval_text.c_str(),
+    rows.Add("Sleep interval med/p95/p99", sleep_interval_text.c_str(),
               kUiMuted);
-    StatusRow("Sleep duration med/p95/p99", sleep_duration_text.c_str(),
+    rows.Add("Sleep duration med/p95/p99", sleep_duration_text.c_str(),
               kUiMuted);
-    StatusRow("App Present med/p95/p99", present_interval_text.c_str(),
+    rows.Add("App Present med/p95/p99", present_interval_text.c_str(),
               kUiMuted);
+  }
+  ImGui::Spacing();
+  if (ImGui::BeginTable("##reflex_pacing_lab_status", 2,
+                        ImGuiTableFlags_SizingStretchProp |
+                            ImGuiTableFlags_RowBg)) {
+    ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthStretch, 0.45f);
+    ImGui::TableSetupColumn("Effective", ImGuiTableColumnFlags_WidthStretch,
+                            0.55f);
+    rows.Draw();
     ImGui::EndTable();
   }
   ImGui::TextDisabled(
