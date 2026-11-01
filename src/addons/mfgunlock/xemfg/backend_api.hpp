@@ -1,5 +1,7 @@
 #pragma once
 #include <cstdint>
+#include <string>
+#include <windows.h>
 namespace mfgunlock::xemfg {
 struct Status {
   uint32_t size = sizeof(Status), version = 1;
@@ -13,6 +15,7 @@ using GetStatus = bool (*)(Status*, uint32_t);
 struct LogStatus { uint64_t pending{},dropped{},batches{},failed{}; bool started{}; };
 LogStatus LogSnapshot() noexcept;
 #ifdef MFGUNLOCK_NATIVE_XEMFG
+bool PublishMultiFrameModel(HMODULE fg,HMODULE ll,HMODULE payload,std::string& error) noexcept;
 // Overlay readers must not wait behind an SDK call that may join/present.
 bool TryModelStatus(Status& out);
 struct NativeRuntimePair { void* frameGeneration{}; void* latency{}; };

@@ -810,6 +810,18 @@ void SetGameMultiplier(uint32_t multiplier) noexcept {
 bool GameContextInitializing() noexcept { return gameInitializing || gameInits.load()>0; }
 bool GameOwnsFrameGeneration() noexcept { return GameContextInitializing() || gameContexts.load()>0; }
 uint32_t FlipQueueNativeBuffers() noexcept { return ConfigureFlipQueue().buffers; }
+// 1.8 (plan D.2): the XMX mode publishes the same ported model and count unlock as
+// the swap chain route, for XeFG's own context. Once per process, before its Init.
+bool PublishMultiFrameModel(HMODULE fg,HMODULE ll,HMODULE payload,std::string& error) noexcept {
+  try {
+    static auto shaders=std::make_unique<ShaderPort>(fg,payload);
+    static auto model=std::make_unique<ModelPort>(fg,true,true);
+    static auto unlock=std::make_unique<xess_host_unlock::Unlock>(fg,ll,5,false);
+    return shaders && model && unlock;
+  } catch(const std::exception& e) { error=e.what(); }
+  catch(...) { error="unknown"; }
+  return false;
+}
 void AttachModel(HMODULE module) {
   self=module;
   InitializeASI();

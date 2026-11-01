@@ -3,17 +3,19 @@
 // 1.8 (plan D.2): the XMX mode's generator, off unless MFGAdaUnlock.ini has
 // [DLSSG] XmxGenerator=1. NGX still owns presentation; NVIDIA's generation is
 // replaced in EvaluateFeature by XeFG's own context, without its proxy swap chain.
-// First step: 2x with Intel's model only. Offsets are for libxess_fg.dll 1.3.1.78
+// Runs the ported multi-frame model, without CUDA. Offsets are for libxess_fg.dll 1.3.1.78
 // (docs/research/xemfg-modo-xmx-2026-11-01.md); any other build is refused.
 #include <d3d12.h>
 #include <windows.h>
 #include <wrl/client.h>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <vector>
 #include "backend_selection.hpp"
 
 namespace mfgunlock::xmx::generator {
@@ -53,14 +55,21 @@ struct ExecuteParams {
   FrameData previous, next;
   ID3D12Resource* const* outputs;
   const uint32_t* outputBases;
-  uint32_t outputCount;
-  uint8_t tail[0x40];  // zero: the defaults; only 2x runs here
+  uint8_t outputCount;
+  uint8_t reserved[3];
+  uint32_t networkScales;  // 0: the default
+  void* descriptorHeap;    // null: XeFG's own
+  uint32_t heapOffset, uiComposition;
+  // The per-pair work runs in the call starting at 0; later calls reuse it.
+  uint32_t firstFrame, frameCount;
 };
 #pragma pack(pop)
 static_assert(sizeof(InitParams) == 80 && sizeof(Input) == 24 && sizeof(FrameData) == 0x118);
 static_assert(offsetof(FrameData, view) == 0x78 && offsetof(FrameData, reset) == 0x110);
 static_assert(offsetof(ExecuteParams, next) == 0x118 && offsetof(ExecuteParams, outputs) == 0x230);
-static_assert(offsetof(ExecuteParams, outputCount) == 0x240);
+static_assert(offsetof(ExecuteParams, outputCount) == 0x240 && offsetof(ExecuteParams, descriptorHeap) == 0x248);
+static_assert(offsetof(ExecuteParams, firstFrame) == 0x258 && sizeof(ExecuteParams) == 0x260);
+constexpr uint32_t kMaxFrames = 5;
 
 inline bool Enabled() {
   static const bool value =
@@ -81,7 +90,12 @@ struct State {
   DXGI_FORMAT format{};
   std::array<Copies, 2> frames;
   uint32_t current{};
-  ComPtr<ID3D12Resource> output;
+  std::array<ComPtr<ID3D12Resource>, kMaxFrames> outputs;
+  // Earlier contexts and their resources may still be in flight; a size change is rare.
+  std::vector<ComPtr<ID3D12Resource>> retired;
+  uint32_t maxFrames{1};
+  D3D12_RESOURCE_DESC outputDesc{};
+  bool published{};
   bool failed{};
   uint32_t logs{};
 };
@@ -118,6 +132,17 @@ inline bool LoadContext(ID3D12Device* device) {
   if (nt->FileHeader.TimeDateStamp != kKnownTimestamp) {
     Log("failed: unknown libxess_fg.dll build");
     return false;
+  }
+  if (!state.published) {
+    state.published = true;
+    auto ll = GetModuleHandleW(L"libxell.dll");
+    if (ll == nullptr) ll = LoadLibraryExW((backend::Directory() / L"libxell.dll").c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    HMODULE self = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       reinterpret_cast<LPCWSTR>(&LoadContext), &self);
+    std::string error;
+    if (ll != nullptr && xemfg::PublishMultiFrameModel(state.fg, ll, self, error)) state.maxFrames = kMaxFrames;
+    else Log("multi-frame model refused, 2x only: " + (ll == nullptr ? std::string("libxell.dll not found") : error));
   }
   void** wrapper = nullptr;
   const auto created = Guarded(base + kFactoryRva, device, &wrapper, nullptr);
@@ -214,8 +239,20 @@ inline bool Prepare(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* 
       state.format == output.Format && state.flags == flags)
     return true;
   if (state.context != nullptr) {
-    Log("failed: a change of size, format or conventions needs a restart in this step");
-    return false;
+    const auto retire = [&](ComPtr<ID3D12Resource>& resource) {
+      if (resource) state.retired.push_back(std::move(resource));
+      resource.Reset();
+    };
+    for (auto& frame : state.frames) {
+      retire(frame.backbuffer);
+      retire(frame.depth);
+      retire(frame.motion);
+      retire(frame.hudless);
+      frame = {};
+    }
+    for (auto& texture : state.outputs) retire(texture);
+    state.context = nullptr;  // its commands may be in flight, so it stays alive
+    state.device.Reset();
   }
   if (FAILED(list->GetDevice(IID_PPV_ARGS(&state.device)))) return false;
   if (!LoadContext(state.device.Get())) return false;
@@ -224,18 +261,14 @@ inline bool Prepare(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* 
   init.height = output.Height;
   init.format = output.Format;
   init.flags = flags;
-  init.maxFrames = 1;
+  init.maxFrames = state.maxFrames;
   init.creationMask = 1;
   init.visibleMask = 1;
   const auto result = Guarded(reinterpret_cast<unsigned char*>(state.fg) + kInitRva, state.context, &init, nullptr);
   Log("init " + std::to_string(width) + "x" + std::to_string(output.Height) + " format " +
       std::to_string(static_cast<int>(output.Format)) + " flags " + std::to_string(flags) + " result " + std::to_string(result));
   if (result != 0) return false;
-  state.output = Texture(state.device.Get(), output, kOutputState, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-  if (!state.output) {
-    Log("failed: output texture");
-    return false;
-  }
+  state.outputDesc = output;
   state.width = width;
   state.height = output.Height;
   state.format = output.Format;
@@ -252,20 +285,23 @@ inline bool Evaluate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
   auto* depth = Resource(params, "DLSSG.Depth");
   auto* motion = Resource(params, "DLSSG.MVecs");
   if (backbuffer == nullptr || interpolated == nullptr || depth == nullptr || motion == nullptr) return false;
-  if (Value<unsigned int>(params, "DLSSG.MultiFrameCount", 1) != 1) {
-    Log("failed: this step only generates 2x");
-    state.failed = true;
-    return false;
-  }
+  const auto frameCount = (std::max)(Value<unsigned int>(params, "DLSSG.MultiFrameCount", 1), 1u);
+  const auto frameIndex = std::clamp(Value<unsigned int>(params, "DLSSG.MultiFrameIndex", 1), 1u, frameCount);
   if (!Prepare(list, params, interpolated->GetDesc())) {
     state.failed = true;
     return false;
   }
+  if (frameCount > state.maxFrames) {
+    Log("failed: " + std::to_string(frameCount) + " generated frames, this context has " + std::to_string(state.maxFrames));
+    state.failed = true;
+    return false;
+  }
   if (real != nullptr) Copy(list, real, kOutputState, backbuffer, kBackbufferState);
+  auto* device = state.device.Get();
+  // The real frame is captured once per pair; each generated frame only reads it.
+  if (frameIndex == 1) {
   state.current ^= 1;
   auto& next = state.frames[state.current];
-  auto& previous = state.frames[state.current ^ 1];
-  auto* device = state.device.Get();
   if (!Capture(device, list, next.backbuffer, backbuffer, kBackbufferState) ||
       !Capture(device, list, next.depth, depth, kInputState) || !Capture(device, list, next.motion, motion, kInputState) ||
       !Capture(device, list, next.hudless, Resource(params, "DLSSG.HUDLess"), kInputState)) {
@@ -291,17 +327,32 @@ inline bool Evaluate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
   const bool reset = Value<unsigned int>(params, "DLSSG.Reset", 0) != 0;
   data.reset = reset ? 1 : 0;
   next.valid = true;
+  }
+  auto& next = state.frames[state.current];
+  auto& previous = state.frames[state.current ^ 1];
   // Without a pair the real frame is shown again.
   bool generated = false;
-  if (previous.valid && !reset && (next.hudless != nullptr) == (previous.hudless != nullptr)) {
+  if (previous.valid && next.data.reset == 0 && (next.hudless != nullptr) == (previous.hudless != nullptr)) {
     ExecuteParams execute{};
     execute.previous = previous.data;
     execute.next = next.data;
-    ID3D12Resource* outputs[] = {state.output.Get()};
-    const uint32_t bases[2]{};
+    ID3D12Resource* outputs[kMaxFrames]{};
+    for (uint32_t i = 0; i < frameCount; ++i) {
+      if (!state.outputs[i])
+        state.outputs[i] = Texture(device, state.outputDesc, kOutputState, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+      if (!state.outputs[i]) {
+        Log("failed: output texture");
+        state.failed = true;
+        return false;
+      }
+      outputs[i] = state.outputs[i].Get();
+    }
+    const uint32_t bases[kMaxFrames * 2]{};
     execute.outputs = outputs;
     execute.outputBases = bases;
-    execute.outputCount = 1;
+    execute.outputCount = static_cast<uint8_t>(frameCount);
+    execute.firstFrame = frameIndex - 1;
+    execute.frameCount = 1;
     const auto result = Guarded(reinterpret_cast<unsigned char*>(state.fg) + kExecuteRva, state.context, list, &execute);
     if (result < 0) {
       Log("execute failed: " + std::to_string(result));
@@ -312,7 +363,7 @@ inline bool Evaluate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
       if (logged.fetch_add(1) < 4) Log("execute result " + std::to_string(result));
     }
   }
-  if (generated) Copy(list, interpolated, kOutputState, state.output.Get(), kOutputState);
+  if (generated) Copy(list, interpolated, kOutputState, state.outputs[frameIndex - 1].Get(), kOutputState);
   else Copy(list, interpolated, kOutputState, backbuffer, kBackbufferState);
   return true;
 }

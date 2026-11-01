@@ -81,7 +81,9 @@ O projeto de referência é GPLv3 e o nosso é MIT. Não copiamos código nem tr
 - **Vários módulos:** o processo mapeia até três `nvngx_dlssg` (pasta do jogo, cópia em `files` e DriverStore). Cada um precisa de seu próprio hook.
 - **Hook no `CreateFeature` da NVIDIA:** faz o módulo falhar com `PlatformError` (`0xBAD00002`). Só que isso vale para o módulo original; não sabemos o efeito quando o nosso código substitui a função.
 - **Avaliação observada, 1280x720:** `Backbuffer` e `HUDLess` em formato 87; `Depth` em 44; `MVecs` em 34; `OutputInterpolated` e `OutputReal` em formato 87. Em 2x, `MultiFrameIndex=1` e `MultiFrameCount=1`; `Reset=1` no primeiro quadro.
-- **Ainda não exercitado:** multiquadro neste caminho, porque o exemplo rodou em 2x.
+- **Gerador, Streamline Sample a 1280x720, com Reflex limitando a 225 FPS:** 2x, 3x, 4x e 6x sem falha de `Init` ou `Execute`. O painel mostrou Engine 112, 56 e 37 contra True 225 em 2x, 4x e 6x, e a imagem ficou sã. Esse teto prova a cadência, não o custo da geração nem a qualidade dos quadros intermediários; isso fica para os jogos.
+- **Modelo:** com `maxFrames=5`, o `Init` troca o 18 pelo nosso 16 também em 2x. A comparação entre 18 e 16 é feita na rota XeMFG, com `XeFGStock2xModel`.
+- **Mudança de tamanho:** cria outro contexto sem destruir o anterior, que pode estar em uso; a perda é limitada e ainda não foi exercitada.
 
 ## Ajustes de qualidade e desempenho
 
