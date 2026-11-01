@@ -3,6 +3,8 @@
 // chain, so its effects/overlay run on the final output, after interpolation.
 #include "native_internal.hpp"
 #include "native_synthetic.hpp"
+#include "log_budget.hpp"
+#include <cstdio>
 namespace mfgunlock::xemfg::native {
 constexpr DXGI_FORMAT kScrgbFormat=DXGI_FORMAT_R16G16B16A16_FLOAT;
 bool PrepareScrgb(Output& o,IDXGISwapChain4* chain) {
@@ -35,6 +37,25 @@ bool PrepareScrgb(Output& o,IDXGISwapChain4* chain) {
 }
 class Swapchain final : public IDXGISwapChain4 {
   std::atomic<ULONG> references{1};
+  // 1.7.2: what a game does with its chain before the first frame (Dying Light 2
+  // releases it there and closes). Off from the first Present; a relaxed load after that.
+  std::atomic<bool> beforeFirstFrame{true};
+  std::atomic<uint32_t> setupLogs{};
+  void SetupValue(const char* call,uint64_t a=0,uint64_t b=0) noexcept {
+    if(!beforeFirstFrame.load(std::memory_order_relaxed) || setupLogs.fetch_add(1,std::memory_order_relaxed)>=96) return;
+    xess_mod::WriteLog("native_swapchain_setup","\"output\":"+std::to_string(owner->diagnosticOutput)+",\"call\":\""+call
+        +"\",\"a\":"+std::to_string(a)+",\"b\":"+std::to_string(b));
+  }
+  HRESULT Setup(const char* call,HRESULT hr,uint64_t a=0) noexcept { SetupValue(call,uint64_t(uint32_t(hr)),a); return hr; }
+  void Refused(REFIID id) noexcept {
+    char text[40]{};
+    snprintf(text,sizeof(text),"%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",id.Data1,id.Data2,id.Data3,
+        id.Data4[0],id.Data4[1],id.Data4[2],id.Data4[3],id.Data4[4],id.Data4[5],id.Data4[6],id.Data4[7]);
+    static PatternBudget budget(32);
+    if(const auto count=budget.Admit(text))
+      xess_mod::WriteLog("native_swapchain_interface_refused","\"output\":"+std::to_string(owner->diagnosticOutput)+",\"iid\":\""+text
+          +"\",\"first_frame_seen\":"+(beforeFirstFrame.load()?"false":"true")+",\"occurrence\":"+std::to_string(count));
+  }
   ComPtr<IDXGISwapChain4> chain;
   std::shared_ptr<Output> owner;
   // scRGB mode keeps the Intel chain in HDR10; a resize to another format
@@ -103,26 +124,27 @@ public:
       *out=static_cast<IDXGISwapChain4*>(this); AddRef(); return S_OK;
     }
     // Do not leak an interface that bypasses Present and lifetime ownership.
+    Refused(id);
     return E_NOINTERFACE;
   }
   ULONG STDMETHODCALLTYPE AddRef() override { return ++references; }
-  ULONG STDMETHODCALLTYPE Release() override { auto n=--references; if(!n) delete this; return n; }
-  HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID a,UINT b,const void* c) override { return chain->SetPrivateData(a,b,c); }
-  HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(REFGUID a,const IUnknown* b) override { return chain->SetPrivateDataInterface(a,b); }
-  HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID a,UINT* b,void* c) override { return chain->GetPrivateData(a,b,c); }
-  HRESULT STDMETHODCALLTYPE GetParent(REFIID a,void** b) override { return chain->GetParent(a,b); }
-  HRESULT STDMETHODCALLTYPE GetDevice(REFIID a,void** b) override { return chain->GetDevice(a,b); }
+  ULONG STDMETHODCALLTYPE Release() override { auto n=--references; SetupValue("Release",uint64_t(n)); if(!n) delete this; return n; }
+  HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID a,UINT b,const void* c) override { return Setup("SetPrivateData",chain->SetPrivateData(a,b,c)); }
+  HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(REFGUID a,const IUnknown* b) override { return Setup("SetPrivateDataInterface",chain->SetPrivateDataInterface(a,b)); }
+  HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID a,UINT* b,void* c) override { return Setup("GetPrivateData",chain->GetPrivateData(a,b,c)); }
+  HRESULT STDMETHODCALLTYPE GetParent(REFIID a,void** b) override { return Setup("GetParent",chain->GetParent(a,b)); }
+  HRESULT STDMETHODCALLTYPE GetDevice(REFIID a,void** b) override { return Setup("GetDevice",chain->GetDevice(a,b)); }
   HRESULT STDMETHODCALLTYPE Present(UINT sync,UINT flags) override {
-    if(flags&DXGI_PRESENT_TEST) return chain->Present(sync,flags);
+    if(flags&DXGI_PRESENT_TEST) return Setup("PresentTest",chain->Present(sync,flags),flags);
     return SourcePresent(sync,flags,nullptr,false);
   }
   HRESULT STDMETHODCALLTYPE GetBuffer(UINT a,REFIID b,void** c) override {
     if(owner->scrgb) {
       if(!c) return E_POINTER;
       *c=nullptr;
-      return a<owner->scrgbBuffers.size()?owner->scrgbBuffers[a]->QueryInterface(b,c):DXGI_ERROR_INVALID_CALL;
+      return Setup("GetBuffer",a<owner->scrgbBuffers.size()?owner->scrgbBuffers[a]->QueryInterface(b,c):DXGI_ERROR_INVALID_CALL,a);
     }
-    return chain->GetBuffer(a,b,c);
+    return Setup("GetBuffer",chain->GetBuffer(a,b,c),a);
   }
   // 1.5.8: XeFG does not support exclusive fullscreen. With the option on, a
   // request for it is served as borderless: the Intel chain stays windowed,
@@ -141,8 +163,9 @@ public:
     return true;
   }
   HRESULT STDMETHODCALLTYPE SetFullscreenState(BOOL a,IDXGIOutput* b) override {
-    if(ServeExclusive(a,b)) return S_OK;
+    if(ServeExclusive(a,b)) { Setup("SetFullscreenState",S_OK,uint64_t(a)); return S_OK; }
     const auto hr=chain->SetFullscreenState(a,b);
+    Setup("SetFullscreenState",hr,uint64_t(a));
     if(SUCCEEDED(hr)) {
       const auto display=ReadFullscreen(chain.Get());
       if(owner->window) owner->window->ObserveFullscreen(display.known,display.exclusive);
@@ -156,7 +179,7 @@ public:
     return hr;
   }
   HRESULT STDMETHODCALLTYPE GetFullscreenState(BOOL* a,IDXGIOutput** b) override {
-    if(!owner->exclusiveServed) return chain->GetFullscreenState(a,b);
+    if(!owner->exclusiveServed) return Setup("GetFullscreenState",chain->GetFullscreenState(a,b));
     if(a) *a=TRUE;
     if(b) {
       { std::lock_guard lock(owner->io); *b=owner->exclusiveTarget.Get(); }
@@ -166,35 +189,36 @@ public:
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE GetDesc(DXGI_SWAP_CHAIN_DESC* a) override {
-    const auto hr=chain->GetDesc(a);
+    const auto hr=Setup("GetDesc",chain->GetDesc(a));
     if(SUCCEEDED(hr) && a && owner->scrgb) a->BufferDesc.Format=kScrgbFormat;
     if(SUCCEEDED(hr) && a && owner->exclusiveServed) a->Windowed=FALSE;
     return hr;
   }
   HRESULT STDMETHODCALLTYPE ResizeBuffers(UINT a,UINT b,UINT c,DXGI_FORMAT d,UINT e) override {
-    auto hr=chain->ResizeBuffers(a,b,c,IntelFormat(d),e); Resized(hr); ResizedScrgb(hr,d); return hr;
+    auto hr=Setup("ResizeBuffers",chain->ResizeBuffers(a,b,c,IntelFormat(d),e),(uint64_t(b)<<32)|c); Resized(hr); ResizedScrgb(hr,d); return hr;
   }
   HRESULT STDMETHODCALLTYPE ResizeTarget(const DXGI_MODE_DESC* a) override {
     // Served borderless: the window keeps covering the monitor; no mode change.
     if(owner->exclusiveServed) return a?S_OK:DXGI_ERROR_INVALID_CALL;
-    return chain->ResizeTarget(a);
+    return Setup("ResizeTarget",chain->ResizeTarget(a));
   }
-  HRESULT STDMETHODCALLTYPE GetContainingOutput(IDXGIOutput** a) override { return chain->GetContainingOutput(a); }
-  HRESULT STDMETHODCALLTYPE GetFrameStatistics(DXGI_FRAME_STATISTICS* a) override { return chain->GetFrameStatistics(a); }
-  HRESULT STDMETHODCALLTYPE GetLastPresentCount(UINT* a) override { return chain->GetLastPresentCount(a); }
+  HRESULT STDMETHODCALLTYPE GetContainingOutput(IDXGIOutput** a) override { return Setup("GetContainingOutput",chain->GetContainingOutput(a)); }
+  HRESULT STDMETHODCALLTYPE GetFrameStatistics(DXGI_FRAME_STATISTICS* a) override { return Setup("GetFrameStatistics",chain->GetFrameStatistics(a)); }
+  HRESULT STDMETHODCALLTYPE GetLastPresentCount(UINT* a) override { return Setup("GetLastPresentCount",chain->GetLastPresentCount(a)); }
   HRESULT STDMETHODCALLTYPE GetDesc1(DXGI_SWAP_CHAIN_DESC1* a) override {
-    const auto hr=chain->GetDesc1(a); if(SUCCEEDED(hr) && a && owner->scrgb) a->Format=kScrgbFormat; return hr;
+    const auto hr=Setup("GetDesc1",chain->GetDesc1(a)); if(SUCCEEDED(hr) && a && owner->scrgb) a->Format=kScrgbFormat; return hr;
   }
   HRESULT STDMETHODCALLTYPE GetFullscreenDesc(DXGI_SWAP_CHAIN_FULLSCREEN_DESC* a) override {
-    const auto hr=chain->GetFullscreenDesc(a); if(SUCCEEDED(hr) && a && owner->exclusiveServed) a->Windowed=FALSE; return hr;
+    const auto hr=Setup("GetFullscreenDesc",chain->GetFullscreenDesc(a)); if(SUCCEEDED(hr) && a && owner->exclusiveServed) a->Windowed=FALSE; return hr;
   }
-  HRESULT STDMETHODCALLTYPE GetHwnd(HWND* a) override { return chain->GetHwnd(a); }
-  HRESULT STDMETHODCALLTYPE GetCoreWindow(REFIID a,void** b) override { return chain->GetCoreWindow(a,b); }
+  HRESULT STDMETHODCALLTYPE GetHwnd(HWND* a) override { return Setup("GetHwnd",chain->GetHwnd(a)); }
+  HRESULT STDMETHODCALLTYPE GetCoreWindow(REFIID a,void** b) override { return Setup("GetCoreWindow",chain->GetCoreWindow(a,b)); }
   HRESULT STDMETHODCALLTYPE Present1(UINT sync,UINT flags,const DXGI_PRESENT_PARAMETERS* params) override {
-    if(flags&DXGI_PRESENT_TEST) return chain->Present1(sync,flags,params);
+    if(flags&DXGI_PRESENT_TEST) return Setup("Present1Test",chain->Present1(sync,flags,params),flags);
     return SourcePresent(sync,flags,params,true);
   }
   HRESULT SourcePresent(UINT sync,UINT flags,const DXGI_PRESENT_PARAMETERS* params,bool extended) {
+    if(beforeFirstFrame.load(std::memory_order_relaxed)) { SetupValue("FirstPresent",sync,flags); beforeFirstFrame.store(false,std::memory_order_relaxed); }
     const auto frame=State().presenting.load();
     // XeFG presents generated frames with the game's sync interval; game VSync
     // (Elden Ring has no option for it) keeps flip metering and extra pacing off.
@@ -232,33 +256,33 @@ public:
     whole.Result(hr);return hr;
   }
   BOOL STDMETHODCALLTYPE IsTemporaryMonoSupported() override { return chain->IsTemporaryMonoSupported(); }
-  HRESULT STDMETHODCALLTYPE GetRestrictToOutput(IDXGIOutput** a) override { return chain->GetRestrictToOutput(a); }
-  HRESULT STDMETHODCALLTYPE SetBackgroundColor(const DXGI_RGBA* a) override { return chain->SetBackgroundColor(a); }
-  HRESULT STDMETHODCALLTYPE GetBackgroundColor(DXGI_RGBA* a) override { return chain->GetBackgroundColor(a); }
-  HRESULT STDMETHODCALLTYPE SetRotation(DXGI_MODE_ROTATION a) override { return chain->SetRotation(a); }
-  HRESULT STDMETHODCALLTYPE GetRotation(DXGI_MODE_ROTATION* a) override { return chain->GetRotation(a); }
-  HRESULT STDMETHODCALLTYPE SetSourceSize(UINT a,UINT b) override { return chain->SetSourceSize(a,b); }
-  HRESULT STDMETHODCALLTYPE GetSourceSize(UINT* a,UINT* b) override { return chain->GetSourceSize(a,b); }
-  HRESULT STDMETHODCALLTYPE SetMaximumFrameLatency(UINT a) override { return chain->SetMaximumFrameLatency(a); }
-  HRESULT STDMETHODCALLTYPE GetMaximumFrameLatency(UINT* a) override { return chain->GetMaximumFrameLatency(a); }
-  HANDLE STDMETHODCALLTYPE GetFrameLatencyWaitableObject() override { return chain->GetFrameLatencyWaitableObject(); }
-  HRESULT STDMETHODCALLTYPE SetMatrixTransform(const DXGI_MATRIX_3X2_F* a) override { return chain->SetMatrixTransform(a); }
-  HRESULT STDMETHODCALLTYPE GetMatrixTransform(DXGI_MATRIX_3X2_F* a) override { return chain->GetMatrixTransform(a); }
-  UINT STDMETHODCALLTYPE GetCurrentBackBufferIndex() override { return chain->GetCurrentBackBufferIndex(); }
+  HRESULT STDMETHODCALLTYPE GetRestrictToOutput(IDXGIOutput** a) override { return Setup("GetRestrictToOutput",chain->GetRestrictToOutput(a)); }
+  HRESULT STDMETHODCALLTYPE SetBackgroundColor(const DXGI_RGBA* a) override { return Setup("SetBackgroundColor",chain->SetBackgroundColor(a)); }
+  HRESULT STDMETHODCALLTYPE GetBackgroundColor(DXGI_RGBA* a) override { return Setup("GetBackgroundColor",chain->GetBackgroundColor(a)); }
+  HRESULT STDMETHODCALLTYPE SetRotation(DXGI_MODE_ROTATION a) override { return Setup("SetRotation",chain->SetRotation(a)); }
+  HRESULT STDMETHODCALLTYPE GetRotation(DXGI_MODE_ROTATION* a) override { return Setup("GetRotation",chain->GetRotation(a)); }
+  HRESULT STDMETHODCALLTYPE SetSourceSize(UINT a,UINT b) override { return Setup("SetSourceSize",chain->SetSourceSize(a,b)); }
+  HRESULT STDMETHODCALLTYPE GetSourceSize(UINT* a,UINT* b) override { return Setup("GetSourceSize",chain->GetSourceSize(a,b)); }
+  HRESULT STDMETHODCALLTYPE SetMaximumFrameLatency(UINT a) override { return Setup("SetMaximumFrameLatency",chain->SetMaximumFrameLatency(a)); }
+  HRESULT STDMETHODCALLTYPE GetMaximumFrameLatency(UINT* a) override { return Setup("GetMaximumFrameLatency",chain->GetMaximumFrameLatency(a)); }
+  HANDLE STDMETHODCALLTYPE GetFrameLatencyWaitableObject() override { const auto handle=chain->GetFrameLatencyWaitableObject(); SetupValue("GetFrameLatencyWaitableObject",uint64_t(handle!=nullptr)); return handle; }
+  HRESULT STDMETHODCALLTYPE SetMatrixTransform(const DXGI_MATRIX_3X2_F* a) override { return Setup("SetMatrixTransform",chain->SetMatrixTransform(a)); }
+  HRESULT STDMETHODCALLTYPE GetMatrixTransform(DXGI_MATRIX_3X2_F* a) override { return Setup("GetMatrixTransform",chain->GetMatrixTransform(a)); }
+  UINT STDMETHODCALLTYPE GetCurrentBackBufferIndex() override { const auto index=chain->GetCurrentBackBufferIndex(); SetupValue("GetCurrentBackBufferIndex",uint64_t(index)); return index; }
   // In scRGB mode the game's linear BT.709 space is what the encoder expects;
   // the Intel chain itself stays in HDR10.
   HRESULT STDMETHODCALLTYPE CheckColorSpaceSupport(DXGI_COLOR_SPACE_TYPE a,UINT* b) override {
     if(owner->scrgb && b && a==DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709) { *b=DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT; return S_OK; }
-    return chain->CheckColorSpaceSupport(a,b);
+    return Setup("CheckColorSpaceSupport",chain->CheckColorSpaceSupport(a,b),uint64_t(a));
   }
   HRESULT STDMETHODCALLTYPE SetColorSpace1(DXGI_COLOR_SPACE_TYPE a) override {
     if(owner->scrgb) return a==DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709?S_OK:DXGI_ERROR_UNSUPPORTED;
-    return chain->SetColorSpace1(a);
+    return Setup("SetColorSpace1",chain->SetColorSpace1(a),uint64_t(a));
   }
   HRESULT STDMETHODCALLTYPE ResizeBuffers1(UINT a,UINT b,UINT c,DXGI_FORMAT d,UINT e,const UINT* f,IUnknown*const* g) override {
-    auto hr=chain->ResizeBuffers1(a,b,c,IntelFormat(d),e,f,g); Resized(hr); ResizedScrgb(hr,d); return hr;
+    auto hr=Setup("ResizeBuffers1",chain->ResizeBuffers1(a,b,c,IntelFormat(d),e,f,g),(uint64_t(b)<<32)|c); Resized(hr); ResizedScrgb(hr,d); return hr;
   }
-  HRESULT STDMETHODCALLTYPE SetHDRMetaData(DXGI_HDR_METADATA_TYPE a,UINT b,void* c) override { return chain->SetHDRMetaData(a,b,c); }
+  HRESULT STDMETHODCALLTYPE SetHDRMetaData(DXGI_HDR_METADATA_TYPE a,UINT b,void* c) override { return Setup("SetHDRMetaData",chain->SetHDRMetaData(a,b,c)); }
 };
 IDXGISwapChain1* Wrap(ComPtr<IDXGISwapChain4> chain,std::shared_ptr<Output> owner) {
   return new Swapchain(std::move(chain),std::move(owner));

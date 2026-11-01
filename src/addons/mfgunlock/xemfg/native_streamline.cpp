@@ -710,6 +710,25 @@ void LogTagHistogram(Output& o,const char* phase) {
 bool OwnsPresentationHooks() noexcept {
   return (lifecycleApi && presentationIsolated && !stopping) || ffx::CreatingOutput() || synthetic::Owner() || ngx::Armed();
 }
+// 1.7.2: why OwnsPresentationHooks() is false, for the output that was refused.
+// Only a missed slInit is cured by early loading, so only that case asks for it.
+bool StreamlineAbi2(HMODULE module) noexcept;
+const char* PresentationNotOwned() {
+  const auto module=GetModuleHandleW(L"sl.interposer.dll");
+  const auto present=[](const void* value) { return value?"true":"false"; };
+  static PatternBudget budget(4);
+  if(const auto count=budget.Admit("not_owned"))
+    xess_mod::WriteLog("native_presentation_not_owned","\"interposer\":\""+(module?FileVersion(module):std::string())
+        +"\",\"abi2\":"+((module && StreamlineAbi2(module))?"true":"false")
+        +",\"lifecycle\":"+(lifecycleApi.load()?"true":"false")+",\"isolated\":"+(presentationIsolated.load()?"true":"false")
+        +",\"stopping\":"+(stopping.load()?"true":"false")
+        +",\"is_loaded\":"+present(reinterpret_cast<const void*>(getLoaded))+",\"set_loaded\":"+present(reinterpret_cast<const void*>(setLoaded))
+        +",\"shutdown\":"+present(reinterpret_cast<const void*>(shutdown))+",\"init\":"+present(reinterpret_cast<const void*>(initialize))
+        +",\"set_device\":"+present(reinterpret_cast<const void*>(setDevice))+",\"occurrence\":"+std::to_string(count));
+  if(!module) return "XeMFG found no Streamline when the game created its swapchain; the game's presentation was kept";
+  if(!lifecycleApi) return "XeMFG cannot own presentation with this game's Streamline: a required function is missing, and early addon loading will not change that";
+  return "XeMFG needs early Streamline initialization to own presentation; restart with the addon loaded before slInit";
+}
 bool StreamlineStopping() noexcept { return stopping; }
 // The detours below use the Streamline 2.x ABI. A 1.x interposer exports
 // slSetTag/slSetConstants/slEvaluateFeature with other signatures (the

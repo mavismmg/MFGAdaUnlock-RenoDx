@@ -187,12 +187,14 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   { RuntimeCall trace("sdk_lifecycle_lock");lifecycle.lock(); }
   if(State().retirementFailed) {Report("XeMFG context retirement failed; restart the game before creating another output");return E_FAIL;}
   if(Active()) return E_NOINTERFACE; // One selected Streamline viewport/output in this implementation.
-  if(!OwnsPresentationHooks()) {
-    Report("XeMFG needs early Streamline initialization to own presentation; restart with the addon loaded before slInit");
-    return E_NOINTERFACE;
-  }
+  // 1.7.2: a D3D11 chain (Dying Light 2's 2x2 probe at startup) is not refused
+  // for ownership: only a D3D12 queue can become an output.
   ComPtr<ID3D12CommandQueue> queue;
   if(!source || FAILED(source->QueryInterface(IID_PPV_ARGS(&queue)))) return E_NOINTERFACE;
+  if(!OwnsPresentationHooks()) {
+    Report(PresentationNotOwned());
+    return E_NOINTERFACE;
+  }
   ComPtr<ID3D12CommandQueue> transportQueue;
   ComPtr<IDXGIFactory2> transportFactory;
   // The public unwrapping contracts identify the same underlying queue and

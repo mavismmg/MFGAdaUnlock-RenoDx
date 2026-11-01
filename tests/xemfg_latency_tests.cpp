@@ -17,9 +17,22 @@ sl::Result nativeResult=sl::Result::eOk;
 sl::Result NativeSleep(const sl::FrameToken&) { ++nativeSleeps; return nativeResult; }
 struct Token final : sl::FrameToken { operator uint32_t() const override { return 10; } };
 void Require(bool value,const char* why) { if(!value) throw std::runtime_error(why); }
-xell_result_t SetMode(xell_context_handle_t,const xell_sleep_params_t* params) { ++modes; lastMode=*params; return modeFail?XELL_RESULT_ERROR_UNKNOWN:XELL_RESULT_SUCCESS; }
-xell_result_t Sleep(xell_context_handle_t,uint32_t) {
+std::atomic<unsigned> failModeAfter{}; // the Nth following mode call fails
+xell_result_t SetMode(xell_context_handle_t,const xell_sleep_params_t* params) {
+  ++modes; lastMode=*params;
+  if(failModeAfter && --failModeAfter==0) return XELL_RESULT_ERROR_UNKNOWN;
+  return modeFail?XELL_RESULT_ERROR_UNKNOWN:XELL_RESULT_SUCCESS;
+}
+// 1.7.2: as XeLL bound to XeFG, refuses an id that is not the last one plus one.
+std::atomic<bool> strict{};
+std::atomic<uint32_t> strictLast{},refuseFrom{UINT32_MAX};
+std::atomic<unsigned> refusals{};
+xell_result_t Sleep(xell_context_handle_t,uint32_t id) {
   ++sleeps;
+  if(strict) {
+    if(id!=strictLast+1 || id>=refuseFrom) { ++refusals; return XELL_RESULT_ERROR_UNKNOWN; }
+    strictLast=id;
+  }
   if(block) { std::unique_lock lock(gateMutex); entered=true; gateCv.notify_all(); gateCv.wait_for(lock,std::chrono::seconds(2),[]{return released;}); }
   return XELL_RESULT_SUCCESS;
 }
@@ -70,8 +83,8 @@ int main() {
     // 1.5.6: without the game's wait (simulation boundary, synthesized frames,
     // or a wait the hook already sent to Reflex) the Reflex route only
     // associates the frame with XeLL; native Reflex is not called.
-    const auto beforeAssociation=sleeps.load();
-    Require(SleepSourceFrame(output,11)==sl::Result::eOk && nativeSleeps==0 && sleeps==beforeAssociation+1,"Reflex association without the game's wait failed or called native");
+    const auto beforeAssociation=sleeps.load(); // the refused 10 is walked before 11
+    Require(SleepSourceFrame(output,11)==sl::Result::eOk && nativeSleeps==0 && sleeps==beforeAssociation+2,"Reflex association without the game's wait failed or called native");
     const auto before=sleeps.load(); const auto reflexBefore=state.reflexSleeps.load();
     Require(SleepSourceFrame(output,12,&NativeSleep,&token)==sl::Result::eOk,"Reflex sleep route failed");
     Require(nativeSleeps==1 && sleeps==before+1,"Reflex must call native once and retain Intel frame bookkeeping");
@@ -85,7 +98,41 @@ int main() {
     const auto beforeOld=sleeps.load(); nativeResult=sl::Result::eOk;
     Require(SleepSourceFrame(output,3,&NativeSleep,&token)==sl::Result::eErrorInvalidState && sleeps==beforeOld,"wait older than the last dispatched id reached XeLL");
     Require(SleepSourceFrame(output,14,&NativeSleep,&token)==sl::Result::eOk && sleeps==beforeOld+1,"newer wait after a refused old one failed");
-    std::cout<<"PASS: late marker during sleep, deduplication, mode cache/retry, same-frame ordering, reset epoch and monotonic XeLL ids\n";
+    // 1.7.2: a pause skips ids; the wait after it must reach XeLL in sequence and
+    // pace as before (Crimson Desert: the refusal left the game without Reflex or FG).
+    state.latencyOutput=LatencyOutput::XeLL; state.limitUs=4000; state.displayCap=false;
+    auto paused=std::make_shared<Output>(); strict=true; strictLast=99;
+    Require(SleepSourceFrame(paused,100)==sl::Result::eOk,"sleep before the pause");
+    const auto beforeModes=modes.load();
+    Require(SleepSourceFrame(paused,351)==sl::Result::eOk && refusals==0 && strictLast==351,"pause gap reached strict XeLL");
+    Require(paused->frames.Find(351)->sleeping && !paused->frames.Find(351)->failed,"frame after the pause not admitted");
+    Require(modes==beforeModes+2 && lastMode.bLowLatencyMode && lastMode.minimumIntervalUs==4000,"pacing not restored after the walk");
+    Require(SleepSourceFrame(paused,352)==sl::Result::eOk && modes==beforeModes+2,"the next frame changed the mode again");
+    // Generation continues only from a clean walk: a refusal stops it and reaches the game.
+    refuseFrom=355;
+    const auto beforeRefused=sleeps.load();
+    Require(SleepSourceFrame(paused,400)==sl::Result::eErrorReflexAPI,"refused walk hidden from the game");
+    Require(sleeps==beforeRefused+4 && paused->frames.Find(400)->failed && !paused->sleepActive,"walk continued after a refusal or kept the lease");
+    Require(lastMode.bLowLatencyMode && lastMode.minimumIntervalUs==4000,"pacing not restored after a refused walk");
+    refuseFrom=UINT32_MAX; strict=false;
+    // A failed restore is applied again by the next wait.
+    auto unrestored=std::make_shared<Output>();
+    Require(SleepSourceFrame(unrestored,10)==sl::Result::eOk,"sleep before the failed restore");
+    failModeAfter=2; const auto walkedBeforeFail=sleeps.load();
+    Require(SleepSourceFrame(unrestored,12)==sl::Result::eOk && sleeps==walkedBeforeFail+2 && !unrestored->sleepConfigured,"failed restore kept as configured");
+    failModeAfter=0; Require(SleepSourceFrame(unrestored,13)==sl::Result::eOk && unrestored->sleepConfigured,"failed restore not applied again");
+    // A jump past the limit is not a frame count and is not walked.
+    auto jump=std::make_shared<Output>();
+    Require(SleepSourceFrame(jump,1)==sl::Result::eOk,"sleep before the jump");
+    const auto beforeJump=sleeps.load();
+    Require(SleepSourceFrame(jump,1u+(1u<<22)+2u)==sl::Result::eOk && sleeps==beforeJump+1,"jump past the limit was walked");
+    // The Reflex route has no pacing to suspend: the mode is not touched.
+    state.latencyOutput=LatencyOutput::Reflex; state.gameReflexMode=1;
+    auto reflexOutput=std::make_shared<Output>();
+    Require(SleepSourceFrame(reflexOutput,1)==sl::Result::eOk,"Reflex sleep before the pause");
+    const auto reflexModes=modes.load(),reflexSleepsBefore=sleeps.load();
+    Require(SleepSourceFrame(reflexOutput,6)==sl::Result::eOk && modes==reflexModes && sleeps==reflexSleepsBefore+5,"Reflex route walk");
+    std::cout<<"PASS: late marker during sleep, deduplication, mode cache/retry, same-frame ordering, reset epoch, monotonic XeLL ids and paused-id walk\n";
     return 0;
   } catch(const std::exception& e) { Release(); std::cerr<<e.what()<<'\n'; return 1; }
 }

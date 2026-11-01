@@ -19,11 +19,41 @@ void XellFailure(const char* operation,uint64_t output,uint32_t id,int result,ui
       +",\"interval_us\":"+std::to_string(interval)+",\"low_latency\":"+(lowLatency?"true":"false")
       +",\"fg_requested\":"+(requested?"true":"false")+",\"occurrence\":"+std::to_string(count));
 }
+// 1.7.2: a game that stops waiting during a pause (Crimson Desert without focus)
+// resumes with an id XeLL's strict mode refuses, and the game does not recover
+// from that refusal. The skipped ids go through XeLL without pacing, so the
+// game's wait is the next one it expects. Called without Output::io, holding the
+// sleep lease. The limit is about 19 hours at 60 fps; a larger jump is a token
+// that does not count frames, and it is left to XeLL's refusal.
+constexpr uint32_t kMaxSkippedSleeps=1u<<22;
+void WalkSkippedSleeps(Output& o,uint32_t first,uint32_t id,uint32_t interval,bool lowLatency) {
+  auto& a=State().api;
+  const auto start=std::chrono::steady_clock::now();
+  const bool paced=lowLatency || interval;
+  int setResult=XELL_RESULT_SUCCESS,refusal=XELL_RESULT_SUCCESS; uint32_t walked{};
+  if(paced) { xell_sleep_params_t unpaced{}; setResult=a.xellSetSleepMode(o.ll,&unpaced); }
+  if(setResult==XELL_RESULT_SUCCESS)
+    for(uint32_t skipped=first;skipped<id;++skipped,++walked)
+      if(const auto r=a.xellSleep(o.ll,skipped); r!=XELL_RESULT_SUCCESS) { refusal=int(r); break; }
+  int restored=XELL_RESULT_SUCCESS;
+  if(paced && setResult==XELL_RESULT_SUCCESS) {
+    xell_sleep_params_t mode{}; mode.bLowLatencyMode=lowLatency; mode.minimumIntervalUs=interval;
+    restored=a.xellSetSleepMode(o.ll,&mode);
+  }
+  if(restored!=XELL_RESULT_SUCCESS) { std::lock_guard guard(o.io); o.sleepConfigured=false; } // the next wait sets it again
+  static PatternBudget budget(32);
+  if(const auto count=budget.Admit(refusal==XELL_RESULT_SUCCESS && setResult==XELL_RESULT_SUCCESS?"walked":"failed"))
+    xess_mod::WriteLog("native_sleep_gap_walk","\"output\":"+std::to_string(o.diagnosticOutput)+",\"from\":"+std::to_string(first)
+        +",\"to\":"+std::to_string(id)+",\"walked\":"+std::to_string(walked)+",\"refusal\":"+std::to_string(refusal)
+        +",\"set_mode\":"+std::to_string(setResult)+",\"restore_mode\":"+std::to_string(restored)
+        +",\"ms\":"+std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count())
+        +",\"occurrence\":"+std::to_string(count));
+}
 }
 sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id,
     PFun_slReflexSleep* nativeSleep,const sl::FrameToken* token,std::optional<uint64_t> expectedEpoch) {
   auto& s=State(); auto& a=s.api;
-  uint64_t epoch{};
+  uint64_t epoch{}; uint32_t skippedFrom{},configuredInterval{}; bool configuredLowLatency{};
   const auto route=s.latencyOutput.load();
   const bool reflex=route==LatencyOutput::Reflex;
   // Without the game's native wait (simulation boundary, synthesized frames,
@@ -65,8 +95,19 @@ sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id,
         xess_mod::WriteLog("native_sleep_mode","\"interval_us\":"+std::to_string(interval)+",\"low_latency\":"+(lowLatency?"true":"false")
             +",\"occurrence\":"+std::to_string(count));
     }
+    if(o->lastXellSleep && id>o->lastXellSleep+1) {
+      if(id-o->lastXellSleep-1<=kMaxSkippedSleeps) skippedFrom=o->lastXellSleep+1;
+      else {
+        static PatternBudget budget(8);
+        if(const auto count=budget.Admit("too_large"))
+          xess_mod::WriteLog("native_sleep_gap_not_walked","\"last\":"+std::to_string(o->lastXellSleep)+",\"id\":"+std::to_string(id)
+              +",\"occurrence\":"+std::to_string(count));
+      }
+    }
+    configuredInterval=interval; configuredLowLatency=lowLatency;
     epoch=o->epoch; frame->sleepInFlight=true; o->sleepActive=true; o->lastXellSleep=id;
   }
+  if(skippedFrom) WalkSkippedSleeps(*o,skippedFrom,id,configuredInterval,configuredLowLatency);
   const auto start=std::chrono::steady_clock::now();
   // Native Reflex is the only latency wait in this route. XeLL sleep with
   // low latency OFF and interval zero retains the separate diagnostic marker context.

@@ -23,6 +23,7 @@ bool Install();
 // Export hooks only: safe to capture a mapped interposer during addon attach.
 void CaptureStreamlineStartup();
 bool OwnsPresentationHooks() noexcept;
+const char* PresentationNotOwned();
 bool StreamlineStopping() noexcept;
 }
 }
