@@ -57,3 +57,22 @@ O projeto de referência é GPLv3 e o nosso é MIT. Não copiamos código nem tr
 | D.2c | Teste no Streamline Sample real, que já está na bateria | só não estar jogando, porque abre janela |
 | D.2d | Testes em jogo: Cyberpunk 2077, Crimson Desert, medição contra CUDA e DLSS-G; depois, Dying Light 2 com o Cpt.Hund | sim |
 | D.3 | Seletor no painel, só depois do D.2d | decisão |
+
+## Análise da DLL (D.2a, em andamento)
+
+`libxess_fg.dll` 1.3.1.78, SHA-256 `ec5e0c65…`, carimbo `0x69CB0F4D`. A análise usa só o RTTI e as exportações da própria DLL, com um leitor de PE próprio.
+
+- **Sem API interna exportada:** nenhum nome `xefgD3D12*`. As funções internas precisam ser localizadas pelas tabelas de métodos.
+- **`XefgContext`:** vtable na RVA `0xF45D48`, 23 métodos. `XefgContextInterface`, a base abstrata, fica em `0xF45C60`.
+- **`XefgModel`:** vtable em `0xF47370`; `XefgModelUniversal` em `0xF47460`, 24 métodos cada.
+- **Ainda falta:** identificar quais métodos são `Init` e `Execute`, com seus argumentos, e repetir a análise na versão 1.3.4, que não temos aqui.
+
+## Ajustes de qualidade e desempenho
+
+O SDK público não tem preset de qualidade nem resolução interna. Só há `SetSceneChangeThreshold` e os genéricos `SetParameterP`/`GetParameterP`, cujos parâmetros ainda não conhecemos.
+
+O catálogo da DLL tem os modelos 15, 17 e 18, e o nosso porte publica o 16 a partir do 15. O caminho `keep2xModel` já mantém o modelo 18 da Intel. Candidatos a testar, sem evidência ainda de que sejam melhores:
+
+- **Qualidade em 2x:** usar o modelo 18 original, em vez do quadro `t=1/2` do modelo 16.
+- **Qualidade em 3x a 6x:** o modelo original com um fluxo por quadro gerado. O custo tende a ser maior, e falta saber se funciona nesses multiplicadores.
+- **Desempenho:** sem ajuste público, depende de achar a resolução interna dentro da DLL ou de um modelo mais leve. O modelo 17 ainda é desconhecido.

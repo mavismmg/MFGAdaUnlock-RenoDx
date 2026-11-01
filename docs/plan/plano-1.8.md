@@ -11,7 +11,7 @@ Status: `pendente`, `em andamento`, `feito`, `adiado`. **[você]** precisa de jo
 - Jogos de medição: Cyberpunk 2077 e Crimson Desert.
 - Controles de teste do DLSS-G: não escondê-los nem removê-los; só melhorar a exibição, porque às vezes piscam.
 - **XMX é um terceiro modo.** O CUDA continua; o usuário escolhe.
-- Modo de desempenho do bloco A: **pendente de decisão [você]**.
+- Qualidade da geração terá os modos Qualidade, Normal e Desempenho, se a medição justificar cada um (pedido de 2026-11-01).
 
 ## Bloco 0 — Medir antes de otimizar
 
@@ -31,7 +31,8 @@ Cada item só entra se o bloco 0 mostrar que aquele custo pesa. Critério: ganho
 | A.2 | Cópias de recursos e barreiras redundantes nas entradas e saídas | pendente |
 | A.3 | Comparar CUDA e D3D12; filas e sincronização | pendente |
 | A.4 | VRAM dos históricos em 4K | pendente |
-| A.5 | Modo de desempenho no painel, se A.1 trouxer ganho | pendente de decisão |
+| A.5 | Seletor de qualidade da geração: Qualidade, Normal e Desempenho; Normal é o padrão e cada modo só entra se a medição justificar | pendente |
+| A.6 | Testar os candidatos a modo qualidade: modelo 18 em 2x, modelo original com um fluxo por quadro em 3x a 6x | pendente |
 
 ## Bloco B — Motor do dashdogy
 
@@ -57,7 +58,7 @@ Referência: `realdody/dlssg-to-xefg-xmx`, que chama a API interna do XeFG (`Ini
 | # | Tarefa | Status |
 |---|---|---|
 | D.1 | Relatório: rota direta contra a atual em compatibilidade, pacing, latência e perdas | feito: `docs/research/xemfg-modo-xmx-2026-11-01.md` |
-| D.2 | Protótipo isolado, escrito do zero | pendente |
+| D.2 | Protótipo isolado, escrito do zero | em andamento: vtables mapeadas; faltam `Init` e `Execute` |
 | D.3 | Seletor de modo no painel e no INI: DLSS-G, XeMFG (CUDA), XMX; o padrão não muda | pendente |
 
 ## Bloco E — Interface do XeMFG (1.8)
