@@ -68,7 +68,10 @@ O projeto de referência é GPLv3 e o nosso é MIT. Não copiamos código nem tr
 - **Métodos identificados pelas strings que usam:** `XefgContext+0x20` (RVA `0x18BFC0`) é o `Init`, e `XefgContext+0x40` (RVA `0x18B210`) é o `Execute`. `XefgContext+0x08` (RVA `0x18A4F0`) escolhe e registra o modelo. O `XefgContext+0x10` (RVA `0x18BDD0`) carrega o modelo para o número de quadros pedido. `XefgModelUniversal+0x50` (RVA `0x19C030`) carrega um modelo pelo id.
 - **Construtores:** o vtable do contexto é escrito em `0x188D3F`, `0x188FB5` e `0x1897D7`.
 - **Configurações internas:** a função `0x1A51C0` confirma pela nossa leitura os campos `+0x4D` e `+0x64` (permitir e ativar a troca de modelo) e `+0x68` (id), além de `+0x4B` (usar XMX).
-- **Ainda falta:** os argumentos de `Init` e `Execute`, e repetir a análise na versão 1.3.4, que não temos aqui.
+- **Fábrica:** `0x1853B0` chama o construtor `0x188D30` e cria o contexto sem o proxy de swapchain, que é criado à parte em `0x1FFDC0`, o `xefgSwapChainD3D12CreateContext` exportado.
+- **`Init(contexto, parâmetros)`:** lê e copia `0x24` bytes. `+0x08` é o formato, validado; `+0x0C` são flags; `+0x10`, quando maior que 1, troca o modelo para multiquadro (provável limite de quadros). Se o multiquadro não for possível, retorna `-10`.
+- **`Execute(contexto, lista de comandos, parâmetros)`:** antes do `Init`, retorna `-3`. Dois quadros de `0x100` bytes, em `+0x18` e `+0x118`, cada um com quatro recursos de `0x18` bytes seguidos de `0xA0` bytes de dados. As saídas ficam em `+0x230` (ponteiros) e `+0x240` (quantidade). `+0x248`, `+0x250`, `+0x260` e `+0x264` são opções, sem papel confirmado ainda.
+- **Ainda falta:** a ordem dos quatro recursos e dos dados, confirmada só em execução, e repetir a análise na versão 1.3.4, que não temos aqui.
 
 ## Ajustes de qualidade e desempenho
 
