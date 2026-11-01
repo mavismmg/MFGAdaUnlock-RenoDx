@@ -2606,7 +2606,21 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
       effective_seen?std::to_string(effective_multiplier)+"x":game_request_seen?std::to_string(game_multiplier)+"x":"Waiting";
   const char* player_state=runtime_error?"Compatibility issue":!enabled?"Disabled this session":mfg_confirmed?"Generating frames":
       mfg_live?"Driver reports MFG active":mfg_request_accepted?"Multiplier requested":provider_ready?"Ready - enable FG in the game":"Waiting for frame generation";
-  mfgunlock::ui::Hero(multiplier_text.c_str(),"DLSS-G",RenderApiName(render_api),player_state,mfg_live);
+  // 1.8: DLSS-G's presentation, but Intel's model generates; the panel must say so.
+  const bool xmx_selected=mfgunlock::xmx::generator::Enabled();
+  const auto xmx_report=xmx_selected?mfgunlock::xmx::generator::Snapshot():mfgunlock::xmx::generator::Report{};
+  // The hook only covers Direct3D 12; elsewhere NVIDIA's generator keeps running.
+  const bool xmx_d3d12=strcmp(RenderApiName(render_api),"Direct3D 12")==0;
+  const bool xmx_running=xmx_selected && xmx_report.hooked && xmx_d3d12;
+  const bool xmx_failed=xmx_running && !xmx_report.generating && !xmx_report.failure.empty();
+  mfgunlock::ui::Hero(multiplier_text.c_str(),xmx_running?"XeFG (XMX)":"DLSS-G",RenderApiName(render_api),xmx_failed?"Frame generation stopped":player_state,mfg_live && !xmx_failed);
+  if(xmx_selected) {
+    mfgunlock::ui::Readout("##xmx_generator","Generator",!xmx_running?"NVIDIA DLSS-G (XMX not started)":xmx_failed?"None (XMX failed)":xmx_report.generating?"Intel XeFG model, in DLSS-G's presentation":"Intel XeFG model - waiting for frames",
+        "The XMX mode replaces NVIDIA's generator with Intel's model. Presentation and the game's settings remain DLSS-G's.",xmx_report.generating?mfgunlock::ui::Accent:mfgunlock::ui::Muted);
+    if(!xmx_d3d12) mfgunlock::ui::Notice("XMX only runs in Direct3D 12 games, so NVIDIA's generator is producing the frames.");
+    else if(!xmx_report.hooked && !xmx_report.failure.empty()) mfgunlock::ui::Notice(("XMX could not start, so NVIDIA's generator is producing the frames: "+xmx_report.failure).c_str());
+    else if(xmx_failed) mfgunlock::ui::Notice(("XMX failed, so no frames are being generated until the game restarts. Select another method if this repeats: "+xmx_report.failure).c_str());
+  }
   if(dynamic_applied) mfgunlock::ui::Description("Dynamic MFG is choosing the multiplier automatically.");
   if(sleep_status_available && (driver_vsync_active || gsync_active))
     mfgunlock::ui::Description(driver_vsync_active && gsync_active?"Driver VSync + G-SYNC active":driver_vsync_active?"Driver VSync active":"G-SYNC active");
@@ -3329,6 +3343,8 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   }
 
   } // Latency details
+  if (page == UiPage::Quality && xmx_running && !xmx_failed)
+    mfgunlock::ui::Description("XMX mode: Intel's model generates the frames, so these DLSS-G quality settings may not apply to them.");
   if (page == UiPage::Quality) {
     mfgunlock::ui::Section("Image quality","Choose a stable quality profile. Changes marked for restart are saved for the next launch.");
     mfgunlock::ui::Card quality_card("##dlssg_quality_card");
@@ -3620,6 +3636,23 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   }
   }
 
+  if (page == UiPage::Support && mfgunlock::ui::Expander("All settings (advanced)")) {
+    mfgunlock::ui::Description("Applies after a game restart. Change these only to test or to diagnose a problem.");
+    mfgunlock::ui::advanced::Draw(mfgunlock::ui::advanced::kDlssG);
+    mfgunlock::ui::advanced::Result();
+    bool raise_ceiling=g_raise_ceiling.load(std::memory_order_relaxed);
+    if (ImGui::Checkbox("Raise frame ceiling",&raise_ceiling)) {
+      g_raise_ceiling.store(raise_ceiling,std::memory_order_relaxed);
+      reshade::set_config_value(nullptr, kConfigSection, "RaiseFrameCeiling", raise_ceiling ? 1 : 0);
+    }
+    mfgunlock::ui::Tooltip("Lets an old plugin's frame limit be raised. Off by default.");
+    bool rtx50=g_rtx50_quality_fixes.load(std::memory_order_relaxed);
+    if (ImGui::Checkbox("RTX 50 quality fixes",&rtx50)) {
+      g_rtx50_quality_fixes.store(rtx50,std::memory_order_relaxed);
+      reshade::set_config_value(nullptr, kConfigSection, "Rtx50QualityFixes", rtx50 ? 1 : 0);
+    }
+    mfgunlock::ui::Tooltip("Applies the validated quality fixes on RTX 50 cards too. Off by default.");
+  }
   if (page == UiPage::Support) {
     ImGui::Spacing();
     ImGui::TextDisabled("SUPPORT DIAGNOSTICS");

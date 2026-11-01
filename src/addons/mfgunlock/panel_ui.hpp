@@ -184,14 +184,18 @@ inline void Hero(const char* multiplier,const char* backend,const char* renderer
 inline void BackendSelector() {
 #ifdef MFGUNLOCK_NATIVE_XEMFG
   static bool saveFailed{};
-  const auto selected=backend::Read(); int choice=selected==backend::Kind::XeMfg?1:0;
-  Setting("##backend_selection","Frame generation method","Choose the frame-generation system. Requires a game restart.",[&] {
-    if(ImGui::Combo("##backend",&choice,"NVIDIA DLSS-G\0Intel XeMFG\0"))
-      saveFailed=!backend::Select(choice?backend::Kind::XeMfg:backend::Kind::DlssG);
+  static const auto startup=backend::ReadMode();
+  const auto selected=backend::Read(); const auto mode=backend::ReadMode(); int choice=int(mode);
+  Setting("##backend_selection","Frame generation method","NVIDIA DLSS-G: NVIDIA's generator.\n"
+      "Intel XeMFG (CUDA): Intel's model on NVIDIA Tensor Cores, with Intel's presentation.\n"
+      "XeFG via DLSS-G (XMX): Intel's model in DLSS-G's presentation. The game still reports DLSS-G, but Intel's model generates the frames. Experimental; needs Intel's files in the game folder.\n"
+      "Requires a game restart.",[&] {
+    if(ImGui::Combo("##backend",&choice,"NVIDIA DLSS-G\0Intel XeMFG (CUDA)\0XeFG via DLSS-G (XMX)\0"))
+      saveFailed=!backend::SelectMode(backend::Mode(choice));
   });
   if(saveFailed) Notice("Backend change was not saved. Check write access to the game folder.");
   if(selected==backend::Kind::Invalid) Notice("The saved backend preference is not valid; NVIDIA DLSS-G is used. Select a method to save a valid one.");
-  if(backend::Effective(backend::Read())!=backend::active) Notice("Saved. Restart the game to switch frame generation.");
+  if(backend::Effective(selected)!=backend::active || mode!=startup) Notice("Saved. Restart the game to switch frame generation.");
 #endif
 }
 inline void RepositoryButton() {

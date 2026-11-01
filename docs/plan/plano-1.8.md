@@ -59,7 +59,7 @@ Referência: `realdody/dlssg-to-xefg-xmx`, que chama a API interna do XeFG (`Ini
 |---|---|---|
 | D.1 | Relatório: rota direta contra a atual em compatibilidade, pacing, latência e perdas | feito: `docs/research/xemfg-modo-xmx-2026-11-01.md` |
 | D.2 | Protótipo isolado, escrito do zero | em andamento: gerador de 2x a 6x funcionando no Streamline Sample 2.14.16 e 2.9.0, atrás de `[DLSSG] XmxGenerator=1`; validado em campo no Crimson Desert, Cyberpunk 2077 pulado; resultados no relatório |
-| D.3 | Seletor de modo no painel e no INI: DLSS-G, XeMFG (CUDA), XMX; o padrão não muda. O painel precisa dizer qual gerador está ativo: no XMX, quem gera é o XeFG, não a NVIDIA | pendente |
+| D.3 | Seletor de modo no painel e no INI: DLSS-G, XeMFG (CUDA), XMX; o padrão não muda. O painel precisa dizer qual gerador está ativo: no XMX, quem gera é o XeFG, não a NVIDIA | feito; validado no Streamline Sample, ainda sem teste em jogo |
 
 ## Bloco E — Interface do XeMFG (1.8)
 
@@ -67,7 +67,7 @@ Referência: `realdody/dlssg-to-xefg-xmx`, que chama a API interna do XeFG (`Ini
 |---|---|---|
 | E.1 | Inventário de opções: quem precisa, padrão, se reinicia o jogo | feito: 13 opções no painel, 36 chaves de INI |
 | E.2 | Separar básico de avançado; nomes claros para "test" e "experimental" | separação já existe; renomear depende de decisão **[você]** |
-| E.3 | Levar ao painel as opções só de INI, depois de validadas | adiado: `VulkanDynamicMFG` e `VulkanGameLatency` ainda sem medição em jogo |
+| E.3 | Levar ao painel as opções só de INI (pedido de 2026-11-01: tudo que o usuário pode mudar no INI também no painel) | feito: seção "All settings (advanced)", marcando o que é experimental; `tests/ini_panel_parity_tests.py` falha se uma chave nova ficar sem controle |
 | E.4 | Estado mais claro: gerando, pausado pelo jogo, motivo do bloqueio | já existe no painel (Hero e `status.detail`) |
 
 ## Bloco F — Interface do DLSS-G (1.8)

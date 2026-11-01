@@ -136,3 +136,12 @@ O que o usuário viu:
 - **Bug achado no teste:** `XeFGStock2xModel` pedia 5 quadros e o `Init` falhava com -4. Corrigido em c4d3894.
 
 Limitações: a captura do `xefg2x-18` rodou em `Hardware Composed: Independent Flip`, e as outras em `Hardware: Independent Flip`, por isso esse par pede repetição. Faltam a imagem do `xmx4x`, sem comentário do usuário, e a comparação de custo em GPU, porque o valor do 18 não é confiável.
+
+## Hook e fallback (2026-11-01)
+
+Correção: a sonda não era inofensiva. Com o `Evaluate` do `nvngx_dlssg` hookado, repassar a chamada ao original deixa a imagem preta no Streamline Sample 2.14.16, com o painel ainda dizendo "Generating frames". Sem o hook, a mesma configuração mostra imagem normal. Não sabemos por que o módulo para de gerar. Por isso:
+
+- `XmxProbe` foi removida.
+- `generator::Preflight` confere `libxess_fg.dll` (build 1.3.1.78) e `libxell.dll` antes de instalar o hook. Se falhar, não há hook e o gerador da NVIDIA continua, com aviso no painel.
+- Falha depois do hook repete o quadro real: sem geração, mas sem tela preta, e com aviso no painel. O teste usou uma `libxess_fg.dll` truncada, que passa no cabeçalho e não carrega.
+- Fora do Direct3D 12 o hook não atua, e o painel diz que a NVIDIA está gerando.

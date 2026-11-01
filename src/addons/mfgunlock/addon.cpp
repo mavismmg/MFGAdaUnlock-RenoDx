@@ -139,7 +139,8 @@
 #include <dxgi1_4.h>
 
 #include <nvsdk_ngx.h>
-#include "xmx_probe.hpp"
+#include "xmx_hook.hpp"
+#include "advanced_settings.hpp"
 
 #include <deps/imgui/imgui.h>
 #include <include/reshade.hpp>

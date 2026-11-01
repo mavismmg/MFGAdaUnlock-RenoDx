@@ -295,6 +295,7 @@ endif()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 if(Python3_Interpreter_FOUND)
   add_test(NAME research_workflow COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/research_workflow_tests.py")
+  add_test(NAME ini_panel_parity COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ini_panel_parity_tests.py")
   add_test(NAME xemfg_replay_corpus COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/xemfg_replay_tests.py")
   add_test(NAME quality_refinement
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/quality_refinement_tests.py")

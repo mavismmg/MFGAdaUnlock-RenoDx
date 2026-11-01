@@ -7,6 +7,7 @@
 #include "native_vulkan.hpp"
 #endif
 #include "../panel_ui.hpp"
+#include "../advanced_settings.hpp"
 #include <sstream>
 namespace mfgunlock::xemfg::native {
 static std::atomic<uint64_t> panelDraws{};
@@ -169,6 +170,21 @@ void Draw() {
     }
   }
   DrawControls(page);
+  if(page==PanelPage::Diagnostics && ui::Expander("All settings (advanced)")) {
+    ui::Description("Applies after a game restart. Change these only to test or to diagnose a problem.");
+    ui::advanced::Draw(ui::advanced::kXeMfg);
+    bool dlssSr=ngx::Saved()>=0?ngx::Saved()==1:ngx::Configured();
+    static bool dlssSrFailed{};
+    ui::Setting("##xe_all_dlss_sr","DLSS-SR input (experimental)","For games without frame generation that use DLSS Super Resolution. The camera is assumed and the HUD is interpolated with the scene.",[&] {
+      if(ImGui::Checkbox("##xe_all_dlss_sr_value",&dlssSr)) dlssSrFailed=!ngx::Save(dlssSr);
+    });
+    DlssSrSaveFailed(dlssSrFailed);
+    ImGui::Separator(); ui::Description("Vulkan");
+    ui::advanced::Draw(ui::advanced::kVulkan);
+    ImGui::Separator(); ui::Description("Diagnostics");
+    ui::advanced::Draw(ui::advanced::kDiagnostics);
+    ui::advanced::Result();
+  }
   if(page==PanelPage::Diagnostics || (page==PanelPage::General && unavailable)) dependencies::Draw();
   ui::Footer("MFG Unlock | 1.7.2");
 }

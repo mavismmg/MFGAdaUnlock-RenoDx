@@ -40,6 +40,18 @@ inline bool Select(Kind value) {
   if ((value != Kind::DlssG && value != Kind::XeMfg) || Directory().empty()) return false;
   return config::Save(Directory()/L"MFGAdaUnlock.ini",{{L"Backend",L"Selected",value==Kind::XeMfg?L"XeMFG":L"DLSSG"}});
 }
+// 1.8: what the user chooses. XMX keeps the DLSS-G backend, whose presentation it
+// uses, and replaces the generator.
+enum class Mode { DlssG, XeMfg, Xmx };
+inline Mode ReadMode() {
+  if (Read() == Kind::XeMfg) return Mode::XeMfg;
+  return GetPrivateProfileIntW(L"DLSSG", L"XmxGenerator", 0, (Directory()/L"MFGAdaUnlock.ini").c_str()) == 1 ? Mode::Xmx : Mode::DlssG;
+}
+inline bool SelectMode(Mode value) {
+  if (Directory().empty()) return false;
+  return config::Save(Directory()/L"MFGAdaUnlock.ini",{{L"Backend",L"Selected",value==Mode::XeMfg?L"XeMFG":L"DLSSG"},
+      {L"DLSSG",L"XmxGenerator",value==Mode::Xmx?L"1":L"0"}});
+}
 // Latched at process startup. A pending setting never changes a live owner.
 inline Kind active = Kind::Invalid;
 }

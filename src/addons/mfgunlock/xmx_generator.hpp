@@ -14,6 +14,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
 #include <string>
 #include <vector>
 #include "backend_selection.hpp"
@@ -72,8 +75,7 @@ static_assert(offsetof(ExecuteParams, firstFrame) == 0x258 && sizeof(ExecutePara
 constexpr uint32_t kMaxFrames = 5;
 
 inline bool Enabled() {
-  static const bool value =
-      GetPrivateProfileIntW(L"DLSSG", L"XmxGenerator", 0, (backend::Directory() / L"MFGAdaUnlock.ini").c_str()) == 1;
+  static const bool value = backend::ReadMode() == backend::Mode::Xmx;
   return value;
 }
 
@@ -107,6 +109,55 @@ inline void Log(const std::string& text) {
   auto& state = Get();
   if (state.logs++ < 48) reshade::log::message(reshade::log::level::info, ("mfgunlock: xmx " + text).c_str());
 }
+// For the panel: nobody may take NVIDIA's generator for XeFG's, or the reverse.
+inline std::atomic<uint64_t> g_last_generated_tick{0};
+inline std::mutex g_failure_lock;
+inline std::string g_failure;
+inline void Fail(const std::string& reason) {
+  { std::lock_guard guard(g_failure_lock); g_failure = reason; }
+  Log("failed: " + reason);
+}
+inline std::atomic_bool g_preflight_passed{false};
+// hooked: NVIDIA's generation is gone for this process, whatever happens next.
+struct Report { bool generating{}; bool hooked{}; std::string failure; };
+inline Report Snapshot() {
+  const auto tick = g_last_generated_tick.load(std::memory_order_relaxed);
+  std::lock_guard guard(g_failure_lock);
+  return {tick != 0 && GetTickCount64() - tick < 2000, g_preflight_passed.load(), g_failure};
+}
+inline DWORD FileTimestamp(const std::filesystem::path& path) {
+  std::ifstream file(path, std::ios::binary);
+  IMAGE_DOS_HEADER dos{};
+  IMAGE_NT_HEADERS nt{};
+  if (!file.read(reinterpret_cast<char*>(&dos), sizeof(dos)) || !file.seekg(dos.e_lfanew) ||
+      !file.read(reinterpret_cast<char*>(&nt), sizeof(nt)))
+    return 0;
+  return nt.FileHeader.TimeDateStamp;
+}
+// Before any hook: hooking stops NVIDIA's generation, so a mode that cannot run
+// must leave it alone. Reads the files without loading them; this can run under
+// the loader lock.
+inline bool Preflight() {
+  static const bool passed = [] {
+    const auto directory = backend::Directory();
+    std::error_code error;
+    if (!std::filesystem::exists(directory / L"libxess_fg.dll", error)) {
+      Fail("libxess_fg.dll not found");
+      return false;
+    }
+    if (FileTimestamp(directory / L"libxess_fg.dll") != kKnownTimestamp) {
+      Fail("libxess_fg.dll is not the supported 1.3.1.78");
+      return false;
+    }
+    if (!std::filesystem::exists(directory / L"libxell.dll", error)) {
+      Fail("libxell.dll not found");
+      return false;
+    }
+    g_preflight_passed = true;
+    return true;
+  }();
+  return passed;
+}
 
 inline int Guarded(void* function, void* context, void* a, void* b) noexcept {
   using Call = int(__cdecl*)(void*, void*, void*);
@@ -124,13 +175,13 @@ inline bool LoadContext(ID3D12Device* device) {
     state.fg = LoadLibraryExW((backend::Directory() / L"libxess_fg.dll").c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
   }
   if (state.fg == nullptr) {
-    Log("failed: libxess_fg.dll not found");
+    Fail("libxess_fg.dll could not be loaded");
     return false;
   }
   auto* base = reinterpret_cast<unsigned char*>(state.fg);
   const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + reinterpret_cast<const IMAGE_DOS_HEADER*>(base)->e_lfanew);
   if (nt->FileHeader.TimeDateStamp != kKnownTimestamp) {
-    Log("failed: unknown libxess_fg.dll build");
+    Fail("unknown libxess_fg.dll build");
     return false;
   }
   if (!state.published) {
@@ -141,19 +192,21 @@ inline bool LoadContext(ID3D12Device* device) {
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                        reinterpret_cast<LPCWSTR>(&LoadContext), &self);
     std::string error;
+#ifdef MFGUNLOCK_NATIVE_XEMFG
     if (ll != nullptr && xemfg::PublishMultiFrameModel(state.fg, ll, self, error)) state.maxFrames = kMaxFrames;
     else Log("multi-frame model refused, 2x only: " + (ll == nullptr ? std::string("libxell.dll not found") : error));
+#endif
   }
   void** wrapper = nullptr;
   const auto created = Guarded(base + kFactoryRva, device, &wrapper, nullptr);
   if (created != 0 || wrapper == nullptr) {
-    Log("failed: factory returned " + std::to_string(created));
+    Fail("factory returned " + std::to_string(created));
     return false;
   }
   // { 'DX12' magic, XefgContext* }
   if (wrapper[1] == nullptr ||
       reinterpret_cast<uintptr_t>(*static_cast<void***>(wrapper[1])) - reinterpret_cast<uintptr_t>(base) != kContextVtableRva) {
-    Log("failed: unexpected context layout");
+    Fail("unexpected context layout");
     return false;
   }
   state.context = wrapper;
@@ -267,7 +320,10 @@ inline bool Prepare(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* 
   const auto result = Guarded(reinterpret_cast<unsigned char*>(state.fg) + kInitRva, state.context, &init, nullptr);
   Log("init " + std::to_string(width) + "x" + std::to_string(output.Height) + " format " +
       std::to_string(static_cast<int>(output.Format)) + " flags " + std::to_string(flags) + " result " + std::to_string(result));
-  if (result != 0) return false;
+  if (result != 0) {
+    Fail("XeFG initialization returned " + std::to_string(result));
+    return false;
+  }
   state.outputDesc = output;
   state.width = width;
   state.height = output.Height;
@@ -275,10 +331,10 @@ inline bool Prepare(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* 
   state.flags = flags;
   return true;
 }
-// True when this call produced what NGX expects; false lets NVIDIA's path keep the frame.
-inline bool Evaluate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* params) {
+// True when this call produced what NGX expects.
+inline bool Generate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* params) {
   auto& state = Get();
-  if (state.failed || list == nullptr || params == nullptr) return false;
+  if (state.failed) return false;
   auto* backbuffer = Resource(params, "DLSSG.Backbuffer");
   auto* interpolated = Resource(params, "DLSSG.OutputInterpolated");
   auto* real = Resource(params, "DLSSG.OutputReal");
@@ -292,7 +348,7 @@ inline bool Evaluate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
     return false;
   }
   if (frameCount > state.maxFrames) {
-    Log("failed: " + std::to_string(frameCount) + " generated frames, this context has " + std::to_string(state.maxFrames));
+    Fail(std::to_string(frameCount) + " generated frames, this context has " + std::to_string(state.maxFrames));
     state.failed = true;
     return false;
   }
@@ -305,7 +361,7 @@ inline bool Evaluate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
   if (!Capture(device, list, next.backbuffer, backbuffer, kBackbufferState) ||
       !Capture(device, list, next.depth, depth, kInputState) || !Capture(device, list, next.motion, motion, kInputState) ||
       !Capture(device, list, next.hudless, Resource(params, "DLSSG.HUDLess"), kInputState)) {
-    Log("failed: input copies");
+    Fail("input copies");
     state.failed = true;
     return false;
   }
@@ -341,7 +397,7 @@ inline bool Evaluate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
       if (!state.outputs[i])
         state.outputs[i] = Texture(device, state.outputDesc, kOutputState, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
       if (!state.outputs[i]) {
-        Log("failed: output texture");
+        Fail("output texture");
         state.failed = true;
         return false;
       }
@@ -359,12 +415,25 @@ inline bool Evaluate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
       if (result == -100000) state.failed = true;
     } else {
       generated = result == 0;
+      if (generated) g_last_generated_tick.store(GetTickCount64(), std::memory_order_relaxed);
       static std::atomic<int> logged{0};
       if (logged.fetch_add(1) < 4) Log("execute result " + std::to_string(result));
     }
   }
   if (generated) Copy(list, interpolated, kOutputState, state.outputs[frameIndex - 1].Get(), kOutputState);
   else Copy(list, interpolated, kOutputState, backbuffer, kBackbufferState);
+  return true;
+}
+// NVIDIA's path cannot take over once hooked (see xmx_hook.hpp), so a failure
+// repeats the real frame: less smooth, never black.
+inline bool Evaluate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* params) {
+  if (list == nullptr || params == nullptr) return false;
+  if (Generate(list, params)) return true;
+  auto* backbuffer = Resource(params, "DLSSG.Backbuffer");
+  auto* interpolated = Resource(params, "DLSSG.OutputInterpolated");
+  if (backbuffer == nullptr || interpolated == nullptr) return false;
+  if (auto* real = Resource(params, "DLSSG.OutputReal")) Copy(list, real, kOutputState, backbuffer, kBackbufferState);
+  Copy(list, interpolated, kOutputState, backbuffer, kBackbufferState);
   return true;
 }
 }  // namespace mfgunlock::xmx::generator

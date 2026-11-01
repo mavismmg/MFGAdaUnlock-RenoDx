@@ -166,6 +166,7 @@ int wmain(int argc,wchar_t** argv) {
           if((window->Flags&ImGuiWindowFlags_ChildWindow) && strstr(window->Name,group)) return window;
         return nullptr;
       };
+      if(frame>=8 && scenario==L"allsettings") ImGui::GetStateStorage()->SetInt(ImGui::GetID("All settings (advanced)"),1);
       if(frame>=8) {
         const char* group=scenario==L"expanded"?"##xe_latency":scenario==L"performance"?"##xe_model_details":"##xe_presentation";
         const char* heading=scenario==L"expanded"?"Advanced latency routing":scenario==L"performance"?"Performance capture (advanced)":"Advanced pacing comparison";
