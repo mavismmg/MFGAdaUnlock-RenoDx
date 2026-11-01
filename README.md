@@ -197,7 +197,8 @@ Later releases added, also by [mavismmg](https://github.com/mavismmg):
   context inside DLSS-G's presentation, with a check of Intel's files before it
   hooks anything, and a repeat of the real frame if it fails during play. The
   multi-frame model it runs is the port from dashdogy's MFG-Unlocker. The idea of
-  calling XeFG directly comes from realdody's
+  calling XeFG directly comes from FakeMichau's
+  [dlssg-to-xefg](https://github.com/FakeMichau/dlssg-to-xefg) and realdody's fork,
   [dlssg-to-xefg-xmx](https://github.com/realdody/dlssg-to-xefg-xmx); see
   [Credits](#credits).
 - **Panel (1.8):** a selector for the three modes, a status that names what is
@@ -1834,12 +1835,13 @@ execution plan and record are in [`docs/plan/`](docs/plan/).
   addon.
 - [nlohmann/json](https://github.com/nlohmann/json) by Niels Lohmann (MIT)
   writes the XeMFG compatibility report.
-- [realdody/dlssg-to-xefg-xmx](https://github.com/realdody/dlssg-to-xefg-xmx)
-  showed that XeFG's internal functions can be called from DLSS-G's frame
-  generation without Intel's swap chain, the idea behind the **XMX mode**. That project
-  is GPLv3 and this one is MIT, so it was read as a reference only: no code is included,
-  and this fork's implementation and the addresses it uses were written and verified
-  independently against `libxess_fg.dll`.
+- [FakeMichau/dlssg-to-xefg](https://github.com/FakeMichau/dlssg-to-xefg) showed that
+  DLSS-G's frame generation can be replaced by calling XeFG's internal functions directly,
+  without Intel's swap chain, the idea behind the **XMX mode**.
+  [realdody/dlssg-to-xefg-xmx](https://github.com/realdody/dlssg-to-xefg-xmx) is the fork
+  of that project that this fork studied. Both are GPLv3 and this project is MIT, so they
+  were used as a reference only: no code is included, and this fork's implementation and
+  the addresses it uses were written and verified independently against `libxess_fg.dll`.
 - [OptiScaler](https://github.com/optiscaler/OptiScaler) was studied as an
   API, ownership and architecture reference for the XeFG bridge. No GPL
   OptiScaler code is included (see

@@ -1,6 +1,6 @@
 # Modo XMX: a rota direta do XeFG como terceiro modo
 
-Item D.1 do `docs/plan/plano-1.8.md`. Leitura de `realdody/dlssg-to-xefg-xmx` (build-3, commit `bcadaab`, 2026-11-01) e do nosso código na `feat/1.8`. Nada aqui foi executado nem medido: tudo sobre desempenho e compatibilidade é hipótese até o protótipo rodar.
+Item D.1 do `docs/plan/plano-1.8.md`. Leitura de `realdody/dlssg-to-xefg-xmx` (fork de `FakeMichau/dlssg-to-xefg`; build-3, commit `bcadaab`, 2026-11-01) e do nosso código na `feat/1.8`. Nada aqui foi executado nem medido: tudo sobre desempenho e compatibilidade é hipótese até o protótipo rodar.
 
 ## Como a rota direta funciona
 
