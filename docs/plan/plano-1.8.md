@@ -59,7 +59,7 @@ Referência: `realdody/dlssg-to-xefg-xmx`, que chama a API interna do XeFG (`Ini
 |---|---|---|
 | D.1 | Relatório: rota direta contra a atual em compatibilidade, pacing, latência e perdas | feito: `docs/research/xemfg-modo-xmx-2026-11-01.md` |
 | D.2 | Protótipo isolado, escrito do zero | em andamento: gerador de 2x a 6x funcionando no Streamline Sample 2.14.16 e 2.9.0, atrás de `[DLSSG] XmxGenerator=1`; falta teste em jogo |
-| D.3 | Seletor de modo no painel e no INI: DLSS-G, XeMFG (CUDA), XMX; o padrão não muda | pendente |
+| D.3 | Seletor de modo no painel e no INI: DLSS-G, XeMFG (CUDA), XMX; o padrão não muda. O painel precisa dizer qual gerador está ativo: no XMX, quem gera é o XeFG, não a NVIDIA | pendente |
 
 ## Bloco E — Interface do XeMFG (1.8)
 
