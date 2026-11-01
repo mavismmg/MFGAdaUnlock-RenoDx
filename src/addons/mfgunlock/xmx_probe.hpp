@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 // 1.8 (plan D.2): groundwork for the XMX mode, off unless MFGAdaUnlock.ini has
-// [DLSSG] XmxProbe=1. Under the DLSS-G backend it observes the calls NGX makes to
-// nvngx_dlssg and creates one raw XeFG context, whose vtable shows whether our
-// reading of libxess_fg.dll holds. Generation stays NVIDIA's: every call goes on
-// unchanged, and the context is neither initialized nor used. The offsets come
-// from our own analysis (docs/research/xemfg-modo-xmx-2026-11-01.md).
+// [DLSSG] XmxProbe=1. Under the DLSS-G backend it observes what NGX evaluates in
+// nvngx_dlssg and creates one raw XeFG context, to check our reading of
+// libxess_fg.dll. It only hooks Evaluate: hooking CreateFeature makes the NVIDIA
+// module fail with PlatformError. The context is neither initialized nor used.
+// The offsets come from our own analysis (docs/research/xemfg-modo-xmx-2026-11-01.md).
 #include <d3d12.h>
 #include <windows.h>
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include "backend_selection.hpp"
@@ -29,12 +32,8 @@ inline void Log(const std::string& text) {
   reshade::log::message(reshade::log::level::info, ("mfgunlock: xmx_probe " + text).c_str());
 }
 
-using CreateFeatureFn = NVSDK_NGX_Result(NVSDK_CONV*)(ID3D12GraphicsCommandList*, NVSDK_NGX_Feature,
-                                                      NVSDK_NGX_Parameter*, NVSDK_NGX_Handle**);
 using EvaluateFeatureFn = NVSDK_NGX_Result(NVSDK_CONV*)(ID3D12GraphicsCommandList*, const NVSDK_NGX_Handle*,
                                                         const NVSDK_NGX_Parameter*, void*);
-inline CreateFeatureFn g_create_feature = nullptr;
-inline EvaluateFeatureFn g_evaluate_feature = nullptr;
 inline std::atomic<int> g_evaluations_logged{0};
 inline std::atomic_bool g_context_probed{false};
 constexpr int kEvaluationsToLog = 4;
@@ -79,9 +78,23 @@ inline void ProbeContext(ID3D12GraphicsCommandList* list) {
     Log("context creation failed");
     return;
   }
-  const auto vtable = *static_cast<uintptr_t*>(context) - reinterpret_cast<uintptr_t>(base);
-  Log("context created; vtable rva " + std::to_string(vtable) +
-      (vtable == kContextVtableRva ? " (expected)" : " (UNEXPECTED)"));
+  // What the factory returns, as RVAs when they point into the DLL.
+  std::string text = "context created:";
+  const auto image = reinterpret_cast<uintptr_t>(base);
+  const auto size = nt->OptionalHeader.SizeOfImage;
+  const auto describe = [&](uintptr_t value) {
+    return value >= image && value < image + size ? "rva " + std::to_string(value - image) : std::to_string(value);
+  };
+  auto* words = static_cast<uintptr_t*>(context);
+  for (int i = 0; i < 4; ++i) {
+    text += " [" + std::to_string(i) + "]=" + describe(words[i]);
+    uintptr_t inner = 0;
+    SIZE_T read = 0;
+    if (ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(words[i]), &inner, sizeof(inner), &read) &&
+        read == sizeof(inner))
+      text += "->" + describe(inner) + (inner - image == kContextVtableRva ? "(XefgContext)" : "");
+  }
+  Log(text);
 }
 inline void LogParameters(const NVSDK_NGX_Parameter* params) {
   if (params == nullptr) return;
@@ -109,42 +122,70 @@ inline void LogParameters(const NVSDK_NGX_Parameter* params) {
   }
   Log(text);
 }
-inline NVSDK_NGX_Result NVSDK_CONV HookedCreateFeature(ID3D12GraphicsCommandList* list, NVSDK_NGX_Feature feature,
-                                                       NVSDK_NGX_Parameter* params, NVSDK_NGX_Handle** handle) {
-  const auto result = g_create_feature(list, feature, params, handle);
-  Log("create_feature feature=" + std::to_string(static_cast<int>(feature)) +
-      " result=" + std::to_string(static_cast<unsigned int>(result)));
-  ProbeContext(list);
-  return result;
-}
-inline NVSDK_NGX_Result NVSDK_CONV HookedEvaluateFeature(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Handle* handle,
-                                                         const NVSDK_NGX_Parameter* params, void* callback) {
-  if (g_evaluations_logged.fetch_add(1, std::memory_order_relaxed) < kEvaluationsToLog) LogParameters(params);
-  return g_evaluate_feature(list, handle, params, callback);
+// A process maps one nvngx_dlssg per location (game folder, DriverStore), and
+// NGX may use any of them, so each module gets its own slot.
+constexpr int kSlots = 4;
+template <int N>
+struct Slot {
+  static inline EvaluateFeatureFn evaluate = nullptr;
+  static NVSDK_NGX_Result NVSDK_CONV Evaluate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Handle* handle,
+                                              const NVSDK_NGX_Parameter* params, void* callback) {
+    if (g_evaluations_logged.fetch_add(1, std::memory_order_relaxed) < kEvaluationsToLog) LogParameters(params);
+    ProbeContext(list);
+    return evaluate(list, handle, params, callback);
+  }
+  static bool Install(HMODULE module) {
+    evaluate = reinterpret_cast<EvaluateFeatureFn>(GetProcAddress(module, "NVSDK_NGX_D3D12_EvaluateFeature"));
+    if (evaluate == nullptr) return false;
+    if (DetourTransactionBegin() != NO_ERROR) return false;
+    auto threads = hook::internal::OpenOtherThreads();
+    for (HANDLE thread : threads.handles) DetourUpdateThread(thread);
+    DetourAttach(reinterpret_cast<void**>(&evaluate), reinterpret_cast<void*>(&Evaluate));
+    const auto result = DetourTransactionCommit();
+    threads.Close();
+    return result == NO_ERROR;
+  }
+};
+inline bool InstallSlot(int slot, HMODULE module) {
+  // Detours has one transaction at a time, and modules can load together.
+  static std::mutex lock;
+  std::lock_guard guard(lock);
+  switch (slot) {
+    case 0: return Slot<0>::Install(module);
+    case 1: return Slot<1>::Install(module);
+    case 2: return Slot<2>::Install(module);
+    case 3: return Slot<3>::Install(module);
+    default: return false;
+  }
 }
 // LoadLibrary notifications can hold the loader lock, and Detours walks the
 // threads; a short-lived thread installs once that lock is gone.
 inline void Attach(HMODULE module) {
-  static std::atomic_bool attached{false};
-  if (!Enabled() || attached.exchange(true)) return;
+  static SRWLOCK lock = SRWLOCK_INIT;
+  static std::vector<HMODULE> seen;
+  if (!Enabled()) return;
+  AcquireSRWLockExclusive(&lock);
+  const bool known = std::find(seen.begin(), seen.end(), module) != seen.end();
+  const int slot = static_cast<int>(seen.size());
+  if (!known && slot < kSlots) seen.push_back(module);
+  ReleaseSRWLockExclusive(&lock);
+  if (known || slot >= kSlots) return;
   HMODULE pinned = nullptr;
   if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
                           reinterpret_cast<LPCWSTR>(module), &pinned))
     return;
+  struct Work { HMODULE module; int slot; };
   const auto thread = CreateThread(
       nullptr, 0,
       [](void* value) -> DWORD {
-        const bool ok = hook::Install(
-            static_cast<HMODULE>(value),
-            {{"NVSDK_NGX_D3D12_CreateFeature", reinterpret_cast<void**>(&g_create_feature),
-              reinterpret_cast<void*>(&HookedCreateFeature)},
-             {"NVSDK_NGX_D3D12_EvaluateFeature", reinterpret_cast<void**>(&g_evaluate_feature),
-              reinterpret_cast<void*>(&HookedEvaluateFeature)}},
-            "nvngx_dlssg (xmx_probe)");
-        Log(ok ? "hooks installed" : "hooks failed");
+        const std::unique_ptr<Work> work(static_cast<Work*>(value));
+        wchar_t path[MAX_PATH]{};
+        GetModuleFileNameW(work->module, path, MAX_PATH);
+        Log("slot " + std::to_string(work->slot) + (InstallSlot(work->slot, work->module) ? " hooked " : " failed ") +
+            std::filesystem::path(path).parent_path().filename().string());
         return 0;
       },
-      pinned, 0, nullptr);
+      new Work{pinned, slot}, 0, nullptr);
   if (thread != nullptr) CloseHandle(thread);
 }
 }  // namespace mfgunlock::xmx
