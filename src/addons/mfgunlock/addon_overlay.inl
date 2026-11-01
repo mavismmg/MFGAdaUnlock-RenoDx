@@ -2624,7 +2624,16 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     if(mfgunlock::framecount::g_game_dynamic_replaced.load(std::memory_order_relaxed))
       mfgunlock::ui::Description("The game asked for Dynamic MFG, which XMX does not support; a fixed multiplier is used.");
     if(!xmx_d3d12) mfgunlock::ui::Notice("XMX only runs in Direct3D 12 games, so NVIDIA's generator is producing the frames.");
-    else if(!xmx_report.hooked && !xmx_report.failure.empty()) mfgunlock::ui::Notice(("XMX could not start, so NVIDIA's generator is producing the frames: "+xmx_report.failure).c_str());
+    else if(!xmx_report.hooked && !xmx_report.failure.empty()) {
+      mfgunlock::ui::Notice(("XMX could not start, so NVIDIA's generator is producing the frames: "+xmx_report.failure).c_str());
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+      mfgunlock::ui::ButtonRow actions(1);
+      if(actions("Install / update files","Opens the external helper with the list of files it will change. Nothing changes until you confirm; it then waits for the game to exit and keeps backups."))
+        mfgunlock::dependencies::Repair();
+      const auto repair=mfgunlock::dependencies::Snapshot();
+      if(repair.helperRunning || !repair.message.empty()) mfgunlock::ui::Description(repair.message.c_str());
+#endif
+    }
     else if(xmx_failed) mfgunlock::ui::Notice(("XMX failed, so no frames are being generated until the game restarts. Select another method if this repeats: "+xmx_report.failure).c_str());
   }
   if(dynamic_applied) mfgunlock::ui::Description("Dynamic MFG is choosing the multiplier automatically.");
