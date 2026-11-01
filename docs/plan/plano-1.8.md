@@ -31,8 +31,8 @@ Cada item só entra se o bloco 0 mostrar que aquele custo pesa. Critério: ganho
 | A.2 | Cópias de recursos e barreiras redundantes nas entradas e saídas | pendente |
 | A.3 | Comparar CUDA e D3D12; filas e sincronização | pendente |
 | A.4 | VRAM dos históricos em 4K | pendente |
-| A.5 | Seletor de qualidade da geração: Qualidade, Normal e Desempenho; Normal é o padrão e cada modo só entra se a medição justificar | pendente |
-| A.6 | Testar os candidatos a modo qualidade: modelo 18 em 2x, modelo original com um fluxo por quadro em 3x a 6x | pendente |
+| A.5 | Seletor de qualidade da geração, só com os modos que a medição justificar; Normal é o padrão. Hoje, Qualidade só teria candidato em 2x, e Desempenho não tem nenhum confirmado | pendente |
+| A.6 | **[você]** Comparar o modelo 18 com o 16 em 2x: chave `XeFGStock2xModel=1`. Em 3x a 6x não há candidato: o 18 só gera o quadro do meio | código pronto, falta testar |
 
 ## Bloco B — Motor do dashdogy
 
@@ -58,7 +58,7 @@ Referência: `realdody/dlssg-to-xefg-xmx`, que chama a API interna do XeFG (`Ini
 | # | Tarefa | Status |
 |---|---|---|
 | D.1 | Relatório: rota direta contra a atual em compatibilidade, pacing, latência e perdas | feito: `docs/research/xemfg-modo-xmx-2026-11-01.md` |
-| D.2 | Protótipo isolado, escrito do zero | em andamento: vtables mapeadas; faltam `Init` e `Execute` |
+| D.2 | Protótipo isolado, escrito do zero | em andamento: `Init` e `Execute` localizados; faltam os argumentos |
 | D.3 | Seletor de modo no painel e no INI: DLSS-G, XeMFG (CUDA), XMX; o padrão não muda | pendente |
 
 ## Bloco E — Interface do XeMFG (1.8)

@@ -65,14 +65,26 @@ O projeto de referência é GPLv3 e o nosso é MIT. Não copiamos código nem tr
 - **Sem API interna exportada:** nenhum nome `xefgD3D12*`. As funções internas precisam ser localizadas pelas tabelas de métodos.
 - **`XefgContext`:** vtable na RVA `0xF45D48`, 23 métodos. `XefgContextInterface`, a base abstrata, fica em `0xF45C60`.
 - **`XefgModel`:** vtable em `0xF47370`; `XefgModelUniversal` em `0xF47460`, 24 métodos cada.
-- **Ainda falta:** identificar quais métodos são `Init` e `Execute`, com seus argumentos, e repetir a análise na versão 1.3.4, que não temos aqui.
+- **Métodos identificados pelas strings que usam:** `XefgContext+0x20` (RVA `0x18BFC0`) é o `Init`, e `XefgContext+0x40` (RVA `0x18B210`) é o `Execute`. `XefgContext+0x08` (RVA `0x18A4F0`) escolhe e registra o modelo. O `XefgContext+0x10` (RVA `0x18BDD0`) carrega o modelo para o número de quadros pedido. `XefgModelUniversal+0x50` (RVA `0x19C030`) carrega um modelo pelo id.
+- **Construtores:** o vtable do contexto é escrito em `0x188D3F`, `0x188FB5` e `0x1897D7`.
+- **Configurações internas:** a função `0x1A51C0` confirma pela nossa leitura os campos `+0x4D` e `+0x64` (permitir e ativar a troca de modelo) e `+0x68` (id), além de `+0x4B` (usar XMX).
+- **Ainda falta:** os argumentos de `Init` e `Execute`, e repetir a análise na versão 1.3.4, que não temos aqui.
 
 ## Ajustes de qualidade e desempenho
 
 O SDK público não tem preset de qualidade nem resolução interna. Só há `SetSceneChangeThreshold` e os genéricos `SetParameterP`/`GetParameterP`, cujos parâmetros ainda não conhecemos.
 
-O catálogo da DLL tem os modelos 15, 17 e 18, e o nosso porte publica o 16 a partir do 15. O caminho `keep2xModel` já mantém o modelo 18 da Intel. Candidatos a testar, sem evidência ainda de que sejam melhores:
+O que a função `0x1A51C0` e o método `0x18BDD0` mostram sobre os modelos:
 
-- **Qualidade em 2x:** usar o modelo 18 original, em vez do quadro `t=1/2` do modelo 16.
-- **Qualidade em 3x a 6x:** o modelo original com um fluxo por quadro gerado. O custo tende a ser maior, e falta saber se funciona nesses multiplicadores.
-- **Desempenho:** sem ajuste público, depende de achar a resolução interna dentro da DLL ou de um modelo mais leve. O modelo 17 ainda é desconhecido.
+| Modelo | Papel na 1.3.1 |
+|---|---|
+| 18 | 2x, padrão fora de hardware com XMX |
+| 17 | 2x com XMX; acima de 2x é trocado pelo 15 |
+| 15 | multiquadro com XMX; doa os pesos do nosso 16 |
+| 16 | não existe na DLL; é o nosso porte para NVIDIA |
+
+Sem suporte a XMX, o XeFG original recusa mais de 2x com o modelo 18.
+
+- **Qualidade em 2x:** comparar o modelo 18 com o quadro `t=1/2` do modelo 16. A chave `[XeFG] XeFGStock2xModel=1`, desligada por padrão, liga a rota 2x nativa que já existia. Exige reiniciar o jogo, limita a 2x e fica fora do porte. Falta testar em jogo, inclusive para saber se melhora a imagem.
+- **Qualidade em 3x a 6x: descartado.** O modelo 18 só gera o quadro do meio, e repeti-lo geraria quadros nas posições erradas. O código já proíbe isso em `backend.cpp`. Um quadro por fluxo, que citei antes, não existe nessa família de modelos sem XMX.
+- **Desempenho:** o modelo 17 também não é um candidato mais leve, porque é o 2x para XMX. Sem ajuste público, só resta procurar a resolução interna dentro do modelo. É o item mais incerto.

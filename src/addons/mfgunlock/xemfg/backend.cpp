@@ -189,6 +189,10 @@ void Prepare(ID3D12Device* device) {
   s.publishing=true;
   struct PublicationScope { bool& flag; ~PublicationScope() { flag=false; } } publication{s.publishing};
   try {
+    // 1.8 (plan A.6): comparison of Intel's own 2x model with the t=1/2 frame of the
+    // ported model. Off by default; it runs the existing native 2x route.
+    if (GetPrivateProfileIntW(L"XeFG",L"XeFGStock2xModel",0,(ModulePath(host).parent_path()/L"MFGAdaUnlock.ini").c_str())==1)
+      throw std::runtime_error("stock_2x_model_requested");
     if (Vendor(device)!=0x10de) throw std::runtime_error("first_build_targets_nvidia_only");
     if (!xess_layout::Pair(fg,ll)) throw std::runtime_error("provider_layout_rejected");
     auto fatbin=xess_payload::Read(self,xefg_cuda::embedded::fatbin);
