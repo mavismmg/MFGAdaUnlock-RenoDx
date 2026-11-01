@@ -17,6 +17,7 @@
 #include <vector>
 #include "backend_selection.hpp"
 #include "ngx_hook.hpp"
+#include "xmx_generator.hpp"
 
 namespace mfgunlock::xmx {
 constexpr DWORD kKnownTimestamp = 0x69CB0F4D;  // libxess_fg.dll 1.3.1.78
@@ -131,7 +132,11 @@ struct Slot {
   static NVSDK_NGX_Result NVSDK_CONV Evaluate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Handle* handle,
                                               const NVSDK_NGX_Parameter* params, void* callback) {
     if (g_evaluations_logged.fetch_add(1, std::memory_order_relaxed) < kEvaluationsToLog) LogParameters(params);
-    ProbeContext(list);
+    if (generator::Enabled()) {
+      if (generator::Evaluate(list, params)) return NVSDK_NGX_Result_Success;
+    } else {
+      ProbeContext(list);
+    }
     return evaluate(list, handle, params, callback);
   }
   static bool Install(HMODULE module) {
@@ -163,7 +168,7 @@ inline bool InstallSlot(int slot, HMODULE module) {
 inline void Attach(HMODULE module) {
   static SRWLOCK lock = SRWLOCK_INIT;
   static std::vector<HMODULE> seen;
-  if (!Enabled()) return;
+  if (!Enabled() && !generator::Enabled()) return;
   AcquireSRWLockExclusive(&lock);
   const bool known = std::find(seen.begin(), seen.end(), module) != seen.end();
   const int slot = static_cast<int>(seen.size());

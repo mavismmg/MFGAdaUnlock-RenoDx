@@ -76,7 +76,7 @@ Referência: `realdody/dlssg-to-xefg-xmx`, que chama a API interna do XeFG (`Ini
 |---|---|---|
 | F.1 | Mapa das 5 páginas e dos 7 submenus | feito |
 | F.2 | Reorganizar: nomes para usuário, menos níveis, mesma aparência do XeMFG | depende de decisão **[você]** |
-| F.3 | Corrigir o piscar dos controles de teste e melhorar a exibição, mantendo todos visíveis | feito no código (`4f1f8b2`); falta confirmar em jogo **[você]** |
+| F.3 | Corrigir o piscar dos controles de teste e melhorar a exibição, mantendo todos visíveis | feito (`4f1f8b2`), confirmado em jogo em 2026-11-01 |
 | F.4 | Comparar capturas do painel antes e depois | pendente |
 
 Regra de E e F: nenhuma chave de INI muda de nome ou de padrão.
