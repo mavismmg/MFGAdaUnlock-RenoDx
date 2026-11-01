@@ -37,9 +37,9 @@ Cada item só entra se o bloco 0 mostrar que aquele custo pesa. Critério: ganho
 
 | # | Tarefa | Status |
 |---|---|---|
-| B.1 | Comparar o que temos com a versão atual dele | pendente |
-| B.2 | Listar o que vale portar: correção, desempenho, funcionalidade | pendente |
-| B.3 | Portar um item por commit, com testes e `PROVENANCE.md` | pendente |
+| B.1 | Comparar o que temos com a versão atual dele | feito: o motor já é a v1.7.0 (`b97deee`, plano J da 1.7), e depois dela só há um ajuste de README |
+| B.2 | Listar o que vale portar: correção, desempenho, funcionalidade | feito: nada pendente de correção; flip queue já avaliada e desligada por padrão; DLSS 5 fora de escopo, sem pedido |
+| B.3 | Portar um item por commit, com testes e `PROVENANCE.md` | adiado até haver versão nova |
 
 ## Bloco C — Qualidade da geração (1.9)
 
@@ -64,18 +64,18 @@ Referência: `realdody/dlssg-to-xefg-xmx`, que chama a API interna do XeFG (`Ini
 
 | # | Tarefa | Status |
 |---|---|---|
-| E.1 | Inventário de opções: quem precisa, padrão, se reinicia o jogo | pendente |
-| E.2 | Separar básico de avançado; nomes claros para "test" e "experimental" | pendente |
-| E.3 | Levar ao painel as opções só de INI, depois de validadas | pendente |
-| E.4 | Estado mais claro: gerando, pausado pelo jogo, motivo do bloqueio | pendente |
+| E.1 | Inventário de opções: quem precisa, padrão, se reinicia o jogo | feito: 13 opções no painel, 36 chaves de INI |
+| E.2 | Separar básico de avançado; nomes claros para "test" e "experimental" | separação já existe; renomear depende de decisão **[você]** |
+| E.3 | Levar ao painel as opções só de INI, depois de validadas | adiado: `VulkanDynamicMFG` e `VulkanGameLatency` ainda sem medição em jogo |
+| E.4 | Estado mais claro: gerando, pausado pelo jogo, motivo do bloqueio | já existe no painel (Hero e `status.detail`) |
 
 ## Bloco F — Interface do DLSS-G (1.8)
 
 | # | Tarefa | Status |
 |---|---|---|
-| F.1 | Mapa das 5 páginas e dos 7 submenus | pendente |
-| F.2 | Reorganizar: nomes para usuário, menos níveis, mesma aparência do XeMFG | pendente |
-| F.3 | Corrigir o piscar dos controles de teste e melhorar a exibição, mantendo todos visíveis | pendente |
+| F.1 | Mapa das 5 páginas e dos 7 submenus | feito |
+| F.2 | Reorganizar: nomes para usuário, menos níveis, mesma aparência do XeMFG | depende de decisão **[você]** |
+| F.3 | Corrigir o piscar dos controles de teste e melhorar a exibição, mantendo todos visíveis | feito no código (`4f1f8b2`); falta confirmar em jogo **[você]** |
 | F.4 | Comparar capturas do painel antes e depois | pendente |
 
 Regra de E e F: nenhuma chave de INI muda de nome ou de padrão.
