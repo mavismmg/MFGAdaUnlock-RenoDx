@@ -36,6 +36,12 @@ void Draw() {
   const bool generating=status.enabled && status.sdkResult>=0 && status.submitted>1;
   const bool paused=status.output && s.nativeOff && !s.requested;
   const auto multiplier=std::to_string(s.multiplier.load())+"x";
+  // 1.8: what is actually generating. The status locks are only tried, so a busy
+  // frame keeps the last answer instead of making the label flicker.
+  static const char* generator="XeMFG";
+  if(const auto controls=ControlsSnapshot();!controls.modelUpdating && !controls.cudaUpdating && controls.modelInitialized)
+    generator=!controls.modelPort?"XeFG 2x (stock)":controls.cudaState==1 && controls.cudaLaunches?"XeMFG (CUDA)":
+        generating?"XeMFG (shaders)":"XeMFG";
   bool vulkanGame=false; // 1.7 (plan F): the DX12 input notices below do not apply
 #ifdef MFGUNLOCK_XEMFG_VULKAN
   // 1.7 (plan F): a Vulkan game runs through the Vulkan host, not the DX12 output.
@@ -67,7 +73,7 @@ void Draw() {
     }
   } else
 #endif
-  ui::Hero(multiplier.c_str(),"XeMFG","DX12",generating?"Generating frames":
+  ui::Hero(multiplier.c_str(),generator,"DX12",generating?"Generating frames":
       unavailable?"XeMFG unavailable":paused?"Game has paused frame generation":status.output?"Waiting for compatible frame inputs":"Waiting for the game",generating);
   const auto ref=reframework::Snapshot();
   if(ref.knownMonitorIssue) ui::Notice("This REFramework build has an observed XeFG hook-monitor conflict. Update REFramework to a version with the XeFG monitor fix.");

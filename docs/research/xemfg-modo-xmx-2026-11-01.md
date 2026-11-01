@@ -145,3 +145,9 @@ Correção: a sonda não era inofensiva. Com o `Evaluate` do `nvngx_dlssg` hooka
 - `generator::Preflight` confere `libxess_fg.dll` (build 1.3.1.78) e `libxell.dll` antes de instalar o hook. Se falhar, não há hook e o gerador da NVIDIA continua, com aviso no painel.
 - Falha depois do hook repete o quadro real: sem geração, mas sem tela preta, e com aviso no painel. O teste usou uma `libxess_fg.dll` truncada, que passa no cabeçalho e não carrega.
 - Fora do Direct3D 12 o hook não atua, e o painel diz que a NVIDIA está gerando.
+
+## Multiplicador e Dynamic MFG no XMX (2026-11-01)
+
+- **Seletor do jogo:** no menu do Streamline Sample 2.14.16, a troca de 2x para 4x com o programa rodando funcionou (Engine 61, True 246). Ainda não foi testada no menu de um jogo.
+- **Dynamic pedido pelo jogo:** com `eDynamic`, o XMX não gerava nada (Engine 240, True 240) e o painel dizia "Generating frames". Agora o pedido vira `eOn` com o multiplicador fixo (Engine 120, True 240) e o painel avisa. Não sabemos se o Dynamic da NVIDIA funcionaria nesta rota; ele fica bloqueado.
+- **`DynamicMFG=1` salvo:** fica sem efeito no modo XMX e volta a valer ao selecionar DLSS-G.

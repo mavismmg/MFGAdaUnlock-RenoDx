@@ -1863,6 +1863,7 @@ void DrawLegacyOverlay(reshade::api::effect_runtime* /*runtime*/) {
   ImGui::Separator();
   bool dynamic_mfg =
       mfgunlock::framecount::g_dynamic_mfg_enabled.load(std::memory_order_relaxed);
+  ImGui::BeginDisabled(mfgunlock::xmx::generator::Enabled());
   if (ImGui::Checkbox("Use NVIDIA Dynamic MFG", &dynamic_mfg)) {
     mfgunlock::framecount::g_dynamic_mfg_enabled.store(dynamic_mfg,
                                                         std::memory_order_relaxed);
@@ -1870,6 +1871,7 @@ void DrawLegacyOverlay(reshade::api::effect_runtime* /*runtime*/) {
     reshade::set_config_value(nullptr, kConfigSection, "DynamicMFG",
                               dynamic_mfg ? 1 : 0);
   }
+  ImGui::EndDisabled();
   int dynamic_target = static_cast<int>(
       mfgunlock::framecount::g_dynamic_target_fps.load(std::memory_order_relaxed));
   if (ImGui::InputInt("Dynamic output target FPS", &dynamic_target, 1, 10)) {
@@ -2613,10 +2615,14 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   const bool xmx_d3d12=strcmp(RenderApiName(render_api),"Direct3D 12")==0;
   const bool xmx_running=xmx_selected && xmx_report.hooked && xmx_d3d12;
   const bool xmx_failed=xmx_running && !xmx_report.generating && !xmx_report.failure.empty();
-  mfgunlock::ui::Hero(multiplier_text.c_str(),xmx_running?"XeFG (XMX)":"DLSS-G",RenderApiName(render_api),xmx_failed?"Frame generation stopped":player_state,mfg_live && !xmx_failed);
+  mfgunlock::ui::Hero(multiplier_text.c_str(),xmx_running?"XMX":"DLSS-G",RenderApiName(render_api),
+      xmx_failed?"Frame generation stopped":xmx_running && !xmx_report.generating?"Waiting for frames":player_state,
+      xmx_running?xmx_report.generating:mfg_live);
   if(xmx_selected) {
     mfgunlock::ui::Readout("##xmx_generator","Generator",!xmx_running?"NVIDIA DLSS-G (XMX not started)":xmx_failed?"None (XMX failed)":xmx_report.generating?"Intel XeFG model, in DLSS-G's presentation":"Intel XeFG model - waiting for frames",
         "The XMX mode replaces NVIDIA's generator with Intel's model. Presentation and the game's settings remain DLSS-G's.",xmx_report.generating?mfgunlock::ui::Accent:mfgunlock::ui::Muted);
+    if(mfgunlock::framecount::g_game_dynamic_replaced.load(std::memory_order_relaxed))
+      mfgunlock::ui::Description("The game asked for Dynamic MFG, which XMX does not support; a fixed multiplier is used.");
     if(!xmx_d3d12) mfgunlock::ui::Notice("XMX only runs in Direct3D 12 games, so NVIDIA's generator is producing the frames.");
     else if(!xmx_report.hooked && !xmx_report.failure.empty()) mfgunlock::ui::Notice(("XMX could not start, so NVIDIA's generator is producing the frames: "+xmx_report.failure).c_str());
     else if(xmx_failed) mfgunlock::ui::Notice(("XMX failed, so no frames are being generated until the game restarts. Select another method if this repeats: "+xmx_report.failure).c_str());
@@ -2906,7 +2912,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
         "Lets NVIDIA's native scheduler choose the generated-frame count. Requires D3D12, driver 595.41 or newer, DLSS-G 310.9.1/310.9.16 and Streamline 2.14.1/2.14.16. Star Wars Outlaws is kept on fixed/game-controlled MFG because its integration breaks on the Dynamic path. Toggle Frame Generation off/on after changing it.");
     ImGui::TableNextColumn();
     const bool block_dynamic_enable =
-        dynamic_game_blocked || (dynamic_hard_unavailable && !dynamic_mfg);
+        xmx_selected || dynamic_game_blocked || (dynamic_hard_unavailable && !dynamic_mfg);
     if (block_dynamic_enable) ImGui::BeginDisabled();
     if (ImGui::Checkbox("##dynamic_mfg", &dynamic_mfg)) {
       mfgunlock::framecount::g_dynamic_mfg_enabled.store(
@@ -2916,6 +2922,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
                                 dynamic_mfg ? 1 : 0);
     }
     if (block_dynamic_enable) ImGui::EndDisabled();
+    if (xmx_selected) ImGui::TextDisabled("Not available with XMX.");
 
     if (dynamic_mfg) {
       int dynamic_target = static_cast<int>(
@@ -3343,8 +3350,10 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   }
 
   } // Latency details
-  if (page == UiPage::Quality && xmx_running && !xmx_failed)
-    mfgunlock::ui::Description("XMX mode: Intel's model generates the frames, so these DLSS-G quality settings may not apply to them.");
+  // 1.8: these change NVIDIA's generator, which does not run under XMX. DLSS
+  // presets stay: they belong to the upscaler.
+  if (page == UiPage::Quality && xmx_selected)
+    mfgunlock::ui::Description("XMX selected: settings for NVIDIA's generator are locked. The DLSS presets still apply.");
   if (page == UiPage::Quality) {
     mfgunlock::ui::Section("Image quality","Choose a stable quality profile. Changes marked for restart are saved for the next launch.");
     mfgunlock::ui::Card quality_card("##dlssg_quality_card");
@@ -3475,6 +3484,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
                                 "HDRCompatibilityMode", hdr_mode);
     }
 
+    ImGui::BeginDisabled(xmx_selected);
     ImGui::TableNextRow();
     ImGui::TableNextColumn();
     SettingLabel(
@@ -3536,6 +3546,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
         ImGui::TextDisabled("Saved for next launch; restart the game.");
       }
     }
+    ImGui::EndDisabled();
     ImGui::EndTable();
   }
   if (page == UiPage::Quality &&
@@ -3577,6 +3588,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     HelpMarker(
         "Controls the maximum generated-frame count advertised to the game. Toggle Frame Generation off/on if the game's selector does not refresh.");
 
+    ImGui::BeginDisabled(xmx_selected);
     bool temporal =
         g_configured_temporal_fix.load(std::memory_order_relaxed);
     if (ImGui::Checkbox("Temporal midpoint fix", &temporal)) {
@@ -3601,6 +3613,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     HelpMarker(
         "Uses the full validated motion-vector/inpaint framework path when an exact provider match exists. Otherwise the addon fails closed to its compatible fallback. Requires restart.");
 
+    ImGui::EndDisabled();
     bool flip_off =
         g_configured_force_flip_meter_off.load(std::memory_order_relaxed);
     if (ImGui::Checkbox("Legacy software flip pacing", &flip_off)) {
@@ -3631,8 +3644,10 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
 
     ImGui::Spacing();
     ImGui::TextDisabled("IMAGE QUALITY COMPATIBILITY");
+    ImGui::BeginDisabled(xmx_selected);
     DrawAdvancedQualityControls(
         g_configured_adaptive_quality.load(std::memory_order_relaxed));
+    ImGui::EndDisabled();
   }
   }
 
@@ -3647,10 +3662,12 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     }
     mfgunlock::ui::Tooltip("Lets an old plugin's frame limit be raised. Off by default.");
     bool rtx50=g_rtx50_quality_fixes.load(std::memory_order_relaxed);
+    ImGui::BeginDisabled(xmx_selected);
     if (ImGui::Checkbox("RTX 50 quality fixes",&rtx50)) {
       g_rtx50_quality_fixes.store(rtx50,std::memory_order_relaxed);
       reshade::set_config_value(nullptr, kConfigSection, "Rtx50QualityFixes", rtx50 ? 1 : 0);
     }
+    ImGui::EndDisabled();
     mfgunlock::ui::Tooltip("Applies the validated quality fixes on RTX 50 cards too. Off by default.");
   }
   if (page == UiPage::Support) {

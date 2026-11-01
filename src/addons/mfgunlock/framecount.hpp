@@ -152,6 +152,9 @@ inline std::atomic<unsigned long long> g_quality_tag_lock_contentions{0};
 // this addon only requests eDynamic after GetState explicitly reports support.
 // A target of zero asks NVIDIA to follow the active display refresh rate.
 inline std::atomic_bool g_dynamic_mfg_enabled{false};
+// 1.8: XMX does not generate under eDynamic, so a game's request becomes a fixed one.
+inline std::atomic_bool g_game_dynamic_blocked{false};
+inline std::atomic_bool g_game_dynamic_replaced{false};
 inline std::atomic<unsigned int> g_dynamic_target_fps{0};
 inline std::atomic_bool g_dynamic_d3d12{false};
 inline std::atomic<qualityguard::FormatApi> g_format_api{qualityguard::FormatApi::kUnknown};
@@ -2018,6 +2021,17 @@ inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
   const auto real = g_real_set_options.load(std::memory_order_acquire);
   if (real == nullptr)
     return sl::Result::eErrorNotInitialized;
+  if (options.mode == sl::DLSSGMode::eDynamic &&
+      g_game_dynamic_blocked.load(std::memory_order_relaxed)) {
+    // eDynamic exists only in the current struct version, so this copy is complete.
+    sl::DLSSGOptions fixed = options;
+    fixed.mode = sl::DLSSGMode::eOn;
+    fixed.numFramesToGenerate = (std::max)(fixed.numFramesToGenerate, 1u);
+    if (!g_game_dynamic_replaced.exchange(true, std::memory_order_relaxed))
+      reshade::log::message(reshade::log::level::info,
+                            "mfgunlock: the game asked for Dynamic MFG, which XMX does not support; using a fixed multiplier.");
+    return HookedSetOptions(viewport, fixed);
+  }
   inputdiag::ObserveOptions(static_cast<uint32_t>(viewport), options, false);
   if (!g_addon_enabled.load(std::memory_order_relaxed))
     return real(viewport, options);
