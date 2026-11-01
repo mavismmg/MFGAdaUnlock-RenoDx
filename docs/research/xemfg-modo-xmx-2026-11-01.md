@@ -103,3 +103,36 @@ Sem suporte a XMX, o XeFG original recusa mais de 2x com o modelo 18.
 - **Qualidade em 2x:** comparar o modelo 18 com o quadro `t=1/2` do modelo 16. A chave `[XeFG] XeFGStock2xModel=1`, desligada por padrão, liga a rota 2x nativa que já existia. Exige reiniciar o jogo, limita a 2x e fica fora do porte. Falta testar em jogo, inclusive para saber se melhora a imagem.
 - **Qualidade em 3x a 6x: descartado.** O modelo 18 só gera o quadro do meio, e repeti-lo geraria quadros nas posições erradas. O código já proíbe isso em `backend.cpp`. Um quadro por fluxo, que citei antes, não existe nessa família de modelos sem XMX.
 - **Desempenho:** o modelo 17 também não é um candidato mais leve, porque é o 2x para XMX. Sem ajuste público, só resta procurar a resolução interna dentro do modelo. É o item mais incerto.
+
+## Teste de campo: Crimson Desert, 2026-11-01
+
+RTX 4070 SUPER, DLSS Qualidade, uma captura PresentMon de 30 s por caso, mesmo trajeto repetido à mão. O Cyberpunk 2077 foi pulado por decisão do usuário, então nada aqui foi visto em um segundo jogo. FPS base e exibido do XMX e do DLSS-G vêm da estimativa do PresentMon, e a latência pode não ser medida igual entre as rotas.
+
+| Resolução | Caso | Exibido | Base | Latência média | p99 entre quadros | Intervalos grandes |
+|---|---|---|---|---|---|---|
+| 1440p | `off` | 44 | 44 | 45 ms | | 0 |
+| 1440p | `xefg2x-18` | 78 | 39 | 47 ms | 17,8 ms | 3 |
+| 1440p | `xefg2x-16` | 81 | 41 | 54 ms | 14,5 ms | 1 |
+| 1440p | `xmx2x` | 76 | 38 | 44 ms | 17,4 ms | 3 |
+| 1440p | `dlssg4x` | 136 | 34 | 43 ms | 10,3 ms | 8 |
+| 1440p | `xefg4x` | 141 | 35 | 64 ms | 9,0 ms | 4 |
+| 1440p | `xmx4x` | 139 | 35 | 42 ms | 10,5 ms | 6 |
+| 1440p | `xefg6x` | 175 | 29 | 75 ms | 8,1 ms | 4 |
+| 1440p | `xmx6x` | 189 | 32 | 42 ms | 7,8 ms | 18 |
+| 4K DLDSR | `off` | 23 | 23 | 91 ms | 48,3 ms | 0 |
+| 4K DLDSR | `dlssg4x` | 73 | 18 | 80 ms | 17,8 ms | 8 |
+| 4K DLDSR | `xefg4x` | 71 | 18 | 125 ms | 18,2 ms | 2 |
+| 4K DLDSR | `xmx4x` | 69 | 17 | 80 ms | 20,4 ms | 6 |
+
+O que o usuário viu:
+
+- **18 contra 16 em 2x:** o 18 ficou melhor no HUD, menos borrado, e levemente melhor em artefatos.
+- **`xmx2x`:** imagem um pouco melhor que a do `xefg2x-16`, que usa o mesmo modelo. Causa desconhecida.
+- **`dlssg4x`:** HUD muito bom, muito artefato e flicker neste jogo.
+- **Blur em movimento:** percebido no XMX, no DLSS-G e no XeMFG, então não é do XMX. Causa desconhecida.
+- **`xefg6x`:** HUD e artefatos pioram bastante em relação ao 4x.
+- **`xmx6x`:** imagem parecida com a do `xefg6x`, input muito melhor.
+- **Robustez do XMX:** Alt+Tab e troca de resolução passaram. O log confirma o novo contexto em 2560x1440.
+- **Bug achado no teste:** `XeFGStock2xModel` pedia 5 quadros e o `Init` falhava com -4. Corrigido em c4d3894.
+
+Limitações: a captura do `xefg2x-18` rodou em `Hardware Composed: Independent Flip`, e as outras em `Hardware: Independent Flip`, por isso esse par pede repetição. Faltam a imagem do `xmx4x`, sem comentário do usuário, e a comparação de custo em GPU, porque o valor do 18 não é confiável.

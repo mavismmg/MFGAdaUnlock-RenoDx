@@ -17,7 +17,7 @@ Status: `pendente`, `em andamento`, `feito`, `adiado`. **[você]** precisa de jo
 
 | # | Tarefa | Status |
 |---|---|---|
-| 0.1 | **[você]** Roteiro PresentMon: mesma cena, 2 jogos, 1440p e 4K, 2x/4x/6x, geração ligada e desligada | pendente |
+| 0.1 | **[você]** Roteiro PresentMon: mesma cena, 2 jogos, 1440p e 4K, 2x/4x/6x, geração ligada e desligada | feito só no Crimson Desert: `docs/research/xemfg-modo-xmx-2026-11-01.md` |
 | 0.2 | Custo de GPU por passe e VRAM, com o trace atual, ampliado se precisar | pendente |
 | 0.3 | **[você]** Capturas de referência: movimento rápido, HUD, geometria fina | pendente |
 
@@ -58,7 +58,7 @@ Referência: `realdody/dlssg-to-xefg-xmx`, que chama a API interna do XeFG (`Ini
 | # | Tarefa | Status |
 |---|---|---|
 | D.1 | Relatório: rota direta contra a atual em compatibilidade, pacing, latência e perdas | feito: `docs/research/xemfg-modo-xmx-2026-11-01.md` |
-| D.2 | Protótipo isolado, escrito do zero | em andamento: gerador de 2x a 6x funcionando no Streamline Sample 2.14.16 e 2.9.0, atrás de `[DLSSG] XmxGenerator=1`; falta teste em jogo |
+| D.2 | Protótipo isolado, escrito do zero | em andamento: gerador de 2x a 6x funcionando no Streamline Sample 2.14.16 e 2.9.0, atrás de `[DLSSG] XmxGenerator=1`; validado em campo no Crimson Desert, Cyberpunk 2077 pulado; resultados no relatório |
 | D.3 | Seletor de modo no painel e no INI: DLSS-G, XeMFG (CUDA), XMX; o padrão não muda. O painel precisa dizer qual gerador está ativo: no XMX, quem gera é o XeFG, não a NVIDIA | pendente |
 
 ## Bloco E — Interface do XeMFG (1.8)
