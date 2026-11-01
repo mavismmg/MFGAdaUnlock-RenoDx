@@ -4728,7 +4728,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
 
   }
 
-  mfgunlock::ui::Footer("MFG Unlock | 1.7.2");
+  mfgunlock::ui::Footer("MFG Unlock | 1.8.0");
   ImGui::TextDisabled(
       "Changes marked for restart keep the current session unchanged.");
 }

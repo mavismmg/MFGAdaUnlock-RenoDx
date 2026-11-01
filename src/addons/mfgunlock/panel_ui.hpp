@@ -188,9 +188,9 @@ inline void BackendSelector() {
   const auto selected=backend::Read(); const auto mode=backend::ReadMode(); int choice=int(mode);
   Setting("##backend_selection","Frame generation method","NVIDIA DLSS-G: NVIDIA's generator.\n"
       "Intel XeMFG (CUDA): Intel's model on NVIDIA Tensor Cores, with Intel's presentation.\n"
-      "XeFG via DLSS-G (XMX): Intel's model in DLSS-G's presentation. The game still reports DLSS-G, but Intel's model generates the frames. Experimental; needs Intel's files in the game folder.\n"
+      "XeMFG via DLSS-G (XMX): Intel's model in DLSS-G's presentation. The game still reports DLSS-G, but Intel's model generates the frames. Experimental; needs Intel's files in the game folder.\n"
       "Requires a game restart.",[&] {
-    if(ImGui::Combo("##backend",&choice,"NVIDIA DLSS-G\0Intel XeMFG (CUDA)\0XeFG via DLSS-G (XMX)\0"))
+    if(ImGui::Combo("##backend",&choice,"NVIDIA DLSS-G\0Intel XeMFG (CUDA)\0XeMFG via DLSS-G (XMX)\0"))
       saveFailed=!backend::SelectMode(backend::Mode(choice));
   });
   if(saveFailed) Notice("Backend change was not saved. Check write access to the game folder.");
