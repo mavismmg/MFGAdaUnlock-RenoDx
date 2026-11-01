@@ -73,6 +73,16 @@ O projeto de referência é GPLv3 e o nosso é MIT. Não copiamos código nem tr
 - **`Execute(contexto, lista de comandos, parâmetros)`:** antes do `Init`, retorna `-3`. Dois quadros de `0x100` bytes, em `+0x18` e `+0x118`, cada um com quatro recursos de `0x18` bytes seguidos de `0xA0` bytes de dados. As saídas ficam em `+0x230` (ponteiros) e `+0x240` (quantidade). `+0x248`, `+0x250`, `+0x260` e `+0x264` são opções, sem papel confirmado ainda.
 - **Ainda falta:** a ordem dos quatro recursos e dos dados, confirmada só em execução, e repetir a análise na versão 1.3.4, que não temos aqui.
 
+## Sonda em execução (2026-11-01)
+
+`[DLSSG] XmxProbe=1` no Streamline Sample, nas versões 2.14.16 e 2.9.0. A geração da NVIDIA continuou funcionando nas duas.
+
+- **Fábrica confirmada:** `0x1853B0` devolve um invólucro. A palavra `[0]` vale `842094660`, e a `[1]` aponta para um objeto cujo vtable é o do `XefgContext` (RVA `0xF45D48`).
+- **Vários módulos:** o processo mapeia até três `nvngx_dlssg` (pasta do jogo, cópia em `files` e DriverStore). Cada um precisa de seu próprio hook.
+- **Hook no `CreateFeature` da NVIDIA:** faz o módulo falhar com `PlatformError` (`0xBAD00002`). Só que isso vale para o módulo original; não sabemos o efeito quando o nosso código substitui a função.
+- **Avaliação observada, 1280x720:** `Backbuffer` e `HUDLess` em formato 87; `Depth` em 44; `MVecs` em 34; `OutputInterpolated` e `OutputReal` em formato 87. Em 2x, `MultiFrameIndex=1` e `MultiFrameCount=1`; `Reset=1` no primeiro quadro.
+- **Ainda não exercitado:** multiquadro neste caminho, porque o exemplo rodou em 2x.
+
 ## Ajustes de qualidade e desempenho
 
 O SDK público não tem preset de qualidade nem resolução interna. Só há `SetSceneChangeThreshold` e os genéricos `SetParameterP`/`GetParameterP`, cujos parâmetros ainda não conhecemos.

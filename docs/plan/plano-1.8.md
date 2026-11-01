@@ -58,7 +58,7 @@ Referência: `realdody/dlssg-to-xefg-xmx`, que chama a API interna do XeFG (`Ini
 | # | Tarefa | Status |
 |---|---|---|
 | D.1 | Relatório: rota direta contra a atual em compatibilidade, pacing, latência e perdas | feito: `docs/research/xemfg-modo-xmx-2026-11-01.md` |
-| D.2 | Protótipo isolado, escrito do zero | em andamento: análise da 1.3.1 feita; sonda `[DLSSG] XmxProbe=1` pronta, sem execução. O gerador só começa depois do resultado dela |
+| D.2 | Protótipo isolado, escrito do zero | em andamento: sonda validada no Streamline Sample 2.14.16 e 2.9.0; falta o gerador |
 | D.3 | Seletor de modo no painel e no INI: DLSS-G, XeMFG (CUDA), XMX; o padrão não muda | pendente |
 
 ## Bloco E — Interface do XeMFG (1.8)
@@ -83,7 +83,7 @@ Regra de E e F: nenhuma chave de INI muda de nome ou de padrão.
 
 ## Fora deste plano
 
-Hotfix 1.7.3 do Dying Light 2, tratado à parte. O log da 1.7.2 mostra o jogo chamando `ResizeBuffers(1x1)` e liberando o swapchain antes do primeiro frame, sem recusa de interface.
+Hotfix 1.7.3 do Dying Light 2, tratado à parte. O log da 1.7.2 mostra o jogo chamando `ResizeBuffers(1x1)` e liberando o swapchain antes do primeiro frame, sem recusa de interface. A mesma sequência não reproduz o crash no teste `xemfg_native_startup_teardown`.
 
 ## Validação
 

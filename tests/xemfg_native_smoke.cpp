@@ -767,6 +767,28 @@ int main(int argc,char** argv) {
     }
     ComPtr<IDXGISwapChain4> chain; Check(base.As(&chain),"chain4"); base.Reset();
     mfgunlock::xemfg::native::Status bs; bridgeStatus(&bs,sizeof(bs));
+    // Dying Light 2 (log of 1.7.2): before any Present the game resizes, takes the
+    // buffers, resizes to 1x1, releases the chain and closes. Here the process goes on
+    // to create a new chain, in case that is what the game does next.
+    if(flag("--startup-teardown")) {
+      for(unsigned round=0;round<2;++round) {
+        Check(chain->ResizeBuffers(0,1920,1080,DXGI_FORMAT_UNKNOWN,desc.Flags),"startup resize");
+        for(UINT i=0;i<desc.BufferCount;++i) { ComPtr<ID3D12Resource> buffer; Check(chain->GetBuffer(i,IID_PPV_ARGS(&buffer)),"startup buffer"); }
+        Sleep(280);
+        Check(chain->ResizeBuffers(0,1,1,DXGI_FORMAT_UNKNOWN,desc.Flags),"startup resize to 1x1");
+        chain.Reset();
+        mfgunlock::xemfg::Status released; modelStatus(&released,sizeof(released));
+        Require(released.contexts==0,"released startup chain kept an SDK context");
+        Check(CreateTestSwapchain(legacyFactory,factory.Get(),queue.Get(),hwnd,desc,nullptr,&base),"startup recreation");
+        Check(base.As(&chain),"startup chain4"); base.Reset();
+      }
+      for(unsigned i=0;i<8;++i) Check(chain->Present(0,0),"Present after startup teardown");
+      chain.Reset();
+      DestroyWindow(hwnd); Require(Import<PFun_slShutdown*>(fixture,"slShutdown")()==sl::Result::eOk,"startup teardown shutdown");
+      Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"startup teardown flush");
+      std::cout<<"PASS: 1x1 resize, release and recreation before the first Present"<<std::endl;
+      return 0;
+    }
     if(legacyFactory && !retainNativeOutput) {
       // An integration the bridge cannot own (one output at a time; every
       // flip-model format is supported since plan 4.4) must still return the

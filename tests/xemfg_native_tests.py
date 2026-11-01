@@ -30,6 +30,7 @@ ap.add_argument('--stall-trace',action='store_true')
 ap.add_argument('--queue-proxy',action='store_true')
 ap.add_argument('--parallel-factory',action='store_true')
 ap.add_argument('--foreign-refs',action='store_true')
+ap.add_argument('--startup-teardown',action='store_true')
 ap.add_argument('--retained-output',action='store_true')
 ap.add_argument('--secondary-viewport',action='store_true')
 ap.add_argument('--normal-depth',action='store_true')
@@ -154,7 +155,7 @@ if args.reframework: flags+=['--ref-'+args.reframework]
 if args.steam_observer: flags+=['--steam-observer']
 if args.stale_input: flags+=['--stale-input']
 if args.active_support: flags+=['--active-support']
-for name in ('game_vsync','legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output','native_game_xefg','ffx_adapter','dlss_sr_adapter','dlss_sr_default_off','duplicate_tags','reserved_state','hud_srgb','hud_typeless','display_cap','scrgb_hudless','game_xefg_probe','ffx_with_streamline','ffx_with_reflex','ffx_with_dlssg','exclusive_transition','exclusive_first','dlss_sr_pipelined','dlss_sr_double','hdr10','exclusive_borderless','exclusive_borderless_first','exclusive_borderless_create'):
+for name in ('game_vsync','legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','startup_teardown','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output','native_game_xefg','ffx_adapter','dlss_sr_adapter','dlss_sr_default_off','duplicate_tags','reserved_state','hud_srgb','hud_typeless','display_cap','scrgb_hudless','game_xefg_probe','ffx_with_streamline','ffx_with_reflex','ffx_with_dlssg','exclusive_transition','exclusive_first','dlss_sr_pipelined','dlss_sr_double','hdr10','exclusive_borderless','exclusive_borderless_first','exclusive_borderless_create'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
@@ -169,6 +170,9 @@ if args.learned_depth:
     (d/'MFGAdaUnlock-XeMFG.log').replace(d/'MFGAdaUnlock-XeMFG.probe.log')
     flags+=['--normal-depth']
 result=subprocess.run([str(d/executable_name),str(args.multiplier),*flags],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)
+if args.startup_teardown:
+    print(result.stdout,result.stderr,'exit',hex(result.returncode&0xffffffff))
+    raise SystemExit(0 if result.returncode==0 and 'PASS: 1x1 resize' in result.stdout else 1)
 prefs=configparser.ConfigParser(); prefs.read(d/'MFGAdaUnlock.ini',encoding='ascii')
 events=[json.loads(line) for line in (d/'MFGAdaUnlock-XeMFG.log').read_text(encoding='utf-8').splitlines()] if (d/'MFGAdaUnlock-XeMFG.log').exists() else []
 if args.dlss_sr_default_off:
