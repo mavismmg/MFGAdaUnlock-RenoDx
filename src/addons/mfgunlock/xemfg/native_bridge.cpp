@@ -278,7 +278,10 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   xess_mod::WriteLog("native_latency_binding",std::string("\"output\":\"")+(nativeReflex?"Reflex":"XeLL")+
       "\",\"external_profile\":"+(nativeReflex?"true":"false")+",\"result\":"+std::to_string(latencyResult));
   xefg_swapchain_d3d12_init_params_t init{};
-  init.maxInterpolatedFrames=5;
+  // Intel's own model refuses more than one generated frame (XeFGStock2xModel).
+  xemfg::Status model{};
+  const bool stock2x=s.multiplier.load()==2 && TryModelStatus(model) && model.model==0;
+  init.maxInterpolatedFrames=stock2x?1:5;
   init.initFlags=(o->invert?XEFG_SWAPCHAIN_INIT_FLAG_INVERTED_DEPTH:0)
       |(o->jitter && !o->dejitter?XEFG_SWAPCHAIN_INIT_FLAG_JITTERED_MV:0);
   init.uiMode=XEFG_SWAPCHAIN_UI_MODE_AUTO;
