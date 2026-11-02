@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 #include "backend_selection.hpp"
+#include "xmx_policy.hpp"
 
 namespace mfgunlock::xmx::generator {
 using Microsoft::WRL::ComPtr;
@@ -28,7 +29,6 @@ constexpr uintptr_t kFactoryRva = 0x1853B0;
 constexpr uintptr_t kContextVtableRva = 0xF45D48;
 constexpr uintptr_t kInitRva = 0x1871C0;
 constexpr uintptr_t kExecuteRva = 0x185800;
-constexpr uintptr_t kDestroyRva = 0x1874C0;  // for the size changes the next step handles
 constexpr auto kBackbufferState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 constexpr auto kInputState = D3D12_RESOURCE_STATE_COPY_DEST;
 constexpr auto kOutputState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
@@ -93,8 +93,12 @@ struct State {
   std::array<Copies, 2> frames;
   uint32_t current{};
   std::array<ComPtr<ID3D12Resource>, kMaxFrames> outputs;
-  // Earlier contexts and their resources may still be in flight; a size change is rare.
-  std::vector<ComPtr<ID3D12Resource>> retired;
+  // Resources replaced while earlier commands may still be using them.
+  policy::RetireQueue<ComPtr<ID3D12Resource>> retired;
+  uint64_t pairs{};
+  uint64_t lastCaptureMs{};
+  bool lastGenerated{};
+  uint32_t contexts{};
   uint32_t maxFrames{1};
   D3D12_RESOURCE_DESC outputDesc{};
   bool published{};
@@ -118,12 +122,47 @@ inline void Fail(const std::string& reason) {
   Log("failed: " + reason);
 }
 inline std::atomic_bool g_preflight_passed{false};
+inline std::atomic<int> g_hooks_installed{0}, g_hooks_failed{0};
+inline std::atomic<uint64_t> g_last_evaluate_tick{0};
+inline std::atomic<int> g_idle{0};
+inline std::atomic<uint32_t> g_idle_logged{0};
+inline std::atomic<uint32_t> g_frames_limit{0};  // the model's limit once a game asks for more
+// One log line per reason, however often the state flips.
+inline void NoteIdle(policy::Idle idle) {
+  g_idle.store(static_cast<int>(idle), std::memory_order_relaxed);
+  if (idle == policy::Idle::None) return;
+  const uint32_t bit = 1u << static_cast<int>(idle);
+  if ((g_idle_logged.fetch_or(bit, std::memory_order_relaxed) & bit) == 0)
+    Log(std::string("not generating: ") + policy::IdleText(idle));
+}
 // hooked: NVIDIA's generation is gone for this process, whatever happens next.
-struct Report { bool generating{}; bool hooked{}; std::string failure; };
+// evaluating: DLSS-G is calling the generator, so a game that stops is pausing it.
+struct Report {
+  bool generating{};
+  bool hooked{};
+  std::string failure;
+  bool evaluating{};
+  policy::Idle idle{policy::Idle::None};
+  bool partiallyHooked{};
+  uint32_t framesLimit{};
+};
 inline Report Snapshot() {
+  const auto now = GetTickCount64();
   const auto tick = g_last_generated_tick.load(std::memory_order_relaxed);
+  const auto evaluated = g_last_evaluate_tick.load(std::memory_order_relaxed);
+  const auto hooks = g_hooks_installed.load(), failed = g_hooks_failed.load();
+  Report report;
+  report.generating = tick != 0 && now - tick < 2000;
+  report.hooked = hooks > 0;
+  report.evaluating = evaluated != 0 && now - evaluated < 2000;
+  report.idle = static_cast<policy::Idle>(g_idle.load(std::memory_order_relaxed));
+  report.partiallyHooked = hooks > 0 && failed > 0;
+  report.framesLimit = g_frames_limit.load(std::memory_order_relaxed);
   std::lock_guard guard(g_failure_lock);
-  return {tick != 0 && GetTickCount64() - tick < 2000, g_preflight_passed.load(), g_failure};
+  report.failure = g_failure;
+  // Only with no hook at all is this a failure to start; one hooked copy still generates.
+  if (report.failure.empty() && hooks == 0 && failed > 0) report.failure = "the hook on NVIDIA's generator could not be installed";
+  return report;
 }
 inline DWORD FileTimestamp(const std::filesystem::path& path) {
   std::ifstream file(path, std::ios::binary);
@@ -238,9 +277,15 @@ inline void Barrier(ID3D12GraphicsCommandList* list, ID3D12Resource* resource, D
   barrier.Transition.StateAfter = to;
   list->ResourceBarrier(1, &barrier);
 }
-// Copies between resources left in their original states.
+// Copies between resources left in their original states. A mismatch would be
+// undefined on the GPU: the target keeps what it had, and the panel says why.
 inline void Copy(ID3D12GraphicsCommandList* list, ID3D12Resource* target, D3D12_RESOURCE_STATES targetState,
                  ID3D12Resource* source, D3D12_RESOURCE_STATES sourceState) {
+  const auto to = target->GetDesc(), from = source->GetDesc();
+  if (!policy::CanCopy(to.Width, to.Height, to.Format, from.Width, from.Height, from.Format)) {
+    NoteIdle(policy::Idle::CopyMismatch);
+    return;
+  }
   Barrier(list, target, targetState, D3D12_RESOURCE_STATE_COPY_DEST);
   Barrier(list, source, sourceState, D3D12_RESOURCE_STATE_COPY_SOURCE);
   list->CopyResource(target, source);
@@ -256,16 +301,20 @@ inline T Value(const NVSDK_NGX_Parameter* params, const char* name, T fallback) 
   T value{};
   return params->Get(name, &value) == NVSDK_NGX_Result_Success ? value : fallback;
 }
-// Each copy has a shape to follow; the old one is released when it changes.
+// Each copy has a shape to follow. The old one may be in a command list still on
+// the GPU (dynamic resolution, a DLSS mode change), so it is retired, not released.
 inline bool Capture(ID3D12Device* device, ID3D12GraphicsCommandList* list, ComPtr<ID3D12Resource>& copy,
                     ID3D12Resource* source, D3D12_RESOURCE_STATES sourceState) {
+  auto& state = Get();
   if (source == nullptr) {
+    if (copy) state.retired.Push(std::move(copy), state.pairs);
     copy.Reset();
     return true;
   }
   const auto desc = source->GetDesc();
   if (!copy || copy->GetDesc().Width != desc.Width || copy->GetDesc().Height != desc.Height ||
       copy->GetDesc().Format != desc.Format) {
+    if (copy) state.retired.Push(std::move(copy), state.pairs);
     copy = Texture(device, desc, kXefgInputState, D3D12_RESOURCE_FLAG_NONE);
     if (!copy) return false;
   }
@@ -288,12 +337,19 @@ inline bool Prepare(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* 
   if (Value<int>(params, "DLSSG.DepthInverted", 0) != 0) flags |= 1u << 0;
   if (Value<int>(params, "DLSSG.MvecJittered", 0) != 0) flags |= 1u << 4;
   const auto width = static_cast<uint32_t>(output.Width);
-  if (state.context != nullptr && state.width == width && state.height == output.Height &&
-      state.format == output.Format && state.flags == flags)
+  ComPtr<ID3D12Device> device;
+  if (FAILED(list->GetDevice(IID_PPV_ARGS(&device)))) return false;
+  const policy::ContextShape wanted{device.Get(), width, output.Height, static_cast<uint32_t>(output.Format), flags};
+  if (state.context != nullptr &&
+      wanted == policy::ContextShape{state.device.Get(), state.width, state.height, static_cast<uint32_t>(state.format), state.flags})
     return true;
+  if (state.contexts >= policy::kMaxContexts) {
+    Fail("the game changed its output size too many times; restart the game");
+    return false;
+  }
   if (state.context != nullptr) {
     const auto retire = [&](ComPtr<ID3D12Resource>& resource) {
-      if (resource) state.retired.push_back(std::move(resource));
+      if (resource) state.retired.Push(std::move(resource), state.pairs);
       resource.Reset();
     };
     for (auto& frame : state.frames) {
@@ -305,9 +361,10 @@ inline bool Prepare(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* 
     }
     for (auto& texture : state.outputs) retire(texture);
     state.context = nullptr;  // its commands may be in flight, so it stays alive
-    state.device.Reset();
+    state.lastGenerated = false;
   }
-  if (FAILED(list->GetDevice(IID_PPV_ARGS(&state.device)))) return false;
+  state.device = device;
+  ++state.contexts;
   if (!LoadContext(state.device.Get())) return false;
   InitParams init{};
   init.width = width;
@@ -321,7 +378,11 @@ inline bool Prepare(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* 
   Log("init " + std::to_string(width) + "x" + std::to_string(output.Height) + " format " +
       std::to_string(static_cast<int>(output.Format)) + " flags " + std::to_string(flags) + " result " + std::to_string(result));
   if (result != 0) {
-    Fail("XeFG initialization returned " + std::to_string(result));
+    // Found out only here: the hook goes in when the module loads, long before the
+    // game's output format exists, so NVIDIA's generator is already gone.
+    Fail(output.Format == DXGI_FORMAT_R16G16B16A16_FLOAT
+             ? "XMX cannot use this game's scRGB HDR output (result " + std::to_string(result) + "); turn HDR off or use XeMFG"
+             : "XeFG initialization returned " + std::to_string(result));
     return false;
   }
   state.outputDesc = output;
@@ -340,22 +401,35 @@ inline bool Generate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
   auto* real = Resource(params, "DLSSG.OutputReal");
   auto* depth = Resource(params, "DLSSG.Depth");
   auto* motion = Resource(params, "DLSSG.MVecs");
-  if (backbuffer == nullptr || interpolated == nullptr || depth == nullptr || motion == nullptr) return false;
-  const auto frameCount = (std::max)(Value<unsigned int>(params, "DLSSG.MultiFrameCount", 1), 1u);
-  const auto frameIndex = std::clamp(Value<unsigned int>(params, "DLSSG.MultiFrameIndex", 1), 1u, frameCount);
+  if (backbuffer == nullptr || interpolated == nullptr || depth == nullptr || motion == nullptr) {
+    NoteIdle(policy::Idle::MissingInputs);
+    return false;
+  }
+  const auto requested = (std::max)(Value<unsigned int>(params, "DLSSG.MultiFrameCount", 1), 1u);
+  const auto requestedIndex = std::clamp(Value<unsigned int>(params, "DLSSG.MultiFrameIndex", 1), 1u, requested);
   if (!Prepare(list, params, interpolated->GetDesc())) {
     state.failed = true;
     return false;
   }
-  if (frameCount > state.maxFrames) {
-    Fail(std::to_string(frameCount) + " generated frames, this context has " + std::to_string(state.maxFrames));
-    state.failed = true;
-    return false;
-  }
+  const auto plan = policy::PlanFrames(requested, requestedIndex, state.maxFrames);
+  const auto frameCount = plan.count, frameIndex = plan.index;
+  if (plan.limited && g_frames_limit.exchange(state.maxFrames) == 0)
+    Log(std::to_string(requested) + " generated frames asked for, this model produces " + std::to_string(state.maxFrames));
   if (real != nullptr) Copy(list, real, kOutputState, backbuffer, kBackbufferState);
+  // Past the model's limit: the last generated frame again, no new work.
+  if (plan.repeat) {
+    if (state.lastGenerated) Copy(list, interpolated, kOutputState, state.outputs[frameIndex - 1].Get(), kOutputState);
+    else Copy(list, interpolated, kOutputState, backbuffer, kBackbufferState);
+    return true;
+  }
   auto* device = state.device.Get();
   // The real frame is captured once per pair; each generated frame only reads it.
-  if (frameIndex == 1) {
+  if (requestedIndex == 1) {
+  state.retired.Collect(++state.pairs);
+  const auto now = GetTickCount64();
+  // After a pause the two real frames show unrelated moments.
+  if (policy::PairIsStale(state.lastCaptureMs, now)) state.frames[state.current].valid = false;
+  state.lastCaptureMs = now;
   state.current ^= 1;
   auto& next = state.frames[state.current];
   if (!Capture(device, list, next.backbuffer, backbuffer, kBackbufferState) ||
@@ -388,7 +462,11 @@ inline bool Generate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
   auto& previous = state.frames[state.current ^ 1];
   // Without a pair the real frame is shown again.
   bool generated = false;
-  if (previous.valid && next.data.reset == 0 && (next.hudless != nullptr) == (previous.hudless != nullptr)) {
+  auto idle = policy::Idle::None;
+  if (!previous.valid) idle = policy::Idle::NoPair;
+  else if (next.data.reset != 0) idle = policy::Idle::GameReset;
+  else if ((next.hudless != nullptr) != (previous.hudless != nullptr)) idle = policy::Idle::HudlessChanged;
+  else {
     ExecuteParams execute{};
     execute.previous = previous.data;
     execute.next = next.data;
@@ -411,15 +489,22 @@ inline bool Generate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
     execute.frameCount = 1;
     const auto result = Guarded(reinterpret_cast<unsigned char*>(state.fg) + kExecuteRva, state.context, list, &execute);
     if (result < 0) {
+      idle = policy::Idle::ExecuteError;
       Log("execute failed: " + std::to_string(result));
-      if (result == -100000) state.failed = true;
+      if (result == -100000) {
+        Fail("XeFG crashed while generating a frame");
+        state.failed = true;
+      }
     } else {
       generated = result == 0;
+      if (!generated) idle = policy::Idle::NoOutput;
       if (generated) g_last_generated_tick.store(GetTickCount64(), std::memory_order_relaxed);
       static std::atomic<int> logged{0};
       if (logged.fetch_add(1) < 4) Log("execute result " + std::to_string(result));
     }
   }
+  state.lastGenerated = generated;
+  NoteIdle(idle);
   if (generated) Copy(list, interpolated, kOutputState, state.outputs[frameIndex - 1].Get(), kOutputState);
   else Copy(list, interpolated, kOutputState, backbuffer, kBackbufferState);
   return true;

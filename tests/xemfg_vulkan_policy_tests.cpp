@@ -63,6 +63,68 @@ int main() {
   CHECK(store.Set(2,10,223));     // an existing entry still updates
   CHECK(store.Get(2,10)==223);
 
+  // Bloodborne keeps its swap chain's structures in read-only memory: the chain
+  // lives on a read-only page here, so any write to it crashes this test.
+  struct GameChain {
+    VkImageFormatListCreateInfo formats;
+    VkSurfaceFullScreenExclusiveInfoEXT exclusive;
+    VkSwapchainCounterCreateInfoEXT tail;
+  };
+  auto* page=static_cast<GameChain*>(VirtualAlloc(nullptr,4096,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
+  CHECK(page!=nullptr);
+  const auto protect=[&](VkFullScreenExclusiveEXT mode,VkStructureType first) {
+    DWORD old{};
+    CHECK(VirtualProtect(page,4096,PAGE_READWRITE,&old));
+    *page={};
+    page->formats.sType=first; page->formats.pNext=&page->exclusive; page->formats.viewFormatCount=7;
+    page->exclusive.sType=VK_STRUCTURE_TYPE_SURFACE_FULL_SCREEN_EXCLUSIVE_INFO_EXT;
+    page->exclusive.pNext=&page->tail; page->exclusive.fullScreenExclusive=mode;
+    page->tail.sType=VK_STRUCTURE_TYPE_SWAPCHAIN_COUNTER_CREATE_INFO_EXT;
+    CHECK(VirtualProtect(page,4096,PAGE_READONLY,&old));
+  };
+  {
+    protect(VK_FULL_SCREEN_EXCLUSIVE_ALLOWED_EXT,VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO);
+    DisallowedChain chain;
+    CHECK(chain.Edit(&page->formats)==DisallowedChain::Outcome::Copied);
+    CHECK(chain.Requested()==VK_FULL_SCREEN_EXCLUSIVE_ALLOWED_EXT);
+    const auto* formats=static_cast<const VkImageFormatListCreateInfo*>(chain.Head());
+    CHECK(formats!=&page->formats && formats->sType==VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO && formats->viewFormatCount==7);
+    const auto* exclusive=static_cast<const VkSurfaceFullScreenExclusiveInfoEXT*>(formats->pNext);
+    CHECK(exclusive!=&page->exclusive && exclusive->fullScreenExclusive==VK_FULL_SCREEN_EXCLUSIVE_DISALLOWED_EXT);
+    CHECK(exclusive->pNext==&page->tail);     // the tail stays the game's
+    CHECK(page->exclusive.fullScreenExclusive==VK_FULL_SCREEN_EXCLUSIVE_ALLOWED_EXT);
+  }
+  {
+    protect(VK_FULL_SCREEN_EXCLUSIVE_DISALLOWED_EXT,VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO);
+    DisallowedChain chain;
+    CHECK(chain.Edit(&page->formats)==DisallowedChain::Outcome::AlreadyDisallowed);
+    CHECK(chain.Head()==nullptr);
+  }
+  {
+    // A structure of unknown size before the request: the game's chain is kept.
+    protect(VK_FULL_SCREEN_EXCLUSIVE_DEFAULT_EXT,VkStructureType(1000999000));
+    DisallowedChain chain;
+    CHECK(chain.Edit(&page->formats)==DisallowedChain::Outcome::UnknownStructure);
+    CHECK(chain.Head()==nullptr && chain.Unknown()==VkStructureType(1000999000));
+  }
+  {
+    // An unknown structure after the request does not matter: it is never copied.
+    protect(VK_FULL_SCREEN_EXCLUSIVE_ALLOWED_EXT,VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO);
+    DWORD old{};
+    CHECK(VirtualProtect(page,4096,PAGE_READWRITE,&old));
+    page->tail.sType=VkStructureType(1000999000);
+    CHECK(VirtualProtect(page,4096,PAGE_READONLY,&old));
+    DisallowedChain chain;
+    CHECK(chain.Edit(&page->formats)==DisallowedChain::Outcome::Copied);
+  }
+  {
+    DisallowedChain chain;
+    CHECK(chain.Edit(nullptr)==DisallowedChain::Outcome::NoRequest);
+    protect(VK_FULL_SCREEN_EXCLUSIVE_ALLOWED_EXT,VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO);
+    CHECK(chain.Edit(&page->tail)==DisallowedChain::Outcome::NoRequest);
+  }
+  VirtualFree(page,0,MEM_RELEASE);
+
   const void* tableA=&store; const void* tableB=&view;
   struct Dispatchable { const void* table; } device{tableA},command{tableA},other{tableB};
   CHECK(DispatchKey(&device)==DispatchKey(&command));

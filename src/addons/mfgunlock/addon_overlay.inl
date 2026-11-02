@@ -1013,9 +1013,9 @@ void DrawLatencyGuardControl() {
   if (ImGui::BeginTable("##latency_guard_control", 2,
                         ImGuiTableFlags_SizingStretchProp)) {
     ImGui::TableSetupColumn("Setting", ImGuiTableColumnFlags_WidthStretch,
-                            0.62f);
+                            0.5f);
     ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthStretch,
-                            0.38f);
+                            0.5f);
     ImGui::TableNextRow();
     ImGui::TableNextColumn();
     SettingLabel(
@@ -1035,8 +1035,8 @@ void DrawLatencyGuardControl() {
         kUiWarning);
     ImGui::TableNextColumn();
     ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::Combo("##latency_guard", &mode, kModes,
-                     static_cast<int>(std::size(kModes)))) {
+    constexpr const char* kGuardLabels[] = {"Off", "Monitor", "Automatic"};
+    if (mfgunlock::ui::Segmented("##latency_guard", mode, kGuardLabels, 3)) {
       mfgunlock::framecount::g_latency_guard_mode.store(
           static_cast<unsigned int>(mode), std::memory_order_relaxed);
       mfgunlock::framecount::g_latency_guard_stable_samples.store(
@@ -2334,8 +2334,25 @@ void DrawLegacyOverlay(reshade::api::effect_runtime* /*runtime*/) {
   ImGui::TextDisabled("Legacy NGX parameter-vtable override disabled; using verified code gates.");
 }
 
+// 1.8.1: the panel's System card. Once a second is plenty for a readout.
+void ObserveDisplay(reshade::api::effect_runtime* runtime) {
+  static ULONGLONG next_sample = 0;
+  const ULONGLONG now = GetTickCount64();
+  if (runtime == nullptr || now < next_sample) return;
+  next_sample = now + 1000;
+  auto& display = mfgunlock::system::g_display;
+  const auto desc = runtime->get_device()->get_resource_desc(runtime->get_current_back_buffer());
+  display.format = static_cast<int>(desc.texture.format);
+  display.windowsHdr = mfgunlock::system::MonitorInHdr(static_cast<HWND>(runtime->get_hwnd()));
+  display.width = desc.texture.width;
+  display.height = desc.texture.height;
+  display.refreshHz = mfgunlock::system::RefreshHz(static_cast<HWND>(runtime->get_hwnd()));
+  display.known = true;
+}
+
 void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   mfgunlock::ui::Theme panel_theme;
+  ObserveDisplay(runtime);
   if (mfgunlock::backend::active != mfgunlock::backend::Kind::DlssG) {
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
     mfgunlock::xemfg::native::Draw();
@@ -2615,11 +2632,25 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   const bool xmx_d3d12=strcmp(RenderApiName(render_api),"Direct3D 12")==0;
   const bool xmx_running=xmx_selected && xmx_report.hooked && xmx_d3d12;
   const bool xmx_failed=xmx_running && !xmx_report.generating && !xmx_report.failure.empty();
+  // Not called at all: the game turned frame generation off, or NGX uses a module without the hook.
+  const char* xmx_waiting=xmx_report.evaluating?"Waiting for frames":"Paused or off in the game";
+  const auto xmx_support_report=[&] {
+    std::string report="MFG Unlock 1.8.1\nmethod=";
+    report+=xmx_selected?"XMX":"DLSS-G";
+    report+=std::string("\nrenderer=")+RenderApiName(render_api)+"\nstatus="+player_state;
+    if(xmx_selected) {
+      report+=std::string("\nxmx_hooked=")+(xmx_report.hooked?"1":"0")+"\nxmx_partial="+(xmx_report.partiallyHooked?"1":"0")
+          +"\nxmx_evaluating="+(xmx_report.evaluating?"1":"0")+"\nxmx_generating="+(xmx_report.generating?"1":"0")
+          +"\nxmx_idle="+mfgunlock::xmx::policy::IdleText(xmx_report.idle)+"\nxmx_failure="+xmx_report.failure
+          +"\nxmx_frames_limit="+std::to_string(xmx_report.framesLimit);
+    }
+    return report+"\n"+mfgunlock::system::Report();
+  };
   mfgunlock::ui::Hero(multiplier_text.c_str(),xmx_running?"XMX":"DLSS-G",RenderApiName(render_api),
-      xmx_failed?"Frame generation stopped":xmx_running && !xmx_report.generating?"Waiting for frames":player_state,
+      xmx_failed?"Frame generation stopped":xmx_running?(xmx_report.generating?"Generating frames":xmx_waiting):player_state,
       xmx_running?xmx_report.generating:mfg_live);
   if(xmx_selected) {
-    mfgunlock::ui::Readout("##xmx_generator","Generator",!xmx_running?"NVIDIA DLSS-G (XMX not started)":xmx_failed?"None (XMX failed)":xmx_report.generating?"Intel XeFG model, in DLSS-G's presentation":"Intel XeFG model - waiting for frames",
+    mfgunlock::ui::Readout("##xmx_generator","Generator",!xmx_running?"NVIDIA DLSS-G (XMX not started)":xmx_failed?"None (XMX failed)":xmx_report.generating?"Intel XeFG model, in DLSS-G's presentation":xmx_report.evaluating?"Intel XeFG model - waiting for frames":"Intel XeFG model - not being called",
         "The XMX mode replaces NVIDIA's generator with Intel's model. Presentation and the game's settings remain DLSS-G's.",xmx_report.generating?mfgunlock::ui::Accent:mfgunlock::ui::Muted);
     if(mfgunlock::framecount::g_game_dynamic_replaced.load(std::memory_order_relaxed))
       mfgunlock::ui::Description("The game asked for Dynamic MFG, which XMX does not support; a fixed multiplier is used.");
@@ -2634,8 +2665,20 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
       if(repair.helperRunning || !repair.message.empty()) mfgunlock::ui::Description(repair.message.c_str());
 #endif
     }
-    else if(xmx_failed) mfgunlock::ui::Notice(("XMX failed, so no frames are being generated until the game restarts. Select another method if this repeats: "+xmx_report.failure).c_str());
+    else if(xmx_failed) {
+      mfgunlock::ui::ProblemCard problem("##xmx_failed","XMX stopped generating",mfgunlock::ui::Danger);
+      ImGui::TextWrapped("No frames are generated until the game restarts. Reason: %s.",xmx_report.failure.c_str());
+      mfgunlock::ui::Description("Select another frame generation method if this repeats.");
+      mfgunlock::ui::SupportActions(xmx_support_report);
+    }
+    else if(xmx_running && !xmx_report.generating) {
+      if(!xmx_report.evaluating) mfgunlock::ui::Description("DLSS-G is not calling the generator. Games do this in menus and cutscenes; otherwise check that Frame Generation is on in the game.");
+      else if(xmx_report.idle!=mfgunlock::xmx::policy::Idle::None) mfgunlock::ui::Description((std::string("Not generating: ")+mfgunlock::xmx::policy::IdleText(xmx_report.idle)+".").c_str());
+    }
+    if(xmx_report.partiallyHooked) mfgunlock::ui::Notice("XMX could not hook every copy of NVIDIA's generator, so NVIDIA's model may still produce some frames.");
+    if(xmx_report.framesLimit!=0) mfgunlock::ui::Notice(("This XMX model produces "+std::to_string(xmx_report.framesLimit)+" generated frame(s) per real frame; higher multipliers repeat it.").c_str());
   }
+  mfgunlock::ui::SessionNotice(xmx_support_report);
   if(dynamic_applied) mfgunlock::ui::Description("Dynamic MFG is choosing the multiplier automatically.");
   if(sleep_status_available && (driver_vsync_active || gsync_active))
     mfgunlock::ui::Description(driver_vsync_active && gsync_active?"Driver VSync + G-SYNC active":driver_vsync_active?"Driver VSync active":"G-SYNC active");
@@ -2669,7 +2712,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
       ImGui::SameLine(); if(ImGui::RadioButton("Runtime information",show_runtime_info)) show_runtime_info=true;
       page=show_runtime_info?UiPage::DlssInfo:UiPage::Support;
     }
-  } else if(const float tab=mfgunlock::ui::TabWidth(4); ImGui::BeginTabBar("##mfg_unlock_pages")) {
+  } else if(const float tab=mfgunlock::ui::TabWidth(4); mfgunlock::ui::BeginTabs("##mfg_unlock_pages")) {
     if(mfgunlock::ui::TabItem("General",tab)) { page=UiPage::General; ImGui::EndTabItem(); }
     if(mfgunlock::ui::TabItem("Quality",tab)) { page=UiPage::Quality; ImGui::EndTabItem(); }
     if(mfgunlock::ui::TabItem("Latency",tab)) { page=UiPage::Latency; ImGui::EndTabItem(); }
@@ -2679,7 +2722,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
       page=show_runtime_info?UiPage::DlssInfo:UiPage::Support;
       ImGui::EndTabItem();
     }
-    ImGui::EndTabBar();
+    mfgunlock::ui::EndTabs();
   }
   if (page == UiPage::DlssInfo) {
     g_vram_ui_heartbeat_ms.store(GetTickCount64(),
@@ -2865,8 +2908,8 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
 #endif
     if (ImGui::BeginTable("##frame_generation_settings", 2,
                         ImGuiTableFlags_SizingStretchProp)) {
-    ImGui::TableSetupColumn("Setting", ImGuiTableColumnFlags_WidthStretch, 0.62f);
-    ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthStretch, 0.38f);
+    ImGui::TableSetupColumn("Setting", ImGuiTableColumnFlags_WidthStretch, 0.5f);
+    ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthStretch, 0.5f);
 
     ImGui::TableNextRow();
     ImGui::TableNextColumn();
@@ -2886,7 +2929,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
             std::memory_order_relaxed));
     int force_choice = force == 0 ? 0 : force - 1;
     constexpr const char* kMultiplierModes[] = {
-        "Game controlled", "2x", "3x", "4x", "5x", "6x"};
+        "Game", "2x", "3x", "4x", "5x", "6x"};
     ImGui::TableNextRow();
     ImGui::TableNextColumn();
     SettingLabel(
@@ -2894,9 +2937,9 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
         "Game controlled preserves the multiplier selected in the game's menu. A fixed value overrides that request when supported. Dynamic MFG takes priority while active.");
     ImGui::TableNextColumn();
     ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::Combo("##frame_multiplier", &force_choice,
-                     kMultiplierModes,
-                     static_cast<int>(std::size(kMultiplierModes)))) {
+    if (mfgunlock::ui::Segmented("##frame_multiplier", force_choice,
+                                 kMultiplierModes,
+                                 static_cast<int>(std::size(kMultiplierModes)))) {
       force = force_choice == 0 ? 0 : force_choice + 1;
       mfgunlock::framecount::g_force_multiplier.store(
           static_cast<unsigned int>(force), std::memory_order_relaxed);
@@ -2922,16 +2965,20 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     ImGui::TableNextColumn();
     const bool block_dynamic_enable =
         xmx_selected || dynamic_game_blocked || (dynamic_hard_unavailable && !dynamic_mfg);
-    if (block_dynamic_enable) ImGui::BeginDisabled();
-    if (ImGui::Checkbox("##dynamic_mfg", &dynamic_mfg)) {
-      mfgunlock::framecount::g_dynamic_mfg_enabled.store(
-          dynamic_mfg, std::memory_order_relaxed);
-      mfgunlock::framecount::NotifyDynamicModeChanged();
-      reshade::set_config_value(nullptr, kConfigSection, "DynamicMFG",
-                                dynamic_mfg ? 1 : 0);
+    if (xmx_selected) {
+      ImGui::AlignTextToFramePadding();
+      ImGui::TextDisabled("Not available with XMX.");
+    } else {
+      if (block_dynamic_enable) ImGui::BeginDisabled();
+      if (ImGui::Checkbox("##dynamic_mfg", &dynamic_mfg)) {
+        mfgunlock::framecount::g_dynamic_mfg_enabled.store(
+            dynamic_mfg, std::memory_order_relaxed);
+        mfgunlock::framecount::NotifyDynamicModeChanged();
+        reshade::set_config_value(nullptr, kConfigSection, "DynamicMFG",
+                                  dynamic_mfg ? 1 : 0);
+      }
+      if (block_dynamic_enable) ImGui::EndDisabled();
     }
-    if (block_dynamic_enable) ImGui::EndDisabled();
-    if (xmx_selected) ImGui::TextDisabled("Not available with XMX.");
 
     if (dynamic_mfg) {
       int dynamic_target = static_cast<int>(
@@ -2985,9 +3032,9 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     if (ImGui::BeginTable("##frame_rate_controls", 2,
                           ImGuiTableFlags_SizingStretchProp)) {
       ImGui::TableSetupColumn("Setting", ImGuiTableColumnFlags_WidthStretch,
-                              0.62f);
+                              0.5f);
       ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthStretch,
-                              0.38f);
+                              0.5f);
       const auto source_cap_state =
           mfgunlock::framecount::internal::ResolveUserSourceCapState();
       const std::string source_cap_summary =
@@ -3368,8 +3415,8 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     mfgunlock::ui::Card quality_card("##dlssg_quality_card");
     if (ImGui::BeginTable("##image_quality_settings", 2,
                         ImGuiTableFlags_SizingStretchProp)) {
-    ImGui::TableSetupColumn("Setting", ImGuiTableColumnFlags_WidthStretch, 0.62f);
-    ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthStretch, 0.38f);
+    ImGui::TableSetupColumn("Setting", ImGuiTableColumnFlags_WidthStretch, 0.5f);
+    ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthStretch, 0.5f);
 
     // 1.6 (plan B): DLSS Super Resolution preset, applied during play.
     {
@@ -3410,7 +3457,9 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
           "Replaces the game's DLSS Super Resolution preset while you play. K is NVIDIA's default for Quality, Balanced and DLAA; M for Performance; L for Ultra Performance; J is similar to K with slightly less ghosting and more flicker. Streamline rebuilds DLSS when the preset changes, so the image resets for one frame. Games that create DLSS through NGX without Streamline use it when they recreate DLSS, which many do only when the output resolution changes or at the next launch. A preset set in the NVIDIA App overrides this one.");
       ImGui::TableNextColumn();
       ImGui::SetNextItemWidth(-1.0f);
-      if (ImGui::Combo("##dlss_sr_preset", &index, kPresets, static_cast<int>(std::size(kPresets)))) {
+      constexpr const char* kShort[] = {"Game", "J", "K", "L", "M"};
+      static_assert(std::size(kShort) == std::size(kPresets));
+      if (mfgunlock::ui::Segmented("##dlss_sr_preset", index, kShort, static_cast<int>(std::size(kShort)))) {
         preset::g_selected.store(kValues[index], std::memory_order_relaxed);
         TryInstallPresetHook();
         reshade::set_config_value(nullptr, kConfigSection, "DlssSuperResolutionPreset",
@@ -3451,7 +3500,9 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
           "Replaces the game's DLSS Ray Reconstruction preset while you play. D is NVIDIA's default transformer model and E a later transformer model; F is the DLSS 4.5 model and needs a recent Ray Reconstruction runtime (an older one uses its default instead). Streamline rebuilds Ray Reconstruction when the preset changes, so the image resets for one frame. Only games that pass Ray Reconstruction presets to Streamline (options version 3) can be changed. A preset set in the NVIDIA App overrides this one.");
       ImGui::TableNextColumn();
       ImGui::SetNextItemWidth(-1.0f);
-      if (ImGui::Combo("##dlss_rr_preset", &index, kPresets, static_cast<int>(std::size(kPresets)))) {
+      constexpr const char* kShort[] = {"Game", "D", "E", "F"};
+      static_assert(std::size(kShort) == std::size(kPresets));
+      if (mfgunlock::ui::Segmented("##dlss_rr_preset", index, kShort, static_cast<int>(std::size(kShort)))) {
         preset::g_rr_selected.store(kValues[index], std::memory_order_relaxed);
         reshade::set_config_value(nullptr, kConfigSection, "DlssRayReconstructionPreset",
                                   static_cast<int>(kValues[index]));
@@ -4728,7 +4779,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
 
   }
 
-  mfgunlock::ui::Footer("MFG Unlock | 1.8.0");
-  ImGui::TextDisabled(
-      "Changes marked for restart keep the current session unchanged.");
+  if (page == UiPage::General)
+    mfgunlock::ui::SystemCard(!sleep_status_available ? nullptr : driver_vsync_active && gsync_active ? "Driver VSync + G-SYNC" : driver_vsync_active ? "Driver VSync" : gsync_active ? "G-SYNC" : "Off", xmx_selected);
+  mfgunlock::ui::Footer("Changes marked for restart keep the current session unchanged.");
 }

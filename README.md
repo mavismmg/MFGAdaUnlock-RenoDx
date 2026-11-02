@@ -1,5 +1,12 @@
 # MFG Unlock
 
+> [!NOTE]
+> ### New in 1.8.1: stability and a new panel
+>
+> Fixes the Vulkan crash reported in Bloodborne, hardens XMX, and redesigns the panel.
+> When something goes wrong, the panel now says why, and **Save support files** gathers
+> what a report needs. See the [1.8.1 release notes](docs/releases/1.8.1.md).
+
 > [!TIP]
 > ### New in 1.8: use XMX whenever the game has frame generation
 >
@@ -13,7 +20,7 @@
 > could be felt on the input.
 >
 > The game's multiplier menu and the Reflex FPS cap work, and so does Alt+Tab. It is
-> still experimental, so **please send your reports**. Select **XeMFG via DLSS-G (XMX)**
+> still experimental, so **please send your reports**. Select **XMX**
 > in the panel and restart the game: [how to use it, and the measurements](#xmx-mode).
 
 > **New in 1.5.0: the XeMFG backend.** One `.addon64` now contains two
@@ -541,7 +548,7 @@ Tested Vulkan games are marked **Vulkan** in the
    [latest release](../../releases/latest) in the ReShade addon location for the
    game (usually the folder with the game executable).
 3. Launch the game, open the ReShade overlay (**Home**), open the **MFG Unlock**
-   panel and set **General → Frame generation method** to **Intel XeMFG (CUDA)**.
+   panel and set **General → Frame generation method** to **XeMFG**.
    Close the game completely and launch it again.
 4. If the panel says the Intel files are missing or a different version, open
    **Diagnostics → Intel runtime files** and select **Install / update files**.
@@ -563,7 +570,7 @@ effective multiplier and whether the model and Tensor acceleration are in use.
 A first launch after installing or updating may compile shaders and stutter;
 restart once before judging smoothness or image quality.
 
-**Removing or switching back:** select **NVIDIA DLSS-G** in the panel and
+**Removing or switching back:** select **DLSS-G** in the panel and
 restart. To remove the Intel files, use the rollback offered by the installer
 helper.
 
@@ -771,7 +778,13 @@ or remove REFramework to confirm.
 
 ### Reporting an XeMFG problem
 
-Attach these files from the game folder:
+Since 1.8.1, the quickest way is **Save support files**. It appears on the card
+when XMX or XeMFG stops, and after a session that may have closed unexpectedly. It
+copies the logs, your settings and a report into a new `MFG-Support-<date>` folder
+beside the game and opens it. Logs may include folder names from your PC, so check
+them before posting publicly.
+
+To attach the files by hand, take these from the game folder:
 
 - `MFGAdaUnlock-XeMFG.log` contains the session header, the input route and
   the reason frame generation was or was not admitted;
@@ -782,6 +795,13 @@ Attach these files from the game folder:
 
 Also mention the game version, GPU and driver, and whether the problem
 appears with the **NVIDIA DLSS-G** backend too.
+
+### The panel's font
+
+ReShade allows one font for its whole interface. Since 1.8.1, on the first launch in each
+game, if ReShade has no custom font and Windows includes Cascadia Mono, the addon sets it
+as ReShade's font for that game. A font you already chose is kept. To go back, clear
+**Font** in ReShade's **Settings** tab; the addon will not set it again.
 
 ## XMX mode
 
@@ -825,11 +845,31 @@ Tested in Crimson Desert and Cyberpunk 2077, on an RTX 4070 SUPER:
 | **Install / update files** from the XMX notice | Works: it replaced a `libxess_fg.dll` of the wrong version in Cyberpunk 2077 |
 | Falling back when Intel's files are wrong | Works: NVIDIA's generator keeps running and the panel says why |
 
+### HDR
+
+| Output | XMX |
+|---|---|
+| SDR (`R8G8B8A8`) | Works |
+| HDR10 (`R10G10B10A2`) | Works |
+| scRGB (`R16G16B16A16_FLOAT`) | **Not tested.** XMX has no conversion for it like the XeMFG backend does |
+
+The **System** card on the **General** page shows which output the game is using. If XMX
+cannot start on scRGB, the panel suggests turning HDR off or using XeMFG. Please report
+any scRGB game you try.
+
+### What the status means
+
+| Status | Meaning |
+|---|---|
+| **Generating frames** | XMX generated a frame in the last 2 seconds |
+| **Waiting for frames** | DLSS-G is calling XMX, but no frame came out; the panel gives the reason |
+| **Paused or off in the game** | DLSS-G is not calling XMX. Games do this in menus and cutscenes, and it is normal if generation returns afterwards |
+| **Frame generation stopped** | XMX failed; a card gives the reason and no frames are generated until the game restarts |
+
 ### Try it and report
 
 1. Install the addon as usual. **Keep DLSS Frame Generation available in the game**.
-2. In the panel, set **General → Frame generation method** to **XeMFG via DLSS-G
-   (XMX)**, and restart the game.
+2. In the panel, set **General → Frame generation method** to **XMX**, and restart the game.
 3. If Intel's files are missing, the panel says so and offers **Install / update
    files**. It installs `libxess_fg.dll` 1.3.1.78, the only version XMX accepts, and
    `libxell.dll`. Restart the game afterwards.
@@ -844,9 +884,10 @@ Tested in Crimson Desert and Cyberpunk 2077, on an RTX 4070 SUPER:
 > worked in Cyberpunk 2077. If the game's selector does nothing, is missing or gets stuck
 > in your game, [please open an issue](../../issues).
 
-Please report the game, the multiplier, your GPU and driver, what the **Backend**
-card showed, and attach `ReShade.log` from the game folder. Reports of games that
-work are as useful as reports of problems.
+Please report the game, the multiplier, your GPU and driver, and what the **Backend**
+card showed. Attach `ReShade.log` from the game folder, or use **Copy report** or **Save
+support files** when the panel offers them. Reports of games that work are as useful as
+reports of problems.
 
 ### Measurements
 

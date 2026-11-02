@@ -23,7 +23,8 @@ int main(int argc,char** argv) {
     Require(policy.retainNativeOutput.value_or(false) && Contains(policy.observerModules,L"gameoverlayrenderer64.dll"),"overlay rule not matched case-insensitively");
     // Observed conventions moved from code (plan 3.4); unknown games rely on learning.
     Require(Resolve(embedded,Context{L"tlou-ii.exe",{}}).depthInverted==false && Resolve(embedded,Context{L"TLOU-II-L.EXE",{}}).depthInverted==false
-        && Resolve(embedded,Context{L"AlanWake2.exe",{}}).depthInverted==false,"observed conventional depth profiles");
+        && Resolve(embedded,Context{L"AlanWake2.exe",{}}).depthInverted==false
+        && Resolve(embedded,Context{L"Darktide.exe",{}}).depthInverted==false,"observed conventional depth profiles");
     Require(Resolve(embedded,Context{L"DS2.exe",{}}).motionJittered==true,"observed jitter profile");
     // AC Black Flag Resynced loses the device on the first Present of a reused
     // retained output; the executable rule wins over the overlay rule.

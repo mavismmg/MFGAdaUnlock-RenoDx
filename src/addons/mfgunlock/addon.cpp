@@ -1172,7 +1172,7 @@ void LoadConfig() {
 extern "C" __declspec(dllexport) constexpr const char* NAME = "MFG Unlock";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
-    "MFG Unlock 1.8.0 - DLSS-G and XeMFG backends";
+    "MFG Unlock 1.8.1 - DLSS-G and XeMFG backends";
 #elif defined(MFGUNLOCK_DUAL_BACKEND)
     "Dual Backend Preview X1 - official 1.4.5 base; DLSS-G and XeMFG via OptiScaler; gameplay validation pending";
 #elif defined(MFGUNLOCK_RELEASE_1_4_5)
@@ -1198,6 +1198,19 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
     case DLL_PROCESS_ATTACH: {
       g_self_module = h_module;
       if (!reshade::register_addon(h_module)) return FALSE;
+      mfgunlock::support::BeginSession(mfgunlock::backend::Directory());
+      {
+        // Read by ReShade when it builds its fonts, after add-ons have loaded.
+        int font_offered = 0;
+        reshade::get_config_value(nullptr, kConfigSection, "PanelFontOffered", font_offered);
+        char current_font[8] = "";
+        size_t current_font_size = sizeof(current_font);
+        const bool has_font = reshade::get_config_value(nullptr, "STYLE", "Font", current_font, &current_font_size) && current_font[0] != 0;
+        std::error_code font_error;
+        if (mfgunlock::support::ShouldApplyPanelFont(font_offered != 0, has_font, std::filesystem::exists(mfgunlock::support::kPanelFontPath, font_error)))
+          reshade::set_config_value(nullptr, "STYLE", "Font", mfgunlock::support::kPanelFontValue);
+        if (font_offered == 0) reshade::set_config_value(nullptr, kConfigSection, "PanelFontOffered", 1);
+      }
       const auto saved_backend = mfgunlock::backend::Read();
       mfgunlock::backend::active = mfgunlock::backend::Effective(saved_backend);
       if (mfgunlock::backend::active != mfgunlock::backend::Kind::DlssG) {
@@ -1300,6 +1313,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       break;
     }
     case DLL_PROCESS_DETACH:
+      mfgunlock::support::EndSession(mfgunlock::backend::Directory());
       // During process termination Windows is already reclaiming every mapped
       // image. Avoid detour transactions and stale provider-memory restores
       // under the loader lock; explicit addon unload still performs cleanup.

@@ -5,10 +5,16 @@
 #ifndef VK_NO_PROTOTYPES
 #define VK_NO_PROTOTYPES
 #endif
+#ifndef VK_USE_PLATFORM_WIN32_KHR
+#define VK_USE_PLATFORM_WIN32_KHR
+#endif
 #include <vulkan/vulkan.h>
 #include <cstdint>
+#include <cstring>
 #include <map>
+#include <memory>
 #include <utility>
+#include <vector>
 
 namespace mfgunlock::xemfg::native::vulkan::policy {
 constexpr bool DepthFormat(VkFormat format) {
@@ -68,6 +74,65 @@ class PrivateDataStore {
     values.erase(values.lower_bound({object,0}),values.upper_bound({object,UINT64_MAX}));
   }
   size_t Size() const { return values.size(); }
+};
+// 1.8.1: the size of each structure Vulkan allows on a swap chain's create info;
+// 0 for any other, whose size cannot be known.
+constexpr size_t SwapchainStructSize(VkStructureType type) {
+  switch(type) {
+    case VK_STRUCTURE_TYPE_DEVICE_GROUP_SWAPCHAIN_CREATE_INFO_KHR: return sizeof(VkDeviceGroupSwapchainCreateInfoKHR);
+    case VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_CONTROL_EXT: return sizeof(VkImageCompressionControlEXT);
+    case VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO: return sizeof(VkImageFormatListCreateInfo);
+    case VK_STRUCTURE_TYPE_SURFACE_FULL_SCREEN_EXCLUSIVE_INFO_EXT: return sizeof(VkSurfaceFullScreenExclusiveInfoEXT);
+    case VK_STRUCTURE_TYPE_SURFACE_FULL_SCREEN_EXCLUSIVE_WIN32_INFO_EXT: return sizeof(VkSurfaceFullScreenExclusiveWin32InfoEXT);
+    case VK_STRUCTURE_TYPE_SWAPCHAIN_COUNTER_CREATE_INFO_EXT: return sizeof(VkSwapchainCounterCreateInfoEXT);
+    case VK_STRUCTURE_TYPE_SWAPCHAIN_DISPLAY_NATIVE_HDR_CREATE_INFO_AMD: return sizeof(VkSwapchainDisplayNativeHdrCreateInfoAMD);
+    case VK_STRUCTURE_TYPE_SWAPCHAIN_LATENCY_CREATE_INFO_NV: return sizeof(VkSwapchainLatencyCreateInfoNV);
+    case VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_BARRIER_CREATE_INFO_NV: return sizeof(VkSwapchainPresentBarrierCreateInfoNV);
+    case VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODES_CREATE_INFO_EXT: return sizeof(VkSwapchainPresentModesCreateInfoEXT);
+    case VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_SCALING_CREATE_INFO_EXT: return sizeof(VkSwapchainPresentScalingCreateInfoEXT);
+    default: return 0;
+  }
+}
+// 1.8.1: asks for a chain disallowed from full-screen exclusive without touching
+// the game's structures, which Vulkan declares const and a game may keep in
+// read-only memory (Bloodborne crashed on the write). Vulkan chains have no way
+// to replace a middle node, so what precedes the request is copied; the tail
+// stays the game's. A preceding structure of unknown size keeps the game's chain.
+class DisallowedChain {
+ public:
+  enum class Outcome { NoRequest,AlreadyDisallowed,Copied,UnknownStructure };
+  Outcome Edit(const void* chain) {
+    const VkBaseInStructure* request{};
+    for(auto* next=static_cast<const VkBaseInStructure*>(chain);next && !request;next=next->pNext) {
+      if(next->sType==VK_STRUCTURE_TYPE_SURFACE_FULL_SCREEN_EXCLUSIVE_INFO_EXT) request=next;
+      else if(!SwapchainStructSize(next->sType) && !unknown) unknown=next->sType;
+    }
+    if(!request) return Outcome::NoRequest;
+    requested=reinterpret_cast<const VkSurfaceFullScreenExclusiveInfoEXT*>(request)->fullScreenExclusive;
+    if(requested==VK_FULL_SCREEN_EXCLUSIVE_DISALLOWED_EXT) return Outcome::AlreadyDisallowed;
+    if(unknown) return Outcome::UnknownStructure;
+    VkBaseOutStructure* last{};
+    for(auto* next=static_cast<const VkBaseInStructure*>(chain);;next=next->pNext) {
+      const size_t size=SwapchainStructSize(next->sType);
+      auto& copy=copies.emplace_back(std::make_unique<std::max_align_t[]>(size/sizeof(std::max_align_t)+1));
+      std::memcpy(copy.get(),next,size);
+      auto* node=reinterpret_cast<VkBaseOutStructure*>(copy.get());
+      if(last) last->pNext=node; else head=node;
+      last=node;
+      if(next==request) {
+        reinterpret_cast<VkSurfaceFullScreenExclusiveInfoEXT*>(node)->fullScreenExclusive=VK_FULL_SCREEN_EXCLUSIVE_DISALLOWED_EXT;
+        return Outcome::Copied;
+      }
+    }
+  }
+  const void* Head() const { return head; }
+  VkFullScreenExclusiveEXT Requested() const { return requested; }
+  VkStructureType Unknown() const { return unknown; }
+ private:
+  std::vector<std::unique_ptr<std::max_align_t[]>> copies;
+  VkBaseOutStructure* head{};
+  VkFullScreenExclusiveEXT requested{};
+  VkStructureType unknown{};
 };
 // The loader's dispatch table pointer, shared by a device and its command
 // buffers (the key Vulkan layers use). It names the device behind a command

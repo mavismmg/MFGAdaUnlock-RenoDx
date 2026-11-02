@@ -142,7 +142,13 @@ public:
     if(owner->scrgb) {
       if(!c) return E_POINTER;
       *c=nullptr;
-      return Setup("GetBuffer",a<owner->scrgbBuffers.size()?owner->scrgbBuffers[a]->QueryInterface(b,c):DXGI_ERROR_INVALID_CALL,a);
+      HRESULT hr=DXGI_ERROR_INVALID_CALL;
+      {
+        // ResizeBuffers rebuilds the list under this lock.
+        std::lock_guard lock(owner->io);
+        if(a<owner->scrgbBuffers.size()) hr=owner->scrgbBuffers[a]->QueryInterface(b,c);
+      }
+      return Setup("GetBuffer",hr,a);
     }
     return Setup("GetBuffer",chain->GetBuffer(a,b,c),a);
   }
@@ -182,9 +188,9 @@ public:
     if(!owner->exclusiveServed) return Setup("GetFullscreenState",chain->GetFullscreenState(a,b));
     if(a) *a=TRUE;
     if(b) {
-      { std::lock_guard lock(owner->io); *b=owner->exclusiveTarget.Get(); }
-      if(*b) (*b)->AddRef();
-      else if(FAILED(chain->GetContainingOutput(b))) *b=nullptr;
+      // Referenced under the lock: SetFullscreenState can release it on another thread.
+      { std::lock_guard lock(owner->io); *b=owner->exclusiveTarget.Get(); if(*b) (*b)->AddRef(); }
+      if(!*b && FAILED(chain->GetContainingOutput(b))) *b=nullptr;
     }
     return S_OK;
   }

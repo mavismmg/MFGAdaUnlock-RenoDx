@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Exercise production wrappers with deterministic providers, without a GPU.
+#include <atomic>
 #include <cstdlib>
 #include <iostream>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 #include "../src/addons/mfgunlock/framecount.hpp"
@@ -306,6 +309,39 @@ int main() {
       {"GetCurrentProcessId", &second, reinterpret_cast<void*>(&Provider)}};
   CHECK(!mfgunlock::hook::Install(GetModuleHandleW(L"kernel32.dll"), hooks, "test"));
   CHECK(first == nullptr && second == reinterpret_cast<void*>(1));
+
+  // The XMX hook: a thread walk that cannot finish patches nothing, the transaction
+  // is closed for the next attempt, and that attempt goes through.
+  {
+    namespace hi = mfgunlock::hook::internal;
+    static int aborted, attached, committed;
+    aborted = attached = committed = 0;
+    const auto real_detours = hi::detours;
+    const auto real_threads = hi::thread_operations;
+    hi::detours.begin = []() -> LONG { return NO_ERROR; };
+    hi::detours.abort = []() -> LONG { ++aborted; return NO_ERROR; };
+    hi::detours.commit = []() -> LONG { ++committed; return NO_ERROR; };
+    hi::detours.update = [](HANDLE) -> LONG { return NO_ERROR; };
+    hi::detours.attach = [](PVOID*, PVOID) -> LONG { ++attached; return NO_ERROR; };
+    hi::thread_operations.snapshot = [](DWORD, DWORD) -> HANDLE {
+      SetLastError(ERROR_ACCESS_DENIED);
+      return INVALID_HANDLE_VALUE;
+    };
+    void* trampoline = reinterpret_cast<void*>(&Provider);
+    CHECK(!mfgunlock::hook::InstallOne(&trampoline, reinterpret_cast<void*>(&Provider)));
+    CHECK(aborted == 1 && attached == 0 && committed == 0);
+    hi::thread_operations = real_threads;
+    CHECK(mfgunlock::hook::InstallOne(&trampoline, reinterpret_cast<void*>(&Provider)));
+    CHECK(aborted == 1 && attached == 1 && committed == 1);
+    // Held by a thread killed at process exit: Uninstall gives up instead of hanging.
+    {
+      std::lock_guard held(hi::transaction_lock);
+      std::atomic<bool> result{true};
+      std::thread([&] { result = mfgunlock::hook::Uninstall({}); }).join();
+      CHECK(!result.load());
+    }
+    hi::detours = real_detours;
+  }
 
   // A failed descriptor restore must retain its backing allocation rather than
   // leave a live descriptor pointing at freed memory.

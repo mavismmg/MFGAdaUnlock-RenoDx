@@ -1084,6 +1084,17 @@ DeviceEditPtr PrepareDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo*
     return PrepareDeviceImpl(physical, info, nullptr);
 }
 
+bool RuntimeFilesFound() noexcept
+{
+    try {
+        HMODULE activeFg = nullptr, activeLl = nullptr;
+        if (xess_mod::ActiveSdkPair(activeFg, activeLl)) return true;
+        const auto bases = xess_runtime_search::ReadBases(xess_runtime_search::ModulePath(single_module::Self()),
+            xess_runtime_search::ModulePath(nullptr));
+        return xess_runtime_search::Find(bases, xess_runtime_search::Order::eVulkan).found != SIZE_MAX;
+    } catch (...) { return false; }
+}
+
 namespace {
 DeviceEditPtr PrepareDeviceImpl(VkPhysicalDevice physical, const VkDeviceCreateInfo* info, const HostedInstance* hosted) noexcept
 {

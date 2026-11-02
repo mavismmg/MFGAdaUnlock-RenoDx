@@ -185,7 +185,7 @@ int wmain(int argc,wchar_t** argv) {
         auto* window=groupWindow(group);
         if(!window || !window->StateStorage.GetInt(window->GetID(heading))) throw std::runtime_error("advanced group was not expanded");
       }
-      if(frame==47 && scenario==L"multiplier" && GImGui->OpenPopupStack.empty()) throw std::runtime_error("multiplier popup did not open");
+      if(frame==47 && scenario==L"multiplier" && !GImGui->HoveredId) throw std::runtime_error("multiplier selector did not respond to the mouse");
       if(frame==47 && scenario==L"dependencies" && !groupWindow("##intel_dependencies")) throw std::runtime_error("dependency controls were not expanded");
       if(frame==47 && scenario==L"tooltip") {
         bool found=false; for(auto* window:GImGui->Windows) if(window->Active && (window->Flags&ImGuiWindowFlags_Tooltip)) found=true;

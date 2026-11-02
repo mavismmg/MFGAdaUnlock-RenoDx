@@ -21,6 +21,7 @@
 
 #include <detours.h>
 
+#include <mutex>
 #include <sstream>
 #include "module_session.hpp"
 #include <tuple>
@@ -52,6 +53,8 @@ struct DetourOperations {
   LONG (WINAPI *detach)(PVOID*, PVOID) = &DetourDetach;
 };
 inline DetourOperations detours{};
+// Detours has one transaction at a time, across threads: a second Begin fails.
+inline std::mutex transaction_lock;
 struct ThreadCoverage {
   std::vector<HANDLE> handles;
   DWORD error = ERROR_SUCCESS;
@@ -119,6 +122,7 @@ inline bool Install(HMODULE module, const std::vector<HookItem>& hooks,
 
   if (!modulesession::Acquire(module)) return false;
   for (const auto& [name, real, replacement] : hooks) *real = reinterpret_cast<void*>(GetProcAddress(module, name));
+  std::lock_guard transaction(internal::transaction_lock);
   if (internal::detours.begin() != NO_ERROR) {
     clear_resolved();
     return false;
@@ -171,8 +175,27 @@ inline bool Install(HMODULE module, const std::vector<HookItem>& hooks,
   return true;
 }
 
+// 1.8.1: one hook whose trampoline is already resolved in `real`, under the same
+// rules: every thread registered, or nothing patched.
+inline bool InstallOne(void** real, void* replacement) {
+  std::lock_guard transaction(internal::transaction_lock);
+  if (internal::detours.begin() != NO_ERROR) return false;
+  auto threads = internal::OpenOtherThreads();
+  bool ok = threads.complete;
+  for (HANDLE h : threads.handles) if (internal::detours.update(h) != NO_ERROR) ok = false;
+  if (internal::detours.update(GetCurrentThread()) != NO_ERROR) ok = false;
+  if (ok) ok = internal::detours.attach(real, replacement) == NO_ERROR;
+  if (ok) ok = internal::detours.commit() == NO_ERROR;
+  else internal::detours.abort();
+  threads.Close();
+  return ok;
+}
+
 // Return success explicitly. Callers must retain trampoline/state on failure.
 inline bool Uninstall(const std::vector<HookItem>& hooks) {
+  // Not a blocking lock: at process exit its owner may already have been killed.
+  std::unique_lock transaction(internal::transaction_lock, std::try_to_lock);
+  if (!transaction.owns_lock()) return false;
   if (internal::detours.begin() != NO_ERROR) return false;
   auto threads = internal::OpenOtherThreads();
   bool ok = threads.complete;

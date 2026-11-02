@@ -192,6 +192,14 @@ __declspec(noinline) VkResult VKAPI_CALL Hook_vkCreateDevice(VkPhysicalDevice ph
     const VkAllocationCallbacks* allocator,VkDevice* output) {
   if(Passed(_ReturnAddress())) return original_vkCreateDevice(physical,info,allocator,output);
   Internal internal;
+  // 1.8.1: without Intel's pair the host can never start, so the game's device and
+  // chains stay exactly as the game asked (the host's own search, wider than the
+  // D3D12 route's: a pair in RTXMFG-XeSS still works here).
+  if(!xess_vulkan::RuntimeFilesFound()) {
+    static std::atomic<bool> logged{};
+    if(!logged.exchange(true)) xess_mod::WriteLog("vk_device_native","\"reason\":\"runtime_not_found\"");
+    return original_vkCreateDevice(physical,info,allocator,output);
+  }
   auto edit=xess_vulkan::PrepareDevice(physical,info);
   VkResult result=original_vkCreateDevice(physical,xess_vulkan::EditedInfo(edit.get(),info),allocator,output);
   if(result!=VK_SUCCESS && edit) {
@@ -263,31 +271,25 @@ __declspec(noinline) VkResult VKAPI_CALL Hook_vkCreateSwapchainKHR(VkDevice devi
   // Full-screen exclusive is disallowed on every chain of the game while the
   // host is on: an exclusive native chain kept the display after the takeover
   // (RDR2 in focus showed its last picture). The mode commands are answered
-  // by the hooks below. The game's structure is restored before returning.
+  // by the hooks below. The game's structures stay untouched (policy::DisallowedChain).
   const VkSwapchainCreateInfoKHR* used=info;
-  VkSurfaceFullScreenExclusiveInfoEXT* exclusive{};
-  VkFullScreenExclusiveEXT requested{};
-  for(auto* next=info?static_cast<const VkBaseInStructure*>(info->pNext):nullptr;next;next=next->pNext)
-    if(next->sType==VK_STRUCTURE_TYPE_SURFACE_FULL_SCREEN_EXCLUSIVE_INFO_EXT)
-      exclusive=reinterpret_cast<VkSurfaceFullScreenExclusiveInfoEXT*>(const_cast<VkBaseInStructure*>(next));
-  if(exclusive) {
-    requested=exclusive->fullScreenExclusive;
-    exclusive->fullScreenExclusive=VK_FULL_SCREEN_EXCLUSIVE_DISALLOWED_EXT;
+  policy::DisallowedChain chain;
+  const auto edit=chain.Edit(info?info->pNext:nullptr);
+  VkSwapchainCreateInfoKHR named{};
+  if(edit==policy::DisallowedChain::Outcome::Copied) { named=*info; named.pNext=chain.Head(); used=&named; }
+  if(edit!=policy::DisallowedChain::Outcome::NoRequest) {
+    const bool kept=edit==policy::DisallowedChain::Outcome::UnknownStructure;
     static std::atomic<int> logged{-1};
-    if(logged.exchange(int(requested))!=int(requested))
-      xess_mod::WriteLog("vk_swapchain_fullscreen_exclusive","\"requested\":"+std::to_string(int(requested))+",\"used\":\"disallowed\"");
+    if(logged.exchange(int(chain.Requested()))!=int(chain.Requested()))
+      xess_mod::WriteLog("vk_swapchain_fullscreen_exclusive","\"requested\":"+std::to_string(int(chain.Requested()))
+          +",\"used\":\""+(kept?"requested":"disallowed")+"\""+(kept?",\"unknown_structure\":"+std::to_string(int(chain.Unknown())):""));
   }
-  struct Restore {
-    VkSurfaceFullScreenExclusiveInfoEXT* exclusive; VkFullScreenExclusiveEXT mode;
-    ~Restore() { if(exclusive) exclusive->fullScreenExclusive=mode; }
-  } restore{exclusive,requested};
   // A game that enables the extension but names no mode (RDR2 in its fullscreen
   // mode) leaves the choice to the driver, which gave its own chain the display
   // for good: the chain is created disallowed explicitly.
-  VkSwapchainCreateInfoKHR named{};
   VkSurfaceFullScreenExclusiveInfoEXT disallowed{VK_STRUCTURE_TYPE_SURFACE_FULL_SCREEN_EXCLUSIVE_INFO_EXT,nullptr,
       VK_FULL_SCREEN_EXCLUSIVE_DISALLOWED_EXT};
-  if(info && !exclusive && exclusiveExtension.load()) {
+  if(info && edit==policy::DisallowedChain::Outcome::NoRequest && exclusiveExtension.load()) {
     named=*info; disallowed.pNext=const_cast<void*>(info->pNext); named.pNext=&disallowed; used=&named;
     static std::atomic<bool> logged{};
     if(!logged.exchange(true)) xess_mod::WriteLog("vk_swapchain_fullscreen_exclusive","\"requested\":\"none\",\"used\":\"disallowed\"");

@@ -57,6 +57,8 @@ class DeviceEdit;
 struct DeviceEditDeleter { void operator()(DeviceEdit*) const noexcept; };
 using DeviceEditPtr = std::unique_ptr<DeviceEdit, DeviceEditDeleter>;
 DeviceEditPtr PrepareDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo* info) noexcept;
+// 1.8.1: Intel's pair is active or LoadRuntime would find its files. Loads nothing.
+bool RuntimeFilesFound() noexcept;
 const VkDeviceCreateInfo* EditedInfo(const DeviceEdit* edit, const VkDeviceCreateInfo* original) noexcept;
 void DeviceCreated(DeviceEditPtr edit, VkDevice device) noexcept;
 void DeviceDestroying(VkDevice device) noexcept;

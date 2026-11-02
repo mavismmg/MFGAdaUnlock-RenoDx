@@ -39,6 +39,12 @@
       "evidence": "R1.11 Streamline constant receipts: depthInverted false (moved from native_game_defaults.hpp)"
     },
     {
+      "id": "darktide-conventional-depth",
+      "match": {"executable": "Darktide.exe"},
+      "depth_inverted": false,
+      "evidence": "2026-11-01 field log, 1.3.819.302: Streamline constants contradicted the inverted default and the session ended about a minute after native_convention_learned inverted_depth false"
+    },
+    {
       "id": "death-stranding-2-jittered-motion",
       "match": {"executable": "DS2.exe"},
       "motion_jittered": true,
