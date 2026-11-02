@@ -344,6 +344,7 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Indiana Jones and the Great Circle | Vulkan | Working | Vulkan not supported on XMX | Experimental (1.7): turn DLSS on (Super Resolution or Ray Reconstruction); the game's Frame Generation switch turns XeMFG on and off. Launch with `+r_allowBlackListedLayers 1` so ReShade can load XMX is not expected to work here: it needs DLSS-G in DX12. |
 | Crimson Desert | DX12 | Working | Working |  |
 | Phantom Blade Zero | DX12 | Maybe | Maybe |  |
+| Grand Theft Auto 5 Enhanced | DX12 | Maybe | Working |  |
 
 **XeMFG CUDA** shows the games tested with the XeMFG backend. **XMX** was tested
 in Crimson Desert and Cyberpunk 2077: **Maybe** means it has not been tested in that
