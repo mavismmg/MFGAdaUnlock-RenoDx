@@ -319,29 +319,29 @@ artifact on a HUD/UI element, switch back to **Native**.
 
 | Game | API | XeMFG CUDA | XMX | Notes |
 |---|---|---|---|---|
-| Resident Evil Requiem | DX12 | Working | Maybe |  |
+| Resident Evil Requiem | DX12 | Working | Working |  |
 | Monster Hunter Wilds | DX12 | Working | Maybe |  |
 | Dragon's Dogma 2 | DX12 | Working | Maybe |  |
-| Onimusha: Way of the Sword | DX12 | Working | Maybe |  |
+| Onimusha: Way of the Sword | DX12 | Working | Working |  |
 | PRAGMATA | DX12 | Working | Maybe |  |
 | Control Resonant | DX12 | Working | Maybe |  |
 | Assassin's Creed IV: Black Flag Resynced | DX12 | Working | Maybe | A built-in profile turns off native-output retention for this game |
 | Cyberpunk 2077 | DX12 | Working | Working | After a game update, run **Install / update files** again (see [below](#the-panel-says-intel-files-are-missing-or-a-different-version)) |
-| The Witcher 3: Wild Hunt (next-gen) | DX12 | Working | Maybe | Turn off the game's **VSync** for correct frame pacing. Fixed in 1.5.3: changing path tracing or other graphics settings with frame generation on no longer loses the graphics device |
+| The Witcher 3: Wild Hunt (next-gen) | DX12 | Working | Working | Turn off the game's **VSync** for correct frame pacing on CUDA. Fixed in 1.5.3: changing path tracing or other graphics settings with frame generation on no longer loses the graphics device |
 | Alan Wake 2 | DX12 | Working | Maybe |  |
 | The Last of Us Part II Remastered | DX12 | Working | Maybe |  |
 | Mafia: The Old Country | DX12 | Working | Maybe |  |
-| Resonance: A Plague Tale Legacy | DX12 | Working | Maybe |  |
+| Resonance: A Plague Tale Legacy | DX12 | Working | Working |  |
 | Death Stranding 2: On the Beach | DX12 | Working | Maybe | Its jittered motion vectors are corrected automatically |
 | Ghostrunner 2 | DX12 | Working | Maybe |  |
 | S.T.A.L.K.E.R. 2: Heart of Chornobyl | DX12 | Working | Maybe | Set the display mode to **Borderless / Windowed Fullscreen** |
 | Warhammer 40,000: Darktide | DX12 | Working | Maybe | Fixed in 1.5.1; on 1.5.0, add `[Adapters] FidelityFX=0` to `MFGAdaUnlock.ini` |
 | Black Myth: Wukong | DX12 | Working | Maybe |  |
-| Kingdom Come: Deliverance II | DX12 | Working | Maybe | With the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) XMX is not expected to work here: it needs DLSS-G in DX12. |
-| Red Dead Redemption 2 | DX12, Vulkan | Working | Maybe | DX12: working with the DLSS-SR input (user report; the game has no native frame generation): turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)). Vulkan (experimental, 1.7): working with DLSS on, in fullscreen, borderless or windowed; no setting needed XMX is not expected to work here: it needs DLSS-G in DX12. |
-| Elden Ring | DX12 | Working | Maybe | With the DLSS-SR input and the EldenRingDLSS addon, offline with Easy Anti-Cheat off; turn on **Force game VSync off** in the panel for correct frame pacing (see [Elden Ring](#elden-ring)) XMX is not expected to work here: it needs DLSS-G in DX12. |
-| Metro Exodus Enhanced Edition | DX12 | Working | Maybe | With the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) XMX is not expected to work here: it needs DLSS-G in DX12. |
-| Indiana Jones and the Great Circle | Vulkan | Working | Maybe | Experimental (1.7): turn DLSS on (Super Resolution or Ray Reconstruction); the game's Frame Generation switch turns XeMFG on and off. Launch with `+r_allowBlackListedLayers 1` so ReShade can load XMX is not expected to work here: it needs DLSS-G in DX12. |
+| Kingdom Come: Deliverance II | DX12 | Working | DLSS-SR still not supported on XMX | With the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) XMX is not expected to work here: it needs DLSS-G in DX12. |
+| Red Dead Redemption 2 | DX12, Vulkan | Working | DLSS-SR still not supported on XMX | DX12: working with the DLSS-SR input (user report; the game has no native frame generation): turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)). Vulkan (experimental, 1.7): working with DLSS on, in fullscreen, borderless or windowed; no setting needed XMX is not expected to work here: it needs DLSS-G in DX12. |
+| Elden Ring | DX12 | Working | DLSS-SR still not supported on XMX | With the DLSS-SR input and the EldenRingDLSS addon, offline with Easy Anti-Cheat off; turn on **Force game VSync off** in the panel for correct frame pacing (see [Elden Ring](#elden-ring)) XMX is not expected to work here: it needs DLSS-G in DX12. |
+| Metro Exodus Enhanced Edition | DX12 | Working | DLSS-SR still not supported on XMX | With the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) XMX is not expected to work here: it needs DLSS-G in DX12. |
+| Indiana Jones and the Great Circle | Vulkan | Working | Vulkan not supported on XMX | Experimental (1.7): turn DLSS on (Super Resolution or Ray Reconstruction); the game's Frame Generation switch turns XeMFG on and off. Launch with `+r_allowBlackListedLayers 1` so ReShade can load XMX is not expected to work here: it needs DLSS-G in DX12. |
 | Crimson Desert | DX12 | Working | Working |  |
 | Phantom Blade Zero | DX12 | Maybe | Maybe |  |
 
