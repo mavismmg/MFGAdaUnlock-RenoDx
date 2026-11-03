@@ -353,6 +353,7 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Phantom Blade Zero | DX12 | Not Working | Working | XMX since 1.8.2 |
 | Dying Light 2 | DX12 | Working | Working | XMX since 1.8.2 |
 | Grand Theft Auto 5 Enhanced | DX12 | Maybe | Working |  |
+| Titans of The Tide | DX12 | Working | Maybe |  |
 
 **XeMFG CUDA** shows the games tested with the XeMFG backend. In the **XMX** column,
 **Maybe** means it has not been tested in that game yet, so
