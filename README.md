@@ -359,6 +359,7 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Hogwarts Legacy | DX12 | Maybe | Working |  |
 | STAR WARS: Galactic Racer | DX12 | Maybe | Working |  |
 | Call of Duty Modern Warfare 4 | DX12 | Maybe | Working |  |
+| The Blood of Dawnwalker | DX12 | Maybe | Working |  |
 
 **XeMFG CUDA** shows the games tested with the XeMFG backend. In the **XMX** column,
 **Maybe** means it has not been tested in that game yet, so
