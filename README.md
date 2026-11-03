@@ -270,6 +270,7 @@ necessarily been tested with the other.
 
 | Game | Status |
 |---|---|
+| May work with every game | |
 | S.T.A.L.K.E.R. 2: Heart of Chornobyl | Working |
 | God of War Ragnarök | Working |
 | Death Stranding 2: On the Beach | Working |
@@ -313,6 +314,7 @@ necessarily been tested with the other.
 | The Sinking City 2 | Working |
 | Control Resonant | Working |
 | Phantom Blade Zero | Working |
+| Call of Duty Modern Warfare 4 | Working |
 
 These are the games personally tested with this fork; this is not a claim of
 universal compatibility. Results may vary with the game version, DLSS and
@@ -343,7 +345,7 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Ghostrunner 2 | DX12 | Working | Working |  |
 | S.T.A.L.K.E.R. 2: Heart of Chornobyl | DX12 | Working | Maybe | Set the display mode to **Borderless / Windowed Fullscreen** |
 | Warhammer 40,000: Darktide | DX12 | Working | Working | Fixed in 1.5.1; on 1.5.0, add `[Adapters] FidelityFX=0` to `MFGAdaUnlock.ini` |
-| Black Myth: Wukong | DX12 | Working | Maybe |  |
+| Black Myth: Wukong | DX12 | Working | Working |  |
 | Kingdom Come: Deliverance II | DX12 | Working | DLSS-SR not supported on XMX | With the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) XMX is not expected to work here: it needs DLSS-G in DX12. |
 | Red Dead Redemption 2 | DX12, Vulkan | Working | DLSS-SR not supported on XMX | DX12: working with the DLSS-SR input (user report; the game has no native frame generation): turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)). Vulkan (experimental, 1.7): working with DLSS on, in fullscreen, borderless or windowed; no setting needed XMX is not expected to work here: it needs DLSS-G in DX12. |
 | Elden Ring | DX12 | Working | DLSS-SR not supported on XMX | With the DLSS-SR input and the EldenRingDLSS addon, offline with Easy Anti-Cheat off; turn on **Force game VSync off** in the panel for correct frame pacing (see [Elden Ring](#elden-ring)) XMX is not expected to work here: it needs DLSS-G in DX12. |
@@ -354,6 +356,9 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Dying Light 2 | DX12 | Working | Working | XMX since 1.8.2 |
 | Grand Theft Auto 5 Enhanced | DX12 | Maybe | Working |  |
 | Titans of The Tide | DX12 | Working | Maybe |  |
+| Hogwarts Legacy | DX12 | Maybe | Working |  |
+| STAR WARS: Galactic Racer | DX12 | Maybe | Working |  |
+| Call of Duty Modern Warfare 4 | DX12 | Maybe | Working |  |
 
 **XeMFG CUDA** shows the games tested with the XeMFG backend. In the **XMX** column,
 **Maybe** means it has not been tested in that game yet, so
