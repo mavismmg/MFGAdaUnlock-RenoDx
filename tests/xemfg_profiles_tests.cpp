@@ -31,6 +31,14 @@ int main(int argc,char** argv) {
     Require(!Resolve(embedded,Context{L"ACBlackFlag.exe",{L"gameoverlayrenderer64.dll"}}).retainNativeOutput.value_or(true),
         "AC Black Flag kept native output retention under the Steam overlay");
     Require(!Resolve(embedded,Context{L"re9.exe",{}}).depthInverted && !Resolve(embedded,Context{L"re9.exe",{}}).motionJittered,"unobserved game received a convention");
+    // A missing DLSS-G plugin is accepted for the one game with evidence, not by default.
+    Require(Resolve(embedded,Context{L"Ghost-Win64-Shipping.exe",{}}).acceptMissingDlssgPlugin==true,"Titans of the Tide lost its profile");
+    Require(!Resolve(embedded,Context{L"Game.exe",{L"GameOverlayRenderer64.dll"}}).acceptMissingDlssgPlugin.value_or(false),"another game accepts a missing DLSS-G plugin");
+    Require(AcceptMissingDlssgPlugin(true,true,true,false),"the evidenced case was refused");
+    Require(!AcceptMissingDlssgPlugin(false,true,true,false),"accepted without a profile");
+    Require(!AcceptMissingDlssgPlugin(true,false,true,false),"accepted with a DLSS-G plugin present");
+    Require(!AcceptMissingDlssgPlugin(true,true,false,false),"accepted before the plugins loaded");
+    Require(!AcceptMissingDlssgPlugin(true,true,true,true),"took presentation from the game's own XeFG");
     // The game-folder file overrides scalar fields and extends lists.
     Rules local;
     Require(Parse(R"({"schema":1,"profiles":[{"id":"local","match":{"executable":"game.exe"},"evidence":"user",

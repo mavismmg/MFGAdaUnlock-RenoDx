@@ -137,6 +137,7 @@ void Draw() {
   // no frame generation) nothing was loaded too late (1.5.1, KCD2).
   else if(!status.output && strstr(status.detail,"needs early Streamline") && GetModuleHandleW(L"sl.interposer.dll"))
     ui::Notice("XeMFG was loaded too late to take over presentation safely. Restart the game with ReShade and this addon loaded at startup.");
+  else if(!status.output && strstr(status.detail,"no DLSS-G plugin")) ui::Notice(status.detail);
   else if(!status.output && !GetModuleHandleW(L"sl.interposer.dll") && !ngx::Configured())
     ui::Notice("No frame-generation inputs from this game yet. If it has no frame generation of its own, select DLSS as the upscaler: "
         "the panel then offers the experimental DLSS-SR input.");

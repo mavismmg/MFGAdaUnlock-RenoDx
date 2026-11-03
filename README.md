@@ -1,11 +1,11 @@
 # MFG Unlock
 
 > [!NOTE]
-> ### New in 1.8.1: stability and a new panel
+> ### New in 1.8.2: more games with XMX
 >
-> Fixes the Vulkan crash reported in Bloodborne, hardens XMX, and redesigns the panel.
-> When something goes wrong, the panel now says why, and **Save support files** gathers
-> what a report needs. See the [1.8.1 release notes](docs/releases/1.8.1.md).
+> XMX now works in Dying Light 2, Alan Wake 2 and Phantom Blade Zero, and the panel says
+> when NVIDIA's generator is still doing the work. See the
+> [1.8.2 release notes](docs/releases/1.8.2.md).
 
 > [!TIP]
 > ### New in 1.8: use XMX whenever the game has frame generation
@@ -335,7 +335,7 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Assassin's Creed IV: Black Flag Resynced | DX12 | Working | Maybe | A built-in profile turns off native-output retention for this game |
 | Cyberpunk 2077 | DX12 | Working | Working | After a game update, run **Install / update files** again (see [below](#the-panel-says-intel-files-are-missing-or-a-different-version)) |
 | The Witcher 3: Wild Hunt (next-gen) | DX12 | Working | Working | Turn off the game's **VSync** for correct frame pacing on CUDA. Fixed in 1.5.3: changing path tracing or other graphics settings with frame generation on no longer loses the graphics device |
-| Alan Wake 2 | DX12 | Working | Maybe |  |
+| Alan Wake 2 | DX12 | Working | Working | XMX since 1.8.2 |
 | The Last of Us Part II Remastered | DX12 | Working | Maybe |  |
 | Mafia: The Old Country | DX12 | Working | Maybe |  |
 | Resonance: A Plague Tale Legacy | DX12 | Working | Working |  |
@@ -350,12 +350,13 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Metro Exodus Enhanced Edition | DX12 | Working | DLSS-SR still not supported on XMX | With the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) XMX is not expected to work here: it needs DLSS-G in DX12. |
 | Indiana Jones and the Great Circle | Vulkan | Working | Vulkan not supported on XMX | Experimental (1.7): turn DLSS on (Super Resolution or Ray Reconstruction); the game's Frame Generation switch turns XeMFG on and off. Launch with `+r_allowBlackListedLayers 1` so ReShade can load XMX is not expected to work here: it needs DLSS-G in DX12. |
 | Crimson Desert | DX12 | Working | Working |  |
-| Phantom Blade Zero | DX12 | Maybe | Maybe |  |
+| Phantom Blade Zero | DX12 | Maybe | Working | XMX since 1.8.2 |
+| Dying Light 2 | DX12 | Maybe | Working | XMX since 1.8.2 |
 | Grand Theft Auto 5 Enhanced | DX12 | Maybe | Working |  |
 
-**XeMFG CUDA** shows the games tested with the XeMFG backend. **XMX** was tested
-in Crimson Desert and Cyberpunk 2077: **Maybe** means it has not been tested in that
-game yet, so [your report](#try-it-and-report) helps. These results are not a
+**XeMFG CUDA** shows the games tested with the XeMFG backend. In the **XMX** column,
+**Maybe** means it has not been tested in that game yet, so
+[your report](#try-it-and-report) helps. These results are not a
 claim of universal compatibility. The XeMFG backend needs a game that
 provides frame-generation inputs (see [Supported inputs](#supported-xemfg-inputs)).
 
@@ -862,6 +863,7 @@ any scRGB game you try.
 | Status | Meaning |
 |---|---|
 | **Generating frames** | XMX generated a frame in the last 2 seconds |
+| **NVIDIA is generating** | XMX is hooked but never called, and frames are being generated, so NVIDIA's generator is doing the work |
 | **Waiting for frames** | DLSS-G is calling XMX, but no frame came out; the panel gives the reason |
 | **Paused or off in the game** | DLSS-G is not calling XMX. Games do this in menus and cutscenes, and it is normal if generation returns afterwards |
 | **Frame generation stopped** | XMX failed; a card gives the reason and no frames are generated until the game restarts |
@@ -895,9 +897,18 @@ Crimson Desert, RTX 4070 SUPER, driver 621.01, DLSS Quality. Each row is one 30-
 PresentMon capture of the same route, walked by hand. Base FPS and displayed FPS for
 XMX and DLSS-G come from PresentMon's estimate.
 
+> [!WARNING]
+> **The latency column is not input latency.** It is PresentMon's `DisplayLatency`,
+> averaged over every displayed frame, because these captures have no PC latency
+> (`MsPCLatency`) column. With XMX and DLSS-G, PresentMon labels generated frames as
+> the game's own, so they lower the average. With XeMFG, it labels them as XeSS-FG
+> frames and counts them differently. Do not compare this column between routes, and
+> do not read it as the delay between input and the screen. Frame generation adds
+> latency: about one base frame, plus pacing. Use PC latency to compare.
+
 **1440p**
 
-| Mode | Displayed FPS | Base FPS | Average latency | p99 frame interval | Large intervals |
+| Mode | Displayed FPS | Base FPS | DisplayLatency (not input latency) | p99 frame interval | Large intervals |
 |---|---|---|---|---|---|
 | Generation off | 44 | 44 | 45 ms | not recorded | 0 |
 | XeMFG 2x, Intel's model 18 | 78 | 39 | 47 ms | 17.8 ms | 3 |
@@ -911,7 +922,7 @@ XMX and DLSS-G come from PresentMon's estimate.
 
 **4K with DLDSR**
 
-| Mode | Displayed FPS | Base FPS | Average latency | p99 frame interval | Large intervals |
+| Mode | Displayed FPS | Base FPS | DisplayLatency (not input latency) | p99 frame interval | Large intervals |
 |---|---|---|---|---|---|
 | Generation off | 23 | 23 | 91 ms | 48.3 ms | 0 |
 | DLSS-G 4x | 73 | 18 | 80 ms | 17.8 ms | 8 |
@@ -934,8 +945,9 @@ How to read these numbers:
 - It is one game and one capture per mode. Nothing here is a general result.
 - **XeMFG is ahead of XMX in FPS and pacing at 2x and 4x.** XMX is ahead in FPS at 6x,
   where it had more large intervals (18 against 4).
-- The latency gap looks large, and it was felt at 6x, but PresentMon may not measure
-  latency the same way on routes with different presentation.
+- **The latency column does not show input latency** (see the warning above). The
+  tester felt better input with XMX at 6x, but these captures cannot confirm it. PC
+  latency captures are needed to compare the routes.
 - The model 18 capture ran in a different presentation mode, so that comparison needs
   repeating.
 
@@ -1504,6 +1516,9 @@ the effective downstream request separately.
 - Confirm that ReShade was installed with full addon support.
 - Confirm that the `.addon64` file is in the addon location used by that game.
 - Check the ReShade log for an addon loading or API-version error.
+- If the log shows error **1114** when loading the addon, open `ReShade.ini` and remove
+  the addon's name from `DisabledAddons` in the `[ADDON]` section. ReShade refuses to
+  start an addon listed there, and that is the usual cause of this error.
 
 ### Only Automatic or 2x appears
 

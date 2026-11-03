@@ -90,9 +90,17 @@ inline void Attach(HMODULE module) {
   AcquireSRWLockExclusive(&lock);
   const bool known = std::find(seen.begin(), seen.end(), module) != seen.end();
   const int slot = static_cast<int>(seen.size());
-  if (!known && slot < kSlots) seen.push_back(module);
+  const auto action = policy::PlanSlot(known, slot, kSlots);
+  if (action == policy::SlotAction::Install) seen.push_back(module);
   ReleaseSRWLockExclusive(&lock);
-  if (known || slot >= kSlots) return;
+  if (action == policy::SlotAction::Full) {
+    static std::atomic_flag reported = ATOMIC_FLAG_INIT;
+    if (!reported.test_and_set()) {
+      generator::g_hooks_failed.fetch_add(1);
+      Log("no free slot for another copy of the generator");
+    }
+  }
+  if (action != policy::SlotAction::Install) return;
   HMODULE pinned = nullptr;
   if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
                           reinterpret_cast<LPCWSTR>(module), &pinned))
@@ -104,6 +112,13 @@ inline void Attach(HMODULE module) {
         const std::unique_ptr<Work> work(static_cast<Work*>(value));
         wchar_t path[MAX_PATH]{};
         GetModuleFileNameW(work->module, path, MAX_PATH);
+        const std::filesystem::path file(path);
+        const std::string where = file.parent_path().filename().string() + "/" + file.filename().string();
+        // A renamed Vulkan provider has no D3D12 entry; the hook does not apply to it.
+        if (GetProcAddress(work->module, "NVSDK_NGX_D3D12_EvaluateFeature") == nullptr) {
+          Log("slot " + std::to_string(work->slot) + " skipped " + where + ": no Direct3D 12 entry");
+          return 0;
+        }
         // A thread that starts or exits mid-walk fails the attempt; the next one sees it settled.
         bool hooked = false;
         int attempt = 1;
@@ -113,8 +128,7 @@ inline void Attach(HMODULE module) {
           Sleep(250);
         }
         (hooked ? generator::g_hooks_installed : generator::g_hooks_failed).fetch_add(1);
-        Log("slot " + std::to_string(work->slot) + (hooked ? " hooked " : " failed ") +
-            std::filesystem::path(path).parent_path().filename().string() + " attempts " +
+        Log("slot " + std::to_string(work->slot) + (hooked ? " hooked " : " failed ") + where + " attempts " +
             std::to_string((std::min)(attempt, kInstallAttempts)));
         return 0;
       },

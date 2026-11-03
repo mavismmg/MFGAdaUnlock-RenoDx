@@ -16,17 +16,24 @@ inline std::wstring Wide(const std::string& text) { return std::wstring(text.beg
 struct Rule {
   std::string id,evidence,source;
   std::wstring executable,module; // lower case; empty matches everything
-  std::optional<bool> retainNativeOutput,depthInverted,motionJittered;
+  std::optional<bool> retainNativeOutput,depthInverted,motionJittered,acceptMissingDlssgPlugin;
   std::vector<std::wstring> observerModules,conflictingModules;
   std::vector<std::string> knownBadReframework;
 };
 using Rules=std::vector<Rule>;
 struct Context { std::wstring executable; std::vector<std::wstring> modules; };
 struct Policy {
-  std::optional<bool> retainNativeOutput,depthInverted,motionJittered;
+  std::optional<bool> retainNativeOutput,depthInverted,motionJittered,acceptMissingDlssgPlugin;
   std::vector<std::wstring> observerModules,conflictingModules;
   std::vector<std::string> knownBadReframework,applied,sources;
 };
+// A Streamline with its plugins loaded and no DLSS-G among them has nothing to
+// isolate from presentation. Only a profile opts in: every other game keeps the
+// refusal. The error alone is not enough, since before the plugins load it could
+// still change, and a game presenting through its own XeFG keeps its presentation.
+constexpr bool AcceptMissingDlssgPlugin(bool profileAllows,bool featureMissing,bool pluginsLoaded,bool gameOwnsGeneration) {
+  return profileAllows && featureMissing && pluginsLoaded && !gameOwnsGeneration;
+}
 inline bool Contains(const std::vector<std::wstring>& list,const std::wstring& value) {
   const auto key=Lower(value); return std::find(list.begin(),list.end(),key)!=list.end();
 }
@@ -39,7 +46,7 @@ inline bool Parse(const std::string& text,const std::string& source,Rules& out,s
     const auto root=nlohmann::json::parse(text);
     if(root.value("schema",0)!=1 || !root.contains("profiles") || !root["profiles"].is_array()) { error="unsupported schema"; return false; }
     static const char* known[]={"id","match","evidence","retain_native_output","depth_inverted","motion_jittered",
-        "observer_modules","conflicting_modules","known_bad_reframework_sha256"};
+        "observer_modules","conflicting_modules","known_bad_reframework_sha256","accept_missing_dlssg_plugin"};
     Rules rules;
     for(const auto& item:root["profiles"]) {
       for(const auto& [key,value]:item.items())
@@ -55,6 +62,7 @@ inline bool Parse(const std::string& text,const std::string& source,Rules& out,s
       if(item.contains("retain_native_output")) rule.retainNativeOutput=item["retain_native_output"].get<bool>();
       if(item.contains("depth_inverted")) rule.depthInverted=item["depth_inverted"].get<bool>();
       if(item.contains("motion_jittered")) rule.motionJittered=item["motion_jittered"].get<bool>();
+      if(item.contains("accept_missing_dlssg_plugin")) rule.acceptMissingDlssgPlugin=item["accept_missing_dlssg_plugin"].get<bool>();
       for(const auto& m:item.value("observer_modules",nlohmann::json::array())) rule.observerModules.push_back(Lower(Wide(m.get<std::string>())));
       for(const auto& m:item.value("conflicting_modules",nlohmann::json::array())) rule.conflictingModules.push_back(Lower(Wide(m.get<std::string>())));
       for(const auto& h:item.value("known_bad_reframework_sha256",nlohmann::json::array())) rule.knownBadReframework.push_back(h.get<std::string>());
@@ -75,6 +83,7 @@ inline Policy Resolve(const Rules& rules,const Context& context) {
     if(rule.retainNativeOutput) policy.retainNativeOutput=rule.retainNativeOutput;
     if(rule.depthInverted) policy.depthInverted=rule.depthInverted;
     if(rule.motionJittered) policy.motionJittered=rule.motionJittered;
+    if(rule.acceptMissingDlssgPlugin) policy.acceptMissingDlssgPlugin=rule.acceptMissingDlssgPlugin;
     add(policy.observerModules,rule.observerModules); add(policy.conflictingModules,rule.conflictingModules);
     add(policy.knownBadReframework,rule.knownBadReframework);
     policy.applied.push_back(rule.id); policy.sources.push_back(rule.source);

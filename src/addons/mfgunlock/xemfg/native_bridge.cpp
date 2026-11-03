@@ -191,6 +191,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   // for ownership: only a D3D12 queue can become an output.
   ComPtr<ID3D12CommandQueue> queue;
   if(!source || FAILED(source->QueryInterface(IID_PPV_ARGS(&queue)))) return E_NOINTERFACE;
+  AdmitMissingDlssgPlugin();
   if(!OwnsPresentationHooks()) {
     Report(PresentationNotOwned());
     return E_NOINTERFACE;

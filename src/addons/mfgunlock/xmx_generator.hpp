@@ -145,6 +145,7 @@ struct Report {
   policy::Idle idle{policy::Idle::None};
   bool partiallyHooked{};
   uint32_t framesLimit{};
+  bool everEvaluated{};
 };
 inline Report Snapshot() {
   const auto now = GetTickCount64();
@@ -155,6 +156,7 @@ inline Report Snapshot() {
   report.generating = tick != 0 && now - tick < 2000;
   report.hooked = hooks > 0;
   report.evaluating = evaluated != 0 && now - evaluated < 2000;
+  report.everEvaluated = evaluated != 0;
   report.idle = static_cast<policy::Idle>(g_idle.load(std::memory_order_relaxed));
   report.partiallyHooked = hooks > 0 && failed > 0;
   report.framesLimit = g_frames_limit.load(std::memory_order_relaxed);
@@ -331,6 +333,33 @@ inline Input Describe(ID3D12Resource* copy) {
   }
   return input;
 }
+inline policy::Area DeclaredArea(const NVSDK_NGX_Parameter* params, const std::string& name, const Input& input) {
+  return policy::InputArea(input.width, input.height,
+                           {Value<unsigned int>(params, (name + "SubrectBaseX").c_str(), 0u),
+                            Value<unsigned int>(params, (name + "SubrectBaseY").c_str(), 0u),
+                            Value<unsigned int>(params, (name + "SubrectWidth").c_str(), 0u),
+                            Value<unsigned int>(params, (name + "SubrectHeight").c_str(), 0u)});
+}
+inline void Assign(Input& input, const policy::Area& area) {
+  input.baseX = area.x;
+  input.baseY = area.y;
+  input.width = area.width;
+  input.height = area.height;
+}
+// XeFG compares these fields, not the textures, so the copies can keep their shape.
+inline void MatchDepthAndMotion(const NVSDK_NGX_Parameter* params, FrameData& data) {
+  if (data.depth.width == data.motion.width && data.depth.height == data.motion.height) return;
+  const auto [depth, motion] = policy::SharedArea(DeclaredArea(params, "DLSSG.Depth", data.depth),
+                                                  DeclaredArea(params, "DLSSG.MVecs", data.motion));
+  static std::atomic_bool logged{false};
+  if (!logged.exchange(true))
+    Log("depth " + std::to_string(data.depth.width) + "x" + std::to_string(data.depth.height) + " and motion " +
+        std::to_string(data.motion.width) + "x" + std::to_string(data.motion.height) + " differ, using " +
+        std::to_string(depth.width) + "x" + std::to_string(depth.height) + " at depth " + std::to_string(depth.x) + "," +
+        std::to_string(depth.y) + " motion " + std::to_string(motion.x) + "," + std::to_string(motion.y));
+  Assign(data.depth, depth);
+  Assign(data.motion, motion);
+}
 inline bool Prepare(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* params, const D3D12_RESOURCE_DESC& output) {
   auto& state = Get();
   uint32_t flags = 0;
@@ -444,6 +473,7 @@ inline bool Generate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
   data.backbuffer = Describe(next.backbuffer.Get());
   data.depth = Describe(next.depth.Get());
   data.motion = Describe(next.motion.Get());
+  MatchDepthAndMotion(params, data);
   data.hudless = Describe(next.hudless.Get());
   void* projection = nullptr;
   if (params->Get("DLSSG.CameraViewToClip", &projection) == NVSDK_NGX_Result_Success && projection != nullptr)

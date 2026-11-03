@@ -299,6 +299,9 @@ void RememberDlssgModule(HMODULE mod) {
   if (mod == nullptr || mod == g_self_module) return;
   if (std::find(g_dlssg_modules.begin(), g_dlssg_modules.end(), mod) == g_dlssg_modules.end()) {
     g_dlssg_modules.push_back(mod);
+    // A provider mapped before the addon only arrives here, never through the
+    // loader hook (Dying Light 2's active .bin), and XMX must cover it too.
+    mfgunlock::xmx::Attach(mod);
   }
 }
 

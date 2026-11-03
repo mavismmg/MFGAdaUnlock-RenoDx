@@ -2633,14 +2633,19 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   const bool xmx_running=xmx_selected && xmx_report.hooked && xmx_d3d12;
   const bool xmx_failed=xmx_running && !xmx_report.generating && !xmx_report.failure.empty();
   // Not called at all: the game turned frame generation off, or NGX uses a module without the hook.
-  const char* xmx_waiting=xmx_report.evaluating?"Waiting for frames":"Paused or off in the game";
+  const bool xmx_bypassed=xmx_running && mfgunlock::xmx::policy::Bypassed(xmx_report.hooked,xmx_report.everEvaluated,mfg_live);
+  if(xmx_bypassed) {
+    static std::atomic_flag logged=ATOMIC_FLAG_INIT;
+    if(!logged.test_and_set()) mfgunlock::xmx::Log("not called while the driver reports generated frames: NVIDIA's generator is still active");
+  }
+  const char* xmx_waiting=xmx_bypassed?"NVIDIA is generating":xmx_report.evaluating?"Waiting for frames":"Paused or off in the game";
   const auto xmx_support_report=[&] {
-    std::string report="MFG Unlock 1.8.1\nmethod=";
+    std::string report="MFG Unlock 1.8.2\nmethod=";
     report+=xmx_selected?"XMX":"DLSS-G";
     report+=std::string("\nrenderer=")+RenderApiName(render_api)+"\nstatus="+player_state;
     if(xmx_selected) {
       report+=std::string("\nxmx_hooked=")+(xmx_report.hooked?"1":"0")+"\nxmx_partial="+(xmx_report.partiallyHooked?"1":"0")
-          +"\nxmx_evaluating="+(xmx_report.evaluating?"1":"0")+"\nxmx_generating="+(xmx_report.generating?"1":"0")
+          +"\nxmx_bypassed="+(xmx_bypassed?"1":"0")+"\nxmx_evaluating="+(xmx_report.evaluating?"1":"0")+"\nxmx_generating="+(xmx_report.generating?"1":"0")
           +"\nxmx_idle="+mfgunlock::xmx::policy::IdleText(xmx_report.idle)+"\nxmx_failure="+xmx_report.failure
           +"\nxmx_frames_limit="+std::to_string(xmx_report.framesLimit);
     }
@@ -2650,7 +2655,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
       xmx_failed?"Frame generation stopped":xmx_running?(xmx_report.generating?"Generating frames":xmx_waiting):player_state,
       xmx_running?xmx_report.generating:mfg_live);
   if(xmx_selected) {
-    mfgunlock::ui::Readout("##xmx_generator","Generator",!xmx_running?"NVIDIA DLSS-G (XMX not started)":xmx_failed?"None (XMX failed)":xmx_report.generating?"Intel XeFG model, in DLSS-G's presentation":xmx_report.evaluating?"Intel XeFG model - waiting for frames":"Intel XeFG model - not being called",
+    mfgunlock::ui::Readout("##xmx_generator","Generator",!xmx_running?"NVIDIA DLSS-G (XMX not started)":xmx_bypassed?"NVIDIA DLSS-G (XMX not being called)":xmx_failed?"None (XMX failed)":xmx_report.generating?"Intel XeFG model, in DLSS-G's presentation":xmx_report.evaluating?"Intel XeFG model - waiting for frames":"Intel XeFG model - not being called",
         "The XMX mode replaces NVIDIA's generator with Intel's model. Presentation and the game's settings remain DLSS-G's.",xmx_report.generating?mfgunlock::ui::Accent:mfgunlock::ui::Muted);
     if(mfgunlock::framecount::g_game_dynamic_replaced.load(std::memory_order_relaxed))
       mfgunlock::ui::Description("The game asked for Dynamic MFG, which XMX does not support; a fixed multiplier is used.");
@@ -2669,6 +2674,11 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
       mfgunlock::ui::ProblemCard problem("##xmx_failed","XMX stopped generating",mfgunlock::ui::Danger);
       ImGui::TextWrapped("No frames are generated until the game restarts. Reason: %s.",xmx_report.failure.c_str());
       mfgunlock::ui::Description("Select another frame generation method if this repeats.");
+      mfgunlock::ui::SupportActions(xmx_support_report);
+    }
+    else if(xmx_bypassed) {
+      mfgunlock::ui::ProblemCard problem("##xmx_bypassed","XMX is not being used",mfgunlock::ui::Warning);
+      ImGui::TextWrapped("This game runs a copy of NVIDIA's generator without the XMX hook, so NVIDIA's model is producing the frames.");
       mfgunlock::ui::SupportActions(xmx_support_report);
     }
     else if(xmx_running && !xmx_report.generating) {

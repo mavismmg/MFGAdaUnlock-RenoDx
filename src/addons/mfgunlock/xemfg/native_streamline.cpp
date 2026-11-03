@@ -9,6 +9,7 @@
 #include "native_input_policy.hpp"
 #include "log_budget.hpp"
 #include "native_profiles.hpp"
+#include "backend_api.hpp"
 #include "../backend_selection.hpp"
 #include "native_continuity.hpp"
 #include "../latency_marker_policy.hpp"
@@ -47,6 +48,8 @@ PFun_slSetFeatureLoaded* setLoaded{};
 PFun_slIsFeatureSupported* isSupported{};
 PFun_slGetFeatureRequirements* requirements{};
 std::atomic<bool> lifecycleApi{},presentationIsolated{},logicalLoaded{true},stopping{};
+// The isolation found no DLSS-G plugin at all, and a profile accepted that.
+std::atomic<bool> dlssgPluginMissing{},missingPluginAccepted{};
 
 // slSetFeatureLoaded rebuilds Streamline's hook lists and is not thread safe.
 // Use ONLY the game's startup API boundary, never a worker or Present callback.
@@ -59,6 +62,7 @@ bool IsolatePresentation(const char* boundary,bool captureRequest) {
   bool physical=true;
   const auto verified=result==sl::Result::eOk?getLoaded(sl::kFeatureDLSS_G,physical):result;
   presentationIsolated=result==sl::Result::eOk && verified==sl::Result::eOk && !physical;
+  dlssgPluginMissing=result==sl::Result::eErrorFeatureMissing;
   xess_mod::WriteLog("native_presentation_isolation","\"boundary\":\""+std::string(boundary)
       +"\",\"result\":"+std::to_string(uint32_t(result))+",\"isolated\":"+(presentationIsolated.load()?"true":"false")
       +",\"game_loaded\":"+(logicalLoaded.load()?"true":"false"));
@@ -66,7 +70,7 @@ bool IsolatePresentation(const char* boundary,bool captureRequest) {
 }
 sl::Result InitHook(const sl::Preferences& preferences,uint64_t version) {
   std::lock_guard guard(discovery);
-  stopping=false; presentationIsolated=false;
+  stopping=false; presentationIsolated=false; dlssgPluginMissing=false; missingPluginAccepted=false;
   const auto result=initialize(preferences,version);
   LogStreamlineVersion(version);
   if(result==sl::Result::eOk) IsolatePresentation("slInit",true);
@@ -708,7 +712,23 @@ void LogTagHistogram(Output& o,const char* phase) {
 // Streamline isolated from presentation, or an output of an adapter without
 // a Streamline presentation proxy: FidelityFX (5.3) or armed DLSS-SR (5.4).
 bool OwnsPresentationHooks() noexcept {
-  return (lifecycleApi && presentationIsolated && !stopping) || ffx::CreatingOutput() || synthetic::Owner() || ngx::Armed();
+  return (lifecycleApi && (presentationIsolated || missingPluginAccepted) && !stopping) || ffx::CreatingOutput() || synthetic::Owner() || ngx::Armed();
+}
+// Decided at output creation, never per frame. The isolation's result is read
+// again here: this is the moment the plugins' state has to hold, and it does not
+// depend on a plugin's file name (a driver-store copy has another one).
+void AdmitMissingDlssgPlugin() {
+  if(!dlssgPluginMissing || presentationIsolated || missingPluginAccepted || stopping || !getLoaded) return;
+  bool loaded{};
+  const bool missing=getLoaded(sl::kFeatureDLSS_G,loaded)==sl::Result::eErrorFeatureMissing;
+  const bool plugins=GetModuleHandleW(L"sl.common.dll")!=nullptr;
+  const bool gameOwns=GameOwnsFrameGeneration();
+  const bool allowed=CurrentPolicy().acceptMissingDlssgPlugin.value_or(false);
+  missingPluginAccepted=profiles::AcceptMissingDlssgPlugin(allowed,missing,plugins,gameOwns);
+  static PatternBudget budget(4);
+  if(budget.Admit("missing_plugin")) xess_mod::WriteLog("native_missing_dlssg_plugin","\"accepted\":"+std::string(missingPluginAccepted.load()?"true":"false")
+      +",\"profile\":"+(allowed?"true":"false")+",\"feature_missing\":"+(missing?"true":"false")
+      +",\"plugins_loaded\":"+(plugins?"true":"false")+",\"game_owns_generation\":"+(gameOwns?"true":"false"));
 }
 // 1.7.2: why OwnsPresentationHooks() is false, for the output that was refused.
 // Only a missed slInit is cured by early loading, so only that case asks for it.
@@ -727,6 +747,7 @@ const char* PresentationNotOwned() {
         +",\"set_device\":"+present(reinterpret_cast<const void*>(setDevice))+",\"occurrence\":"+std::to_string(count));
   if(!module) return "XeMFG found no Streamline when the game created its swapchain; the game's presentation was kept";
   if(!lifecycleApi) return "XeMFG cannot own presentation with this game's Streamline: a required function is missing, and early addon loading will not change that";
+  if(dlssgPluginMissing) return "XeMFG did not take over presentation: this game's Streamline has no DLSS-G plugin, and restarting will not change that";
   return "XeMFG needs early Streamline initialization to own presentation; restart with the addon loaded before slInit";
 }
 bool StreamlineStopping() noexcept { return stopping; }

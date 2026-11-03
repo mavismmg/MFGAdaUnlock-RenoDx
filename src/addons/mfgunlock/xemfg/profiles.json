@@ -51,6 +51,12 @@
       "evidence": "RC3 session PID 24404: valid Constants V2, inverted depth, motionVectorsJittered true (moved from native_game_defaults.hpp)"
     },
     {
+      "id": "titans-of-the-tide-no-dlssg-plugin",
+      "match": {"executable": "Ghost-Win64-Shipping.exe"},
+      "accept_missing_dlssg_plugin": true,
+      "evidence": "2026-11-02 field log, RTX 3060 Ti, Streamline 2.14.1: slSetFeatureLoaded returned eErrorFeatureMissing with sl.common loaded and sl.dlss_g absent; three restarts refused the same way. Trial for this game only"
+    },
+    {
       "id": "reframework-xefg-monitor",
       "match": {},
       "known_bad_reframework_sha256": ["70a2a3c24030d8bc3695554e7f929fd1b0b4b757fb5ba2c9d34f42d7155005ac"],
