@@ -45,11 +45,24 @@ bool DiscoveryRequirementsMet() {
 
 void RunBoundedDiscoveryWorker() {
   g_discovery_worker_running.store(true, std::memory_order_release);
+  // This worker starts after the first real Present, past ReShade's temporary
+  // addon probes. Keep this instance resident before attaching to preloaded
+  // providers: its XMX detours have no safe hot-unload boundary.
+  HMODULE resident = nullptr;
+  const bool attach_xmx = mfgunlock::xmx::generator::Enabled() &&
+      mfgunlock::xmx::generator::Preflight() &&
+      GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+          reinterpret_cast<LPCWSTR>(&RunBoundedDiscoveryWorker), &resident);
   unsigned int quiet_ready_passes = 0;
   for (unsigned int pass = 1; pass <= kDiscoveryRetryLimit; ++pass) {
     Sleep(kDiscoveryRetryIntervalMs);
     g_provider_rescan_requested.store(false, std::memory_order_release);
     RunProviderMaintenance();
+    if (attach_xmx) {
+      AcquireSRWLockExclusive(&g_provider_maintenance_lock);
+      for (HMODULE mod : g_dlssg_modules) mfgunlock::xmx::Attach(mod);
+      ReleaseSRWLockExclusive(&g_provider_maintenance_lock);
+    }
     TryPatchFrameCountCeiling();
     if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
     mfgunlock::framecount::TryInstall();
