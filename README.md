@@ -360,6 +360,8 @@ artifact on a HUD/UI element, switch back to **Native**.
 | STAR WARS: Galactic Racer | DX12 | Maybe | Working |  |
 | Call of Duty Modern Warfare 4 | DX12 | Maybe | Working |  |
 | The Blood of Dawnwalker | DX12 | Maybe | Working |  |
+| Silent Hill 2 Remake | DX12 | Not Working | Working |  |
+| Ghotic 1 Remake | DX12 | Not Working | Working |  |
 
 **XeMFG CUDA** shows the games tested with the XeMFG backend. In the **XMX** column,
 **Maybe** means it has not been tested in that game yet, so
