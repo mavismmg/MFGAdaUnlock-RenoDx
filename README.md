@@ -345,7 +345,7 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Warhammer 40,000: Darktide | DX12 | Working | Maybe | Fixed in 1.5.1; on 1.5.0, add `[Adapters] FidelityFX=0` to `MFGAdaUnlock.ini` |
 | Black Myth: Wukong | DX12 | Working | Maybe |  |
 | Kingdom Come: Deliverance II | DX12 | Working | DLSS-SR still not supported on XMX | With the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) XMX is not expected to work here: it needs DLSS-G in DX12. |
-| Red Dead Redemption 2 | DX12, Vulkan | Working | DLSS-SR still not supported on XMX | DX12: working with the DLSS-SR input (user report; the game has no native frame generation): turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)). Vulkan (experimental, 1.7): working with DLSS on, in fullscreen, borderless or windowed; no setting needed XMX is not expected to work here: it needs DLSS-G in DX12. |
+| Red Dead Redemption 2 | DX12, Vulkan | Working | DLSS-SR still not supported on XMX | DX12: working with the DLSS-SR input (user report; the game has no native frame generation): turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)). Vulkan (experimental, 1.7): generates with DLSS on, but pacing is poor; use DX12 (see [Red Dead Redemption 2: use DX12](#red-dead-redemption-2-use-dx12)). XMX is not expected to work here: it needs DLSS-G in DX12. |
 | Elden Ring | DX12 | Working | DLSS-SR still not supported on XMX | With the DLSS-SR input and the EldenRingDLSS addon, offline with Easy Anti-Cheat off; turn on **Force game VSync off** in the panel for correct frame pacing (see [Elden Ring](#elden-ring)) XMX is not expected to work here: it needs DLSS-G in DX12. |
 | Metro Exodus Enhanced Edition | DX12 | Working | DLSS-SR still not supported on XMX | With the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) XMX is not expected to work here: it needs DLSS-G in DX12. |
 | Indiana Jones and the Great Circle | Vulkan | Working | Vulkan not supported on XMX | Experimental (1.7): turn DLSS on (Super Resolution or Ray Reconstruction); the game's Frame Generation switch turns XeMFG on and off. Launch with `+r_allowBlackListedLayers 1` so ReShade can load XMX is not expected to work here: it needs DLSS-G in DX12. |
@@ -775,11 +775,19 @@ after that. If the game closes before you can open the panel, set
 `ReShade.ini`. In 1.8.2, a saved DLSS preset crashed The Last of Us Part II at every
 start; 1.8.3 fixes that.
 
-#### Stutter with Queue metered frames early
+#### Red Dead Redemption 2: use DX12
 
-One report from Red Dead Redemption 2 in Vulkan: slowdowns that turning **Queue
-metered frames early** off reduces. The default is unchanged until it is measured;
-turn it off if you see this, and report the result.
+With XeMFG, Red Dead Redemption 2 runs much better in DX12 than in Vulkan. At 4K
+on an RTX 4070 SUPER with 2x, DX12 showed 111 fps with one frame every 8.7 ms,
+give or take 1 ms. Vulkan showed 86 fps, with frames arriving in pairs, 3 to 5 ms
+apart, then a 13 to 17 ms gap, and stalls up to 166 ms. On screen the image seems
+to step back, and motion does not look smooth despite the higher count. A user
+with an RTX 4090 reported the same. **Queue metered frames early** does not change it.
+
+In Vulkan, XeMFG's work and copies share the GPU with the game's frame and wait
+behind it when the GPU is saturated. The game also gives no latency markers in
+Vulkan, so XeLL cannot time its frames. Attempts to fix this in 1.8.3 did not make
+Vulkan smooth, so switch the game to DX12 for frame generation.
 
 #### HUD elements smear or ghost
 
