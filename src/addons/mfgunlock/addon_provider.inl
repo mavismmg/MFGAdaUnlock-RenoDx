@@ -438,6 +438,16 @@ void PatchArchGatesInModule(HMODULE mod) {
   if (!mod || std::find(g_gate_modules.begin(), g_gate_modules.end(), mod) != g_gate_modules.end() ||
       std::find(g_gate_rejected_modules.begin(), g_gate_rejected_modules.end(), mod) != g_gate_rejected_modules.end()) return;
   const auto* profile = mfgunlock::binarypatch::ProfileFor(mod, 0);
+  // 1.8.4: no exact profile; the reviewed two-compare gate, if the provider has
+  // exactly that ([DLSSG] GenericGate=0 turns this off).
+  mfgunlock::binarypatch::Generic generic_storage;
+  static const bool generic_allowed =
+      GetPrivateProfileIntW(L"DLSSG", L"GenericGate", 1, (mfgunlock::backend::Directory() / L"MFGAdaUnlock.ini").c_str()) != 0;
+  bool generic = false;
+  if (!profile && generic_allowed && mfgunlock::binarypatch::GenericArchProfileFor(mod, generic_storage)) {
+    profile = &generic_storage.profile;
+    generic = true;
+  }
   const auto* session = mfgunlock::modulesession::Acquire(mod);
   CodeTransaction transaction{mod, session ? session->generation : 0, {}};
   const bool planned = profile && session && mfgunlock::binarypatch::Plan(mod, *profile, transaction.writes);
@@ -459,6 +469,7 @@ void PatchArchGatesInModule(HMODULE mod) {
       << "; original executable FNV1a64=0x" << std::hex << session->identity.code_hash
       << "; PE timestamp=0x" << session->identity.timestamp << std::dec
       << "; image bytes=" << session->identity.image_size
+      << (generic ? "; generic gate (no exact profile for this provider)" : "")
       << "; candidate identity does not prove active feature selection.";
   reshade::log::message(reshade::log::level::info, identity_log.str().c_str());
 }

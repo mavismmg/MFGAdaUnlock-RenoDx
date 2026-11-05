@@ -245,6 +245,8 @@ add_executable(dlss_preset_tests dlss_preset_tests.cpp)
 target_include_directories(dlss_preset_tests SYSTEM PRIVATE
   "${RENODX_SOURCE_DIR}/external/Streamline/include")
 add_test(NAME dlss_preset_tests COMMAND dlss_preset_tests)
+add_executable(generic_gate_tests generic_gate_tests.cpp)
+add_test(NAME generic_gate_tests COMMAND generic_gate_tests)
 add_executable(gpu_arch_tests gpu_arch_tests.cpp)
 target_link_libraries(gpu_arch_tests PRIVATE advapi32)
 add_test(NAME gpu_arch_tests COMMAND gpu_arch_tests)

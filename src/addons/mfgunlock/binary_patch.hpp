@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "binary_profiles.hpp"
+#include "generic_gate.hpp"
 #include "module_session.hpp"
 #include "patch_transaction.hpp"
 namespace mfgunlock::binarypatch {
@@ -13,6 +14,44 @@ inline const binaryprofiles::Profile* ProfileFor(HMODULE module, uint32_t kind) 
         profile.code_hash == session->identity.code_hash) return &profile;
   }
   return nullptr;
+}
+// 1.8.4: a provider of major version 310 with no exact profile, whose executable
+// sections hold exactly the reviewed gate pair (see generic_gate.hpp). The
+// profile points into `generic`, so it lives as long as that object.
+struct Generic {
+  binaryprofiles::Site sites[2]{};
+  binaryprofiles::Profile profile{};
+};
+inline bool GenericArchProfileFor(HMODULE module, Generic& generic) {
+  const auto* session = modulesession::Acquire(module);
+  if (!session || !modulesession::Validate(*session)) return false;
+  const auto* base = reinterpret_cast<const uint8_t*>(module);
+  if (const HRSRC info = FindResourceW(module, MAKEINTRESOURCEW(1), MAKEINTRESOURCEW(16))) {
+    const HGLOBAL loaded = LoadResource(module, info);
+    const auto* data = loaded ? static_cast<const uint8_t*>(LockResource(loaded)) : nullptr;
+    if (!data || genericgate::MajorVersion(data, SizeofResource(module, info)) != 310) return false;
+  } else return false;
+  const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + reinterpret_cast<const IMAGE_DOS_HEADER*>(base)->e_lfanew);
+  const auto* section = IMAGE_FIRST_SECTION(nt);
+  std::vector<genericgate::Hit> hits;
+  for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+    const auto& sec = section[i];
+    if (!(sec.Characteristics & IMAGE_SCN_MEM_EXECUTE) || sec.VirtualAddress > session->identity.image_size ||
+        sec.Misc.VirtualSize > session->identity.image_size - sec.VirtualAddress) continue;
+    genericgate::Scan(base + sec.VirtualAddress, sec.Misc.VirtualSize, sec.VirtualAddress, hits);
+  }
+  if (!genericgate::Accept(hits)) return false;
+  for (size_t i = 0; i < 2; ++i) {
+    auto& site = generic.sites[i];
+    site.rva = hits[i].rva;
+    site.size = hits[i].size;
+    std::memcpy(site.before, base + site.rva, site.size);
+    std::memcpy(site.after, site.before, site.size);
+    site.after[site.size == 5 ? 1 : 2] = 0x90;
+  }
+  generic.profile = {session->identity.timestamp, session->identity.image_size, session->identity.code_hash,
+                     generic.sites, 2, 0, 0u, 0u};
+  return true;
 }
 inline bool Plan(HMODULE module, const binaryprofiles::Profile& profile,
                  std::vector<patching::Write>& writes, uint8_t raised_ceiling = 0) {
