@@ -765,6 +765,22 @@ files listed below. As a temporary test, add `[Compatibility]
 RetainNativeOutput=0` to `MFGAdaUnlock.ini`. This setting fixed AC Black Flag
 Resynced, which now has a built-in rule.
 
+#### The game crashes every time it starts
+
+Since 1.8.3, after three sessions in a row without a clean exit, the notice at the
+top of the panel offers **Safe mode next start**. The next start runs without the
+DLSS presets, XMX and the forced multiplier, and keeps your settings for the start
+after that. If the game closes before you can open the panel, set
+`DlssSuperResolutionPreset=0` and `ForceMultiplier=0` under `[RenoDX.MFGUnlock]` in
+`ReShade.ini`. In 1.8.2, a saved DLSS preset crashed The Last of Us Part II at every
+start; 1.8.3 fixes that.
+
+#### Stutter with Queue metered frames early
+
+One report from Red Dead Redemption 2 in Vulkan: slowdowns that turning **Queue
+metered frames early** off reduces. The default is unchanged until it is measured;
+turn it off if you see this, and report the result.
+
 #### HUD elements smear or ghost
 
 Enable **Quality → UI Composition** if the game provides a HUD-less image.
@@ -959,6 +975,14 @@ How to read these numbers:
 - **Only `libxess_fg.dll` 1.3.1.78.** With another version or a missing file, XMX does
   not start, NVIDIA's generator keeps running, and the panel says why.
 - **Tested on an RTX 4070 SUPER only.** Other cards are unknown.
+- **Not on RTX 20 or 30 GPUs.** XMX needs NVIDIA's DLSS-G runtime to accept the GPU, and
+  it does not on these cards, so the game never offers DLSS Frame Generation. The panel
+  says so and offers **Use XeMFG**, which runs on RTX 20 and 30.
+- **No more than 2x when the game's Streamline is older than 2.7** (Ghost of Tsushima,
+  Horizon Zero Dawn Remastered). Forcing more crashed inside Streamline, so the panel's
+  **Frame Multiplier** is not applied above 2x there, and the panel says why.
+- **Horizon Zero Dawn Remastered** uses Intel's own 2x model, because the ported
+  multi-frame model refuses its jittered motion vectors.
 - **Only Crimson Desert was measured.** Cyberpunk 2077 was tested by playing it, without
   captures.
 - **NVIDIA Dynamic MFG is not available with XMX**, because it was not validated on
@@ -967,7 +991,14 @@ How to read these numbers:
 - **Settings for NVIDIA's generator are locked with XMX**, such as Adaptive Quality,
   the temporal fix and the Blackwell kernels. DLSS presets, Reflex and pacing remain.
 - If XMX fails during play, no frames are generated until the game restarts: the real
-  frame is shown again, and the panel says why. Select another mode if this repeats.
+  frame is shown again, and the panel says why. Select another mode if this repeats. A
+  start Intel's model refuses is tried again when the game changes resolution or HDR.
+- On a compute command list (Streamline 2.14), XMX copies its inputs as earlier versions
+  did; the D3D12 debug layer reports those barriers. NVIDIA drivers have run it without
+  problems in every tested game.
+- **Once Human:** its `nvngx_dlssg.dll` has no profile, so XMX runs at 2x only.
+- **Elden Ring with ERSS:** if ERSS generates frames without NVIDIA's DLSS frame
+  generation, XMX has nothing to replace. Use XeMFG.
 - A newer `nvngx_dlssg.dll` might change how the module reacts to XMX's hook. It ran
   with 310.9.1 in Cyberpunk 2077 and 310.9.16 in the Streamline Sample.
 
