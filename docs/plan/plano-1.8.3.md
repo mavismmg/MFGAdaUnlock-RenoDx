@@ -1,6 +1,6 @@
 # Plano da 1.8.3 — ciclo de vida dos hooks, XMX e relatos da comunidade
 
-Status: **código pronto na `feat/1.8.3`, aguardando os testes manuais do usuário. O gate completo roda depois deles. Sem release.**
+Status: **código pronto na `feat/1.8.3`; testes manuais em andamento (o usuário vai instalar mais jogos). O gate completo roda depois deles, só quando o usuário pedir. Sem release.**
 
 ## Decisões de 2026-11-05
 
@@ -228,6 +228,7 @@ Bateria completa no plano High performance com o monitor ligado, restaurando o B
 ## O que mudou em relação ao plano
 
 - **R1:** além do PIN do PR, o addon é fixado no callback do primeiro Present real (`EnsureResident`). O bloco do PR no worker foi substituído: o `RunProviderMaintenance` entrega os providers ao XMX depois dos gates, o que também cobre as varreduras depois do fim do worker. O commit do onenowy entrou com a autoria dele.
+- **R1, segundo ponto de entrada (achado nos testes manuais):** instalar os slots do XMX só no primeiro Present quebrou o GoT. O jogo liga o DLSS-G antes do primeiro Present; o Streamline 2.4 criava o Frame Generation no gerador da NVIDIA ainda sem hook e depois apresentava só os quadros reais, embora o XMX gerasse (PresentMon: 62 apresentações/s, contra 144,5 no 1.8.2, que engancha no carregamento). Agora o wrapper de `slDLSSGSetOptions` (modo diferente de off) fixa o addon e instala os slots pendentes antes de repassar a chamada, esperando as threads de instalação. As instâncias temporárias do ReShade nunca recebem essa chamada. Jogos que não passam por ela continuam no primeiro Present.
 - **R2:** a remoção no unload existe, mas na prática é inalcançável, porque os hooks só entram depois do PIN.
 - **R3:** um hook que já leva para a imagem do addon é recusado em `hook::Install` e `InstallOne`. Os detours do XMX e do preset devolvem falha em vez de chamar uma trampolim nula.
 - **R4:** a thread do XMX cria a sessão do provider (hash da identidade) antes de enganchar e registra os bytes do hook como código próprio.
@@ -248,21 +249,22 @@ Bateria completa no plano High performance com o monitor ligado, restaurando o B
 - **A6:** a debug layer no Streamline Sample 2.14.16 mostrou cerca de 15 mil erros com XMX e 0 com o gerador da NVIDIA. O `Evaluate` chega numa lista de compute, enquanto os recursos do jogo estão em estados gráficos; a NVIDIA lê por CUDA. Correção parcial: estado da tag numa lista DIRECT. Em compute fica o comportamento da 1.8.0, porque nenhuma barreira é válida ali; a correção completa (cópia numa lista DIRECT própria com fence) fica para a 1.9.
 - **Fase 4:** sem logs novos, por decisão. Virou documentação no README e nas notas.
 
-## Testes manuais pendentes, numa sessão só
+## Testes manuais
 
-Build: `build/tests/xemfg/Release/renodx-mfgunlock-native.addon64` (1.8.3.0).
+Build de teste atual: `build/renodx-mfgunlock-1.8.3-test.addon64` (SHA-256 `836AE2EE9D93…`, com o hook do XMX no `slDLSSGSetOptions`). Resultados do usuário, 2026-11-05:
 
-1. **TLOU Part II** com `DlssSuperResolutionPreset=13` salvo e XMX: abre, chega ao jogo, o log tem `architecture gates committed` na instância que fica e o menu mostra 3x/4x. Com e sem o `renodx-dlss5.addon64`.
-2. **Ghost of Tsushima** com XMX: gate aplicado; forçar 3x no painel mostra o aviso do Streamline 2.4 e não fecha o jogo.
-3. **HZD Remastered** com XMX: `the multi-frame model refused these inputs; Intel's 2x model runs instead` e gera a 2x.
-4. **Regressão:** Cyberpunk 2077 e Crimson Desert com XMX (3x a 6x, Alt+Tab, troca de resolução); Witcher 3 com XMX (caso do PR); Dying Light 2 (provider pré-carregado).
-5. **Modo seguro:** três fechamentos forçados seguidos (finalizar o processo), o card oferece o modo seguro, o próximo início mostra o card "Safe mode" e o seguinte volta ao normal.
-6. **Pré-Ada simulado:** `[DLSSG] SimulatePreAda=1` com XMX num jogo (Cyberpunk): o log tem `pre-Ada provider minimum architecture 0x190 -> 0x160`, os gates aplicados e `frame generation feature was created`; o menu do jogo oferece 3x/4x e o XMX gera. Depois remover a chave. Numa RTX 20/30 real (quem relatou): o mesmo, e o menu deve mostrar o DLSS Frame Generation.
-7. **Dynamic MFG na RTX 40 com XMX** (item 3.2), num jogo com Streamline 2.14.16: só observar e registrar.
-8. **RDR2 em Vulkan com XeMFG:** "Queue metered frames early" ligado e desligado, PresentMon com PCL a 2x. *Feito em 2026-11-05: sem efeito; o problema é o pacing do caminho Vulkan, documentado com recomendação de DX12 (ver Registro).*
+1. **TLOU Part II** com `DlssSuperResolutionPreset=13` salvo e XMX: **aprovado.** Abre, o menu e o seletor do painel funcionam; com o build novo, XMX gerando.
+2. **Ghost of Tsushima** com XMX: **aprovado.** Forçar 3x ou mais não fecha o jogo e mostra o aviso do Streamline 2.4. O 2x não interpolava no primeiro build da 1.8.3 (regressão, ver R1 em "O que mudou"); com o build novo, XMX gerando.
+3. **HZD Remastered** com XMX: **aprovado.** Gera a 2x com o modelo 2x da Intel; acima de 2x repete quadros, como esperado (o modelo 2x produz um gerado por real).
+4. **Regressão:** Cyberpunk 2077 e Crimson Desert aprovados no primeiro build; o Cyberpunk já recebeu o build novo para repetir. **Pendentes:** Witcher 3 (não instalado), Dying Light 2 e os jogos que o usuário vai instalar.
+5. **Modo seguro:** **aprovado.** O card apareceu depois de três fechamentos forçados.
+6. **Pré-Ada simulado:** **aprovado** com `SimulatePreAda=1`: o menu do jogo ofereceu o FG e o XMX gerou. Falta uma RTX 20/30 real.
+7. **Dynamic MFG na RTX 40 com XMX:** não testável, porque o painel bloqueia o Dynamic MFG com XMX (decisão da 1.8.0). **Decisão pendente do usuário:** manter o bloqueio ou liberar para teste.
+8. **RDR2 em Vulkan com XeMFG:** sem efeito do "Queue metered frames early"; o pacing do caminho Vulkan não foi resolvido e ficou documentado com recomendação de DX12 (ver Registro).
 
 ## Registro
 
+- **2026-11-05 · GoT, regressão do XMX corrigida.** Com XMX e 2x pelo menu, o 1.8.3 gerava (resumo de 10 s: 830–890 gerados) mas o PresentMon contava 62 apresentações/s, só quadros reais, e o jogo não reconhecia o FG ativo (overlay da Steam, menu). Sem XMX, o DLSS-G da NVIDIA gerava. Sem o `renodx-dlss5` o resultado foi o mesmo. Com o 1.8.2 no mesmo jogo: 144,5 apresentações/s. Diferença nos logs: o 1.8.2 engancha o provider no carregamento, antes do `CreateFeature` do DLSS-G; o 1.8.3 enganchava no primeiro Present, depois dele. Correção: hook no `slDLSSGSetOptions` (ver R1 em "O que mudou"). Validado pelo usuário no GoT, TLOU2 e HZD; o log do GoT mostra `process-resident when the game turned DLSS-G on` e `installing on 3 module(s) mapped before DLSS-G was turned on`. Também entrou um resumo do XMX a cada 10 s no `ReShade.log` (gerados, motivos de não gerar, tamanhos das entradas, escala do MV, reset), com limite de 60 linhas, para os próximos diagnósticos. Nos primeiros quadros do GoT a profundidade e os vetores chegam com 1x1; depois, 1712x960.
 - **2026-11-05 · RDR2 em Vulkan: encerrado, recomendação DX12** (decisão do usuário). 4K via DLDSR, 2x, RTX 4070 SUPER, PresentMon 2.4.1 (capturas em `Documents\MFGBenchmarks\20261105-*-rdr2-*`). DX12: 111,5 fps, intervalo 8,7 ms, variação entre frames seguidos 1,0 ms. Vulkan: 86 fps, frames em pares (3–5 ms e depois 13–17 ms), variação 3,4–4,7 ms, picos até 166 ms; o mesmo relatado numa 4090. Descartados por medição: capacidade da GPU, metering do driver, "Queue metered frames early", prioridade de fila (o RDR2 cria todas as filas com prioridade 0). Instrumentação de GPU no xvk: a cópia intermediária (`stage_copy`) levava 17–74 ms quando a GPU saturava; com limite de 70 fps no RTSS ficava abaixo de 5 ms. Experimentos, todos desfeitos: (1) sem a cópia intermediária, 93,6 fps e p99 19,5 ms, mas pares de frames mais frequentes (10%) e o trabalho do próprio XeFG passou a esperar 64–72 ms; (2) espera na GPU para reusar o backbuffer, imagem "voltando"; (3) espera na CPU, a mesma coisa; (4) cadência na thread de apresentação, só 52 de 79 fps chegavam à tela; (5) sleep e marcador de início da XeLL no retorno do present (o jogo não tem Reflex no Vulkan e a XeLL dormia 0,03 ms por frame), que congelou ao abrir por um deadlock da espera do item 3 com a criação da swapchain. Corrigido o deadlock, o usuário encerrou sem o teste final. Patch dos experimentos em `build/rdr2-vulkan-experiments.patch`. Também fica anotado: o painel mostra "nenhuma" tecnologia de latência no Vulkan sem Reflex, embora o host use a XeLL internamente.
 - **2026-11-05 · implementação** Commits na `feat/1.8.3`: o do onenowy (`de8de31`), ciclo de vida dos hooks (`8d83359`), Streamline 2.7 (`c2fc9b6`), modo seguro (`7dbb337`), XeFG 2x no HZD (`6de60fc`), log do runtime (`f9ced61`), pré-Ada (`e807f08`), estados das tags (`9f0a24e`), versão (`67a890a`). Testes novos rodados isoladamente: `stale_hook`, `force_policy`, `support_files`, `gpu_arch`, `xmx_policy`, `ini_panel_parity`, `xemfg_version_resource`; todos passaram.
 - **2026-11-05 · Streamline Sample 2.14.16** Com este build e XMX: `process-resident after first Present`, depois `installing on 3 module(s) mapped before the first Present`, depois os três slots enganchados; `init ... frames 5 result 0` e `execute result 0`. Debug layer: 15.356 erros antes da correção das tags; o gerador da NVIDIA, 0.
