@@ -525,9 +525,25 @@ std::atomic_bool g_resident{false};
 // 1.8.3: hooks that cannot be undone (XMX, the NGX preset) are installed only
 // by a copy that stays loaded: pinned, and only after a real Present, so
 // ReShade's temporary startup copies never install one. False before that.
+bool PinResident(const char* when);
 bool EnsureResident() {
   if (g_resident.load(std::memory_order_acquire)) return true;
   if (!g_real_present_seen.load(std::memory_order_acquire)) return false;
+  return PinResident("after first Present");
+}
+
+// 1.8.3: also when the game turns DLSS-G on through Streamline, which ReShade's
+// startup copies never see. Ghost of Tsushima does it before its first Present:
+// with XMX hooked only at that Present, Streamline 2.4 had already created
+// frame generation on NVIDIA's unhooked generator and then presented the real
+// frames alone (62 presents per second against 144 in 1.8.2, which hooked at load).
+void BeforeFrameGeneration() {
+  if (!mfgunlock::xmx::generator::Enabled()) return;
+  if (!g_resident.load(std::memory_order_acquire) && !PinResident("when the game turned DLSS-G on")) return;
+  mfgunlock::xmx::Release(true);
+}
+
+bool PinResident(const char* when) {
   HMODULE held = nullptr;
   if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
                           reinterpret_cast<LPCWSTR>(&EnsureResident), &held)) {
@@ -540,9 +556,9 @@ bool EnsureResident() {
   if (!g_resident.exchange(true, std::memory_order_acq_rel))
     reshade::log::message(reshade::log::level::info,
 #if defined(MFGUNLOCK_ENGINEERING_EXPERIMENTAL)
-        "mfgunlock: engineering session is process-resident after first Present; restart required, hot reload disabled.");
+        (std::string("mfgunlock: engineering session is process-resident ") + when + "; restart required, hot reload disabled.").c_str());
 #else
-        "mfgunlock: process-resident after first Present; restart required, hot reload disabled.");
+        (std::string("mfgunlock: process-resident ") + when + "; restart required, hot reload disabled.").c_str());
 #endif
   return true;
 }
@@ -1328,6 +1344,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
         mfgunlock::xmx::preada::TryInstallStreamline();
       };
       mfgunlock::loadhook::g_on_dlssg_loaded = ProcessLoadedDlssgModule;
+      mfgunlock::framecount::internal::g_before_frame_generation.store(BeforeFrameGeneration, std::memory_order_release);
       mfgunlock::loadhook::g_on_dlssg_plugin_loaded = ProcessLoadedStreamlineDlssgPlugin;
       mfgunlock::loadhook::g_on_ngx_loaded = []() {
         TryInstallPresetHook();

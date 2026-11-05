@@ -2027,11 +2027,17 @@ inline sl::Result HookedInit(const sl::Preferences& pref, uint64_t sdk_version) 
   return result;
 }
 
+// 1.8.3: run before the game turns DLSS-G on, ahead of Streamline creating the
+// frame generation feature (addon.cpp: XMX's hooks go in there).
+inline std::atomic<void (*)()> g_before_frame_generation{nullptr};
+
 inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
                                    const sl::DLSSGOptions& options) {
   const auto real = g_real_set_options.load(std::memory_order_acquire);
   if (real == nullptr)
     return sl::Result::eErrorNotInitialized;
+  if (options.mode != sl::DLSSGMode::eOff)
+    if (const auto before = g_before_frame_generation.load(std::memory_order_acquire)) before();
   if (options.mode == sl::DLSSGMode::eDynamic &&
       g_game_dynamic_blocked.load(std::memory_order_relaxed)) {
     // eDynamic exists only in the current struct version, so this copy is complete.

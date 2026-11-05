@@ -138,6 +138,19 @@ inline std::atomic<uint64_t> g_last_evaluate_tick{0};
 inline std::atomic<int> g_idle{0};
 inline std::atomic<uint32_t> g_idle_logged{0};
 inline std::atomic<uint32_t> g_frames_limit{0};  // the model's limit once a game asks for more
+// 1.8.3: what the generator saw over the last 10 s, outside Log's cap of 48 lines
+// (Ghost of Tsushima: the first evaluates had 1x1 depth and motion and a reset,
+// and the 2x did not look interpolated; the start alone cannot tell why).
+struct Summary {
+  uint64_t since{}, evaluates{}, generated{};
+  std::array<uint64_t, static_cast<int>(policy::Idle::Count)> idle{};
+  std::string inputs;
+  uint32_t lines{};
+};
+inline Summary& Summarized() {
+  static auto* summary = new Summary;
+  return *summary;
+}
 // One log line per reason, however often the state flips.
 inline void NoteIdle(policy::Idle idle) {
   g_idle.store(static_cast<int>(idle), std::memory_order_relaxed);
@@ -483,6 +496,37 @@ inline bool Prepare(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* 
   state.flags = flags;
   return true;
 }
+inline std::string Shape(const NVSDK_NGX_Parameter* params, const char* name) {
+  auto* resource = Resource(params, name);
+  if (resource == nullptr) return "none";
+  const auto desc = resource->GetDesc();
+  return std::to_string(desc.Width) + "x" + std::to_string(desc.Height) + "/" + std::to_string(static_cast<int>(desc.Format));
+}
+inline void Summarize(const NVSDK_NGX_Parameter* params, bool generated, policy::Idle idle) {
+  auto& summary = Summarized();
+  const auto now = GetTickCount64();
+  if (summary.since == 0) summary.since = now;
+  ++summary.evaluates;
+  if (generated) ++summary.generated;
+  ++summary.idle[static_cast<int>(idle)];
+  if (now - summary.since < 10000) return;
+  // The inputs of this evaluate, as NGX names them.
+  std::string text = "summary 10 s: evaluates " + std::to_string(summary.evaluates) + ", generated " +
+                     std::to_string(summary.generated);
+  for (int i = 1; i < static_cast<int>(policy::Idle::Count); ++i)
+    if (summary.idle[i] != 0)
+      text += ", " + std::string(policy::IdleText(static_cast<policy::Idle>(i))) + " " + std::to_string(summary.idle[i]);
+  text += "; depth " + Shape(params, "DLSSG.Depth") + " motion " + Shape(params, "DLSSG.MVecs") + " hudless " +
+          Shape(params, "DLSSG.HUDLess") + " backbuffer " + Shape(params, "DLSSG.Backbuffer") + "; mv scale " +
+          std::to_string(Value<float>(params, "DLSSG.MvecScaleX", 0.f)) + "," + std::to_string(Value<float>(params, "DLSSG.MvecScaleY", 0.f)) +
+          " reset " + std::to_string(Value<unsigned int>(params, "DLSSG.Reset", 0)) + " frames " +
+          std::to_string(Value<unsigned int>(params, "DLSSG.MultiFrameCount", 0));
+  if (summary.lines++ < 60) reshade::log::message(reshade::log::level::info, ("mfgunlock: xmx " + text).c_str());
+  const auto lines = summary.lines;
+  summary = {};
+  summary.lines = lines;
+  summary.since = now;
+}
 // True when this call produced what NGX expects.
 inline bool Generate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* params) {
   auto& state = Get();
@@ -494,6 +538,7 @@ inline bool Generate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
   auto* motion = Resource(params, "DLSSG.MVecs");
   if (backbuffer == nullptr || interpolated == nullptr || depth == nullptr || motion == nullptr) {
     NoteIdle(policy::Idle::MissingInputs);
+    Summarize(params, false, policy::Idle::MissingInputs);
     return false;
   }
   const auto requested = (std::max)(Value<unsigned int>(params, "DLSSG.MultiFrameCount", 1), 1u);
@@ -595,6 +640,7 @@ inline bool Generate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
   }
   state.lastGenerated = generated;
   NoteIdle(idle);
+  Summarize(params, generated, idle);
   if (generated) Copy(list, interpolated, kOutputState, state.outputs[frameIndex - 1].Get(), kOutputState);
   else Copy(list, interpolated, kOutputState, backbuffer, kBackbufferState);
   return true;

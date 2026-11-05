@@ -126,7 +126,8 @@ inline void RecordHookBytes(HMODULE module, uint8_t* address, const std::array<u
   if (write.applied) modulesession::RecordCode(*session, {write});
 }
 
-inline void InstallInThread(HMODULE module, int slot) {
+// threads: when given, takes the installing thread's handle instead of closing it.
+inline void InstallInThread(HMODULE module, int slot, std::vector<HANDLE>* threads) {
   struct Work { HMODULE module; int slot; };
   const auto thread = CreateThread(
       nullptr, 0,
@@ -163,12 +164,14 @@ inline void InstallInThread(HMODULE module, int slot) {
         return 0;
       },
       new Work{module, slot}, 0, nullptr);
-  if (thread != nullptr) CloseHandle(thread);
+  if (thread == nullptr) return;
+  if (threads != nullptr) threads->push_back(thread);
+  else CloseHandle(thread);
 }
 
 // Under the loader lock only plain bookkeeping happens here; Detours walks the
 // threads, so a short-lived thread installs once that lock is gone.
-inline void Attach(HMODULE module) {
+inline void Attach(HMODULE module, std::vector<HANDLE>* threads = nullptr) {
   if (module == nullptr || !generator::Enabled() || !generator::Preflight()) return;
   // A renamed Vulkan provider has no D3D12 entry and takes no slot.
   if (GetProcAddress(module, "NVSDK_NGX_D3D12_EvaluateFeature") == nullptr) return;
@@ -201,12 +204,13 @@ inline void Attach(HMODULE module) {
       Log("no free slot for another copy of the generator");
     }
   }
-  if (install) InstallInThread(pinned, slot);
+  if (install) InstallInThread(pinned, slot, threads);
 }
 
 // Called once the addon is pinned: from here on Attach installs, and every
-// module remembered before installs now.
-inline void Release() {
+// module remembered before installs now. wait (1.8.3): returns only once those
+// installs ended, for a caller about to let DLSS-G create frame generation.
+inline void Release(bool wait = false) {
   AcquireSRWLockExclusive(&internal::lock);
   if (internal::resident) {
     ReleaseSRWLockExclusive(&internal::lock);
@@ -216,8 +220,16 @@ inline void Release() {
   const auto pending = std::move(internal::pending);
   internal::pending.clear();
   ReleaseSRWLockExclusive(&internal::lock);
-  if (!pending.empty()) Log("installing on " + std::to_string(pending.size()) + " module(s) mapped before the first Present");
-  for (HMODULE module : pending) Attach(module);
+  if (!pending.empty())
+    Log("installing on " + std::to_string(pending.size()) + " module(s) mapped " +
+        (wait ? "before DLSS-G was turned on" : "before the first Present"));
+  std::vector<HANDLE> threads;
+  for (HMODULE module : pending) Attach(module, wait ? &threads : nullptr);
+  if (threads.empty()) return;
+  // Each install retries for up to 20 x 250 ms.
+  WaitForMultipleObjects(static_cast<DWORD>((std::min)(threads.size(), size_t{MAXIMUM_WAIT_OBJECTS})), threads.data(), TRUE,
+                         (kInstallAttempts + 4) * 250);
+  for (HANDLE thread : threads) CloseHandle(thread);
 }
 
 // Explicit unload only. Normally unreachable: hooks go in after the pin.
