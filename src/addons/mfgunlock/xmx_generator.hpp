@@ -105,6 +105,9 @@ struct State {
   D3D12_RESOURCE_DESC outputDesc{};
   bool published{};
   bool failed{};
+  // The last shape XeFG's Init refused, retried only once the shape changes.
+  bool refused{};
+  policy::ContextShape refusedShape{};
   uint32_t logs{};
 };
 inline State& Get() {
@@ -122,6 +125,10 @@ inline std::string g_failure;
 inline void Fail(const std::string& reason) {
   { std::lock_guard guard(g_failure_lock); g_failure = reason; }
   Log("failed: " + reason);
+}
+inline void ClearFailure() {
+  std::lock_guard guard(g_failure_lock);
+  g_failure.clear();
 }
 inline std::atomic_bool g_preflight_passed{false};
 inline std::atomic<int> g_hooks_installed{0}, g_hooks_failed{0};
@@ -374,8 +381,12 @@ inline bool Prepare(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* 
   if (state.context != nullptr &&
       wanted == policy::ContextShape{state.device.Get(), state.width, state.height, static_cast<uint32_t>(state.format), state.flags})
     return true;
+  // 1.8.3: a shape XeFG refused is not retried every frame, but another
+  // shape (a resolution or HDR change) is.
+  if (state.refused && wanted == state.refusedShape) return false;
   if (state.contexts >= policy::kMaxContexts) {
     Fail("the game changed its output size too many times; restart the game");
+    state.failed = true;
     return false;
   }
   if (state.context != nullptr) {
@@ -396,7 +407,10 @@ inline bool Prepare(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* 
   }
   state.device = device;
   ++state.contexts;
-  if (!LoadContext(state.device.Get())) return false;
+  if (!LoadContext(state.device.Get())) {
+    state.failed = true;
+    return false;
+  }
   InitParams init{};
   init.width = width;
   init.height = output.Height;
@@ -405,16 +419,42 @@ inline bool Prepare(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* 
   init.maxFrames = state.maxFrames;
   init.creationMask = 1;
   init.visibleMask = 1;
-  const auto result = Guarded(reinterpret_cast<unsigned char*>(state.fg) + kInitRva, state.context, &init, nullptr);
-  Log("init " + std::to_string(width) + "x" + std::to_string(output.Height) + " format " +
-      std::to_string(static_cast<int>(output.Format)) + " flags " + std::to_string(flags) + " result " + std::to_string(result));
+  const auto initialize = [&] {
+    const auto result = Guarded(reinterpret_cast<unsigned char*>(state.fg) + kInitRva, state.context, &init, nullptr);
+    Log("init " + std::to_string(width) + "x" + std::to_string(output.Height) + " format " +
+        std::to_string(static_cast<int>(output.Format)) + " flags " + std::to_string(flags) + " frames " +
+        std::to_string(init.maxFrames) + " result " + std::to_string(result));
+    return result;
+  };
+  auto result = initialize();
+  // 1.8.3: the ported multi-frame model throws inside Init (-1000) on inputs
+  // Intel's own 2x model takes: HZD Remastered's jittered motion vectors
+  // (flags 17). Intel's model on a fresh context still generates 2x.
+  if (result != 0 && init.maxFrames > 1 && state.contexts < policy::kMaxContexts) {
+    ++state.contexts;
+    if (LoadContext(state.device.Get())) {
+      init.maxFrames = 1;
+      result = initialize();
+      if (result == 0) {
+        state.maxFrames = 1;
+        Log("the multi-frame model refused these inputs; Intel's 2x model runs instead");
+      }
+    }
+  }
   if (result != 0) {
     // Found out only here: the hook goes in when the module loads, long before the
     // game's output format exists, so NVIDIA's generator is already gone.
     Fail(output.Format == DXGI_FORMAT_R16G16B16A16_FLOAT
              ? "XMX cannot use this game's scRGB HDR output (result " + std::to_string(result) + "); turn HDR off or use XeMFG"
              : "XeFG initialization returned " + std::to_string(result));
+    state.context = nullptr;
+    state.refused = true;
+    state.refusedShape = wanted;
     return false;
+  }
+  if (state.refused) {
+    state.refused = false;
+    ClearFailure();
   }
   state.outputDesc = output;
   state.width = width;
@@ -438,10 +478,8 @@ inline bool Generate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
   }
   const auto requested = (std::max)(Value<unsigned int>(params, "DLSSG.MultiFrameCount", 1), 1u);
   const auto requestedIndex = std::clamp(Value<unsigned int>(params, "DLSSG.MultiFrameIndex", 1), 1u, requested);
-  if (!Prepare(list, params, interpolated->GetDesc())) {
-    state.failed = true;
-    return false;
-  }
+  // Prepare sets `failed` itself when retrying cannot help.
+  if (!Prepare(list, params, interpolated->GetDesc())) return false;
   const auto plan = policy::PlanFrames(requested, requestedIndex, state.maxFrames);
   const auto frameCount = plan.count, frameIndex = plan.index;
   if (plan.limited && g_frames_limit.exchange(state.maxFrames) == 0)
