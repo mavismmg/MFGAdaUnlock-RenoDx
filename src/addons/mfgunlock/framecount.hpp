@@ -2168,6 +2168,30 @@ inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
     return result;
   }
 
+  if (forcepolicy::StreamlineBlocksMultiFrame(
+          g_active_streamline_version.load(std::memory_order_acquire), desired)) {
+    static std::atomic_bool warned{false};
+    if (!warned.exchange(true, std::memory_order_relaxed)) {
+      reshade::log::message(
+          reshade::log::level::warning,
+          "mfgunlock: this game's Streamline DLSS-G is older than 2.7 and has no multi-frame "
+          "generation; not forcing more than 2x, forwarding the game's request unchanged.");
+    }
+    const sl::Result result = CallSetOptions(viewport, options);
+    g_last_result.store(static_cast<unsigned int>(result), std::memory_order_relaxed);
+    g_last_forced.store(0, std::memory_order_relaxed);
+    if (result == sl::Result::eOk) {
+      g_last_effective_generated.store(requested, std::memory_order_relaxed);
+      g_effective_request_seen.store(true, std::memory_order_release);
+    } else {
+      g_effective_request_seen.store(false, std::memory_order_release);
+    }
+    g_fixed_override_status.store(
+        static_cast<unsigned int>(forcepolicy::FixedOverrideStatus::kStreamlineBefore27),
+        std::memory_order_release);
+    return result;
+  }
+
   if (options.structVersion < sl::kStructVersion1 ||
       options.structVersion > sl::kStructVersion5) {
     static std::atomic_bool warned{false};

@@ -2055,6 +2055,15 @@ void DrawLegacyOverlay(reshade::api::effect_runtime* /*runtime*/) {
       ImGui::TextDisabled(
           "Addon override unsupported by the game's DLSSGOptions ABI.");
       break;
+    case mfgunlock::forcepolicy::FixedOverrideStatus::kStreamlineBefore27:
+      if (effective_seen) {
+        ImGui::Text("Effective downstream request: %ux (game request).",
+                    effective_multiplier);
+      }
+      ImGui::TextColored(kUiWarning,
+          "This game's Streamline is older than 2.7 and cannot generate more than 2x; "
+          "the multiplier is not forced.");
+      break;
     case mfgunlock::forcepolicy::FixedOverrideStatus::kDynamicPriority:
       ImGui::TextDisabled(
           "Effective multiplier: Dynamic MFG/provider-controlled; fixed request is not applied.");
@@ -2957,6 +2966,13 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
           static_cast<unsigned int>(force));
       reshade::set_config_value(nullptr, kConfigSection, "ForceMultiplier",
                                 force);
+    }
+    if (mfgunlock::forcepolicy::StreamlineBlocksMultiFrame(
+            mfgunlock::framecount::g_active_streamline_version.load(std::memory_order_acquire), 2)) {
+      ImGui::PushTextWrapPos();
+      ImGui::TextColored(kUiWarning,
+          "This game's Streamline is older than 2.7: 3x to 6x are not applied, to avoid a crash.");
+      ImGui::PopTextWrapPos();
     }
 
     bool dynamic_mfg = dynamic_enabled && !dynamic_game_blocked;

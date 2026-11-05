@@ -136,6 +136,20 @@ int main() {
     CHECK(!refusal.Refused(4) && refusal.Value() == 0);
   }
 
+  {
+    using mfgunlock::forcepolicy::StreamlineBlocksMultiFrame;
+    constexpr auto version = [](uint64_t major, uint64_t minor, uint64_t patch) {
+      return major << 48u | minor << 32u | patch << 16u;
+    };
+    CHECK(StreamlineBlocksMultiFrame(version(2, 4, 0), 2));   // Ghost of Tsushima, 3x
+    CHECK(StreamlineBlocksMultiFrame(version(2, 2, 1), 5));   // HZD Remastered, 6x
+    CHECK(StreamlineBlocksMultiFrame(version(2, 6, 9), 2));
+    CHECK(!StreamlineBlocksMultiFrame(version(2, 4, 0), 1));  // 2x is what it supports
+    CHECK(!StreamlineBlocksMultiFrame(version(2, 7, 0), 3));  // TLOU Part II has 2.7.2
+    CHECK(!StreamlineBlocksMultiFrame(version(2, 14, 16), 5));
+    CHECK(!StreamlineBlocksMultiFrame(0, 3));                 // not observed yet
+  }
+
   std::cout << "force policy tests passed\n";
   return EXIT_SUCCESS;
 }

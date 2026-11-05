@@ -25,7 +25,18 @@ enum class FixedOverrideStatus : uint32_t {
   kUnsupportedAbi = 5,
   kDynamicPriority = 6,
   kMatchedGameRequest = 7,
+  kStreamlineBefore27 = 8,
 };
+
+// 1.8.3: Streamline added multi-frame generation in 2.7. An older DLSS-G
+// wrapper (Ghost of Tsushima 2.4.0, HZD Remastered 2.2.1) never offers more
+// than 2x and was not built for a larger numFramesToGenerate: forcing one
+// there crashed inside sl.dlss_g. `packed` is runtimeversion::Pack; zero means
+// not observed yet, which does not block.
+inline constexpr bool StreamlineBlocksMultiFrame(uint64_t packed, uint32_t generated_frames) {
+  constexpr uint64_t kFirstMultiFrame = uint64_t{2} << 48u | uint64_t{7} << 32u;
+  return packed != 0 && packed < kFirstMultiFrame && generated_frames > 1;
+}
 
 struct RequestDecision {
   RequestSource source = RequestSource::kNative;
