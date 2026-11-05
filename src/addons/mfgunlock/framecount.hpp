@@ -65,6 +65,7 @@
 #include "./quality_guard.hpp"
 #include "./stability_policy.hpp"
 #include "./runtime_version.hpp"
+#include "./tag_states.hpp"
 
 namespace mfgunlock::framecount {
 
@@ -1873,10 +1874,19 @@ inline sl::Result FilterHudSeparationTags(const sl::ViewportHandle& viewport,
   return submit(forwarded);
 }
 
+// 1.8.3: each tagged resource's state, for XMX's copies (see tag_states.hpp).
+inline void RecordTagStates(const sl::ResourceTag* tags, uint32_t count) {
+  if (tags == nullptr) return;
+  for (uint32_t i = 0; i < count && i < 64; ++i)
+    if (tags[i].resource != nullptr && tags[i].resource->native != nullptr)
+      tagstates::Record(tags[i].resource->native, tags[i].resource->state);
+}
+
 inline sl::Result HookedSetTag(const sl::ViewportHandle& viewport,
                                const sl::ResourceTag* tags, uint32_t count,
                                sl::CommandBuffer* command_buffer) {
   if (g_real_set_tag == nullptr) return sl::Result::eErrorNotInitialized;
+  RecordTagStates(tags, count);
   inputdiag::ObserveTags(static_cast<uint32_t>(viewport), tags, count, false, 0,
                          static_cast<uint32_t>(g_format_api.load(
                              std::memory_order_relaxed)));
@@ -1890,6 +1900,7 @@ inline sl::Result HookedSetTagForFrame(const sl::FrameToken& frame,
                                        const sl::ResourceTag* tags, uint32_t count,
                                        sl::CommandBuffer* command_buffer) {
   if (g_real_set_tag_for_frame == nullptr) return sl::Result::eErrorNotInitialized;
+  RecordTagStates(tags, count);
   inputdiag::ObserveTags(static_cast<uint32_t>(viewport), tags, count, true,
                          static_cast<uint32_t>(frame),
                          static_cast<uint32_t>(g_format_api.load(

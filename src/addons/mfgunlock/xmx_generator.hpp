@@ -21,6 +21,7 @@
 #include <vector>
 #include "backend_selection.hpp"
 #include "support_files.hpp"
+#include "tag_states.hpp"
 #include "xmx_policy.hpp"
 #include "xmx_preada.hpp"
 
@@ -341,7 +342,16 @@ inline bool Capture(ID3D12Device* device, ID3D12GraphicsCommandList* list, ComPt
     copy = Texture(device, desc, kXefgInputState, D3D12_RESOURCE_FLAG_NONE);
     if (!copy) return false;
   }
-  Copy(list, copy.Get(), kXefgInputState, source, sourceState);
+  // 1.8.3: the game's own tagged resource is still in its tagged state, which
+  // a direct list can leave and restore. Streamline 2.14 evaluates on a compute
+  // list, where graphics states (render target, depth) cannot be named at all;
+  // NVIDIA's generator reads them through CUDA. There the 1.8.0 assumption
+  // stays: invalid for the debug layer, harmless on NVIDIA drivers in the field.
+  // A copy on our own direct list, fenced with Streamline's queue, is the fix.
+  const auto from = list->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT
+                        ? static_cast<D3D12_RESOURCE_STATES>(tagstates::StateOf(source, sourceState))
+                        : sourceState;
+  Copy(list, copy.Get(), kXefgInputState, source, from);
   return true;
 }
 inline Input Describe(ID3D12Resource* copy) {
