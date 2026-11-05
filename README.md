@@ -337,6 +337,8 @@ artifact on a HUD/UI element, switch back to **Native**.
 | The Witcher 3: Wild Hunt (next-gen) | DX12 | Working | Working | Turn off the game's **VSync** for correct frame pacing on CUDA. Fixed in 1.5.3: changing path tracing or other graphics settings with frame generation on no longer loses the graphics device |
 | Alan Wake 2 | DX12 | Working | Working | XMX since 1.8.2 |
 | Stellar Blade | DX12 | Not tested | Working | XMX since 1.8.3 |
+| Ghost of Tsushima | DX12 | Not tested | Working | XMX since 1.8.3. Its Streamline (2.4) has no multi-frame generation: 2x only, and a forced 3x or more is not applied |
+| Horizon Zero Dawn Remastered | DX12 | Not tested | Working | XMX since 1.8.3, with Intel's 2x model (the game sends jittered motion vectors). Its Streamline (2.2.1) offers 2x only |
 | The Last of Us Part II Remastered | DX12 | Working | Working | XMX since 1.8.3; in 1.8.2 a saved DLSS preset crashed the game at start |
 | Mafia: The Old Country | DX12 | Working | Maybe |  |
 | Resonance: A Plague Tale Legacy | DX12 | Working | Working |  |
