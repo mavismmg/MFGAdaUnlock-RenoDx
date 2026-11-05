@@ -107,7 +107,7 @@ target_include_directories(release_1_4_5_policy_tests SYSTEM PRIVATE
   $<TARGET_PROPERTY:mfgunlock_addon_compile,INCLUDE_DIRECTORIES>)
 add_test(NAME release_1_4_5_policy COMMAND release_1_4_5_policy_tests)
 
-foreach(engineering_test IN ITEMS patch_transaction queue_ack provider_identity hook_failure loader_notify quality_numerical)
+foreach(engineering_test IN ITEMS patch_transaction queue_ack provider_identity hook_failure stale_hook loader_notify quality_numerical)
   add_executable(${engineering_test}_tests ${engineering_test}_tests.cpp)
   target_compile_definitions(${engineering_test}_tests PRIVATE NOMINMAX
     MFGUNLOCK_LOCAL_LOW_OVERHEAD MFGUNLOCK_LOCAL_STABILITY MFGUNLOCK_CONTINUOUS_BORDER_AXES

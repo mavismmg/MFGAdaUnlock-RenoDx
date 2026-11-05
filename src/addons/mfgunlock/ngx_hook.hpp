@@ -92,6 +92,45 @@ inline ThreadCoverage OpenOtherThreads() {
 
 }  // namespace internal
 
+// 1.8.3: where the jumps at `code` lead -- rel32, rel8 and RIP-relative
+// indirect jumps, the forms Detours writes -- or `code` itself.
+inline const uint8_t* FollowJumps(const uint8_t* code) {
+  for (int hop = 0; hop < 4; ++hop) {
+    if (!patching::Readable(code, 6)) break;
+    if (code[0] == 0xE9) {
+      int32_t offset = 0;
+      std::memcpy(&offset, code + 1, sizeof(offset));
+      code += 5 + offset;
+    } else if (code[0] == 0xEB) {
+      code += 2 + static_cast<int8_t>(code[1]);
+    } else if (code[0] == 0xFF && code[1] == 0x25) {
+      int32_t offset = 0;
+      std::memcpy(&offset, code + 2, sizeof(offset));
+      const uint8_t* slot = code + 6 + offset;
+      if (!patching::Readable(slot, sizeof(void*))) break;
+      std::memcpy(&code, slot, sizeof(code));
+    } else {
+      break;
+    }
+  }
+  return code;
+}
+
+// True when `code` already jumps into this addon's image. ReShade loads,
+// unloads and reloads add-ons around its temporary startup devices, and the
+// next copy maps at the same address: a hook left by the unloaded copy lands
+// in our own detour, and hooking over it again makes the trampoline call that
+// detour forever (TLOU Part II, 1.8.2: stack overflow in HookedCreateFeature).
+inline bool JumpsIntoSelf(const void* code) {
+  const auto* start = static_cast<const uint8_t*>(code);
+  const auto* end = FollowJumps(start);
+  if (end == start) return false;
+  HMODULE self = nullptr, target = nullptr;
+  constexpr DWORD kFlags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT;
+  return GetModuleHandleExW(kFlags, reinterpret_cast<LPCWSTR>(&JumpsIntoSelf), &self) &&
+         GetModuleHandleExW(kFlags, reinterpret_cast<LPCWSTR>(end), &target) && self == target;
+}
+
 // Installs `hooks` into `module`. Returns true only if EVERY hook attached and
 // the transaction committed -- a partial install leaves some entry points
 // patched and others not, which is worse than none.
@@ -116,6 +155,15 @@ inline bool Install(HMODULE module, const std::vector<HookItem>& hooks,
     }
     if (*real != nullptr) {
       return false;  // already installed; preserve live trampolines
+    }
+    if (JumpsIntoSelf(reinterpret_cast<const void*>(proc))) {
+      clear_resolved();
+      std::stringstream s;
+      s << "mfgunlock::hook: " << module_label << "!" << name
+        << " still carries a hook from an earlier copy of this add-on that ReShade unloaded; "
+           "not hooking it again. Restart the game.";
+      reshade::log::message(reshade::log::level::error, s.str().c_str());
+      return false;
     }
     resolved.emplace_back(real, replacement);
   }
@@ -178,6 +226,7 @@ inline bool Install(HMODULE module, const std::vector<HookItem>& hooks,
 // 1.8.1: one hook whose trampoline is already resolved in `real`, under the same
 // rules: every thread registered, or nothing patched.
 inline bool InstallOne(void** real, void* replacement) {
+  if (JumpsIntoSelf(*real)) return false;
   std::lock_guard transaction(internal::transaction_lock);
   if (internal::detours.begin() != NO_ERROR) return false;
   auto threads = internal::OpenOtherThreads();

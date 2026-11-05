@@ -518,6 +518,34 @@ void RestoreParameterVTable() { mfgunlock::ngxparam::Restore(g_vtable_patch); }
 // instance alive and makes its eventual worker exit unregister the instance
 // ReShade adopted. The first real Present happens after that probe cycle. It
 // only launches the worker; discovery and patching remain on the worker thread.
+std::atomic_bool g_real_present_seen{false};
+std::atomic_bool g_resident{false};
+
+// 1.8.3: hooks that cannot be undone (XMX, the NGX preset) are installed only
+// by a copy that stays loaded: pinned, and only after a real Present, so
+// ReShade's temporary startup copies never install one. False before that.
+bool EnsureResident() {
+  if (g_resident.load(std::memory_order_acquire)) return true;
+  if (!g_real_present_seen.load(std::memory_order_acquire)) return false;
+  HMODULE held = nullptr;
+  if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                          reinterpret_cast<LPCWSTR>(&EnsureResident), &held)) {
+    static std::atomic_bool warned{false};
+    if (!warned.exchange(true, std::memory_order_relaxed))
+      reshade::log::message(reshade::log::level::warning,
+          "mfgunlock: could not keep the add-on loaded; XMX and the DLSS preset hook stay off.");
+    return false;
+  }
+  if (!g_resident.exchange(true, std::memory_order_acq_rel))
+    reshade::log::message(reshade::log::level::info,
+#if defined(MFGUNLOCK_ENGINEERING_EXPERIMENTAL)
+        "mfgunlock: engineering session is process-resident after first Present; restart required, hot reload disabled.");
+#else
+        "mfgunlock: process-resident after first Present; restart required, hot reload disabled.");
+#endif
+  return true;
+}
+
 void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
                              reshade::api::swapchain* swapchain,
                              const reshade::api::rect* /*source_rect*/,
@@ -527,19 +555,14 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
   if(swapchain==g_primary_swapchain.load(std::memory_order_acquire)) mfgunlock::dlssgdisplay::Observe(swapchain);
 #endif
+  if (swapchain != nullptr && !g_resident.load(std::memory_order_acquire)) {
+    g_real_present_seen.store(true, std::memory_order_release);
 #if defined(MFGUNLOCK_ENGINEERING_EXPERIMENTAL)
-  // Do not pin ReShade's temporary addon/device probes during startup. Once a
-  // real Present is observed, hot unload cannot establish CUDA quiescence.
-  static std::atomic_bool pin_attempted{false};
-  if (swapchain != nullptr && !pin_attempted.exchange(true, std::memory_order_acq_rel)) {
-    HMODULE held = nullptr;
-    const bool resident = GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
-        reinterpret_cast<LPCWSTR>(&OnPresentStartDiscovery), &held) != FALSE;
-    if (!resident) pin_attempted.store(false, std::memory_order_release);
-    if (resident) reshade::log::message(reshade::log::level::info,
-        "mfgunlock: engineering session is process-resident after first Present; restart required, hot reload disabled.");
-  }
+    // Once a real Present is observed, hot unload cannot establish CUDA quiescence.
+    EnsureResident();
 #endif
+    if (mfgunlock::xmx::generator::Enabled() && EnsureResident()) mfgunlock::xmx::Release();
+  }
   // A primary swapchain can disappear while an already-existing secondary
   // survives (resize, launcher/video swapchain, device recreation). Promote
   // the next presenting swapchain once instead of leaving HDR/API state stale.
@@ -1342,6 +1365,8 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
 #endif
       mfgunlock::loadhook::Uninstall();
       mfgunlock::framecount::Uninstall();
+      mfgunlock::xmx::Uninstall();
+      UninstallPresetHook();
       RestoreThinGeometry();
       RestoreMidpoint();
       RestoreDlssgArchGate();

@@ -98,6 +98,8 @@ NVSDK_NGX_Result NVSDK_CONV HookedCreateFeature(ID3D12GraphicsCommandList* list,
       reshade::log::message(reshade::log::level::info, s.str().c_str());
     }
   }
+  // Reached through a hook this copy did not install (see hook::JumpsIntoSelf).
+  if (g_real_create_feature == nullptr) return NVSDK_NGX_Result_Fail;
   return g_real_create_feature(list, feature, parameters, handle);
 }
 
@@ -110,10 +112,17 @@ const std::vector<mfgunlock::hook::HookItem> kNgxPresetHooks = {
 };
 std::atomic_bool g_preset_hook_installed{false};
 
+bool EnsureResident();
+
 void TryInstallPresetHook() {
   if (mfgunlock::dlsspreset::g_selected.load(std::memory_order_relaxed) == 0 ||
       g_preset_hook_installed.load(std::memory_order_acquire))
     return;
+  // 1.8.3: not from ReShade's temporary startup copy of the addon. Its hook
+  // outlived the unload and the next copy recursed through it on the first
+  // DLSS creation (TLOU Part II with a saved preset could not start). The
+  // Present retry below installs it once the addon is resident.
+  if (!EnsureResident()) return;
   static SRWLOCK lock = SRWLOCK_INIT;
   AcquireSRWLockExclusive(&lock);
   for (const wchar_t* name : {L"_nvngx.dll", L"nvngx.dll"}) {
@@ -140,6 +149,12 @@ void RetryPresetHookFromPresent() {
   uint64_t previous = last.load(std::memory_order_relaxed);
   if (now - previous < 250 || !last.compare_exchange_strong(previous, now, std::memory_order_relaxed)) return;
   TryInstallPresetHook();
+}
+
+// Explicit unload only. Normally unreachable: the hook goes in after the pin.
+void UninstallPresetHook() {
+  if (g_preset_hook_installed.load(std::memory_order_acquire) && mfgunlock::hook::Uninstall(kNgxPresetHooks))
+    g_preset_hook_installed.store(false, std::memory_order_release);
 }
 
 const std::vector<mfgunlock::hook::HookItem> kNgxHooks = {
@@ -898,7 +913,8 @@ void TryPatchMidpoint() {
 // wait here: if maintenance is already in progress it requests another pass
 // and returns, avoiding a lock-order inversion with the Windows loader lock.
 void ProcessLoadedDlssgModule(HMODULE mod) {
-  mfgunlock::xmx::Attach(mod);
+  // XMX's hook changes the provider's code, so its identity is taken first.
+  struct AttachAfterGates { HMODULE mod; ~AttachAfterGates() { mfgunlock::xmx::Attach(mod); } } attach{mod};
   if (!TryAcquireSRWLockExclusive(&g_provider_maintenance_lock)) {
     g_provider_rescan_requested.store(true, std::memory_order_release);
     return;
@@ -928,7 +944,11 @@ void RunProviderMaintenance() {
     for (HMODULE mod : g_dlssg_modules) PatchThinGeometryInModule(mod);
   }
   version_candidates = g_gate_modules;
+  const std::vector<HMODULE> providers = g_dlssg_modules;
   ReleaseSRWLockExclusive(&g_provider_maintenance_lock);
+  // After the gates, outside the lock. Before the addon is resident this only
+  // remembers the providers; a preloaded one arrives only here (DL2's .bin).
+  for (HMODULE module : providers) mfgunlock::xmx::Attach(module);
   TryInstallPresetHook();
   // File-version APIs are deliberately kept out of the loader callback. Only
   // candidates whose architecture gates were validated are reported here.
