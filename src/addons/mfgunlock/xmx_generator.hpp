@@ -238,6 +238,13 @@ inline bool LoadContext(ID3D12Device* device) {
     state.published = true;
     auto ll = GetModuleHandleW(L"libxell.dll");
     if (ll == nullptr) ll = LoadLibraryExW((backend::Directory() / L"libxell.dll").c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    // 1.8.3: a copy the game loaded wins over ours (TLOU Part II ships libxell 1.3.0.5).
+    const auto path = [](HMODULE module) {
+      wchar_t text[MAX_PATH]{};
+      return module != nullptr && GetModuleFileNameW(module, text, MAX_PATH) ? std::filesystem::path(text).string()
+                                                                              : std::string("not loaded");
+    };
+    Log("runtime " + path(state.fg) + " and " + path(ll));
     HMODULE self = nullptr;
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                        reinterpret_cast<LPCWSTR>(&LoadContext), &self);
