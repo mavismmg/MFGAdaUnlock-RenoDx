@@ -999,9 +999,9 @@ How to read these numbers:
   multi-frame model refuses its jittered motion vectors.
 - **Only Crimson Desert was measured.** Cyberpunk 2077 was tested by playing it, without
   captures.
-- **NVIDIA Dynamic MFG is not available with XMX**, because it was not validated on
-  this route. If a game asks for it, a fixed multiplier is used and the panel says so.
-  A saved Dynamic MFG setting applies again when you select DLSS-G.
+- **NVIDIA Dynamic MFG with XMX is experimental** (since 1.8.3). NVIDIA's runtime
+  chooses the count and XMX generates it; tested on an RTX 4070 SUPER. It needs the
+  same Streamline and DLSS-G versions as with NVIDIA's generator.
 - **Settings for NVIDIA's generator are locked with XMX**, such as Adaptive Quality,
   the temporal fix and the Blackwell kernels. DLSS presets, Reflex and pacing remain.
 - If XMX fails during play, no frames are generated until the game restarts: the real
