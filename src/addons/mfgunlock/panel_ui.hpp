@@ -312,14 +312,36 @@ template<class Report> void SupportActions(Report report) {
   SupportResult();
 }
 // After a session without a clean exit. Its logs may be overwritten by the next launch.
-template<class Report> void SessionNotice(Report report) {
+// Safe mode covers the DLSS-G backend's options only, so XeMFG does not offer it.
+template<class Report> void SessionNotice(Report report,bool safeModeApplies=true) {
   if(!support::g_previous_unclean.load(std::memory_order_relaxed)) return;
-  ProblemCard card("##previous_session","The last session may have closed unexpectedly",Warning);
+  const uint32_t streak=support::g_unclean_streak.load(std::memory_order_relaxed);
+  const bool offerSafe=safeModeApplies && streak>=support::kSafeModeOffer;
+  ProblemCard card("##previous_session",offerSafe?"The game may have closed unexpectedly several times in a row"
+                                                 :"The last session may have closed unexpectedly",Warning);
   ImGui::TextWrapped("If the game crashed, save the logs now and attach them to your report.");
-  ButtonRow actions(2);
+  if(offerSafe) ImGui::TextWrapped("%u sessions in a row did not end cleanly. Safe mode starts the game once without "
+      "the DLSS preset, XMX and the forced multiplier, to see whether one of them is the cause.",streak);
+  ButtonRow actions(offerSafe?3:2);
   if(actions("Save support files",kSaveSupportHelp)) SaveSupportFiles(report());
-  if(actions("Dismiss")) { support::g_previous_unclean.store(false,std::memory_order_relaxed); SupportMessage().clear(); }
+  if(offerSafe && actions("Safe mode next start","Your settings are kept. Only the next start runs without these options.")) {
+    SupportMessage()=support::RequestSafeMode(backend::Directory())
+        ?"Safe mode is set for the next start. Close the game and start it again."
+        :"Could not set safe mode. Check write access to the game folder.";
+  }
+  if(actions("Dismiss")) {
+    support::g_previous_unclean.store(false,std::memory_order_relaxed);
+    support::ResetStreak(backend::Directory());
+    SupportMessage().clear();
+  }
   SupportResult();
+}
+// While safe mode is on, every page says so: the options look set but do nothing.
+inline void SafeModeNotice() {
+  if(!support::g_safe_mode.load(std::memory_order_relaxed)) return;
+  ProblemCard card("##safe_mode","Safe mode",Warning);
+  ImGui::TextWrapped("This start runs without the DLSS preset, XMX and the forced multiplier. "
+      "Your settings are kept and return on the next start.");
 }
 // Version left, repository link right: one footer for both backends.
 // 1.8.1: this PC at a glance, on the General page. `sync` is null where it is not known.

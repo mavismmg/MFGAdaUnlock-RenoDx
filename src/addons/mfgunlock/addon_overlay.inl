@@ -2698,6 +2698,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     if(xmx_report.framesLimit!=0) mfgunlock::ui::Notice(("This XMX model produces "+std::to_string(xmx_report.framesLimit)+" generated frame(s) per real frame; higher multipliers repeat it.").c_str());
   }
   mfgunlock::ui::SessionNotice(xmx_support_report);
+  mfgunlock::ui::SafeModeNotice();
   if(dynamic_applied) mfgunlock::ui::Description("Dynamic MFG is choosing the multiplier automatically.");
   if(sleep_status_available && (driver_vsync_active || gsync_active))
     mfgunlock::ui::Description(driver_vsync_active && gsync_active?"Driver VSync + G-SYNC active":driver_vsync_active?"Driver VSync active":"G-SYNC active");

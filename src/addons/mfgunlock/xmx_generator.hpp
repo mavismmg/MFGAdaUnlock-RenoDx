@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 #include "backend_selection.hpp"
+#include "support_files.hpp"
 #include "xmx_policy.hpp"
 
 namespace mfgunlock::xmx::generator {
@@ -74,8 +75,9 @@ static_assert(offsetof(ExecuteParams, outputCount) == 0x240 && offsetof(ExecuteP
 static_assert(offsetof(ExecuteParams, firstFrame) == 0x258 && sizeof(ExecuteParams) == 0x260);
 constexpr uint32_t kMaxFrames = 5;
 
+// Safe mode (1.8.3) is decided before the first call, at the start of DllMain.
 inline bool Enabled() {
-  static const bool value = backend::ReadMode() == backend::Mode::Xmx;
+  static const bool value = backend::ReadMode() == backend::Mode::Xmx && !support::g_safe_mode.load();
   return value;
 }
 

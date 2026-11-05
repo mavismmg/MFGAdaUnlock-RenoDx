@@ -145,7 +145,7 @@ void Draw() {
   else if(paused) ui::Notice("The game's latest request has frame generation disabled. If it is enabled in the game, copy Diagnostics so the connection can be checked.");
   else if(status.enabled && status.sdkResult<0) ui::Notice("Frame generation is recovering. If this persists, switch FG off and on in the game.");
   else if(status.output && !status.enabled) ui::Description(status.detail);
-  ui::SessionNotice(report);
+  ui::SessionNotice(report,false);
   static PanelPage page=PanelPage::General;
   if(ImGui::GetContentRegionAvail().x<ImGui::GetFontSize()*26.f) {
     int selected=int(page); ImGui::SetNextItemWidth(-1);

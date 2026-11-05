@@ -999,7 +999,10 @@ void LoadConfig() {
       mfgunlock::framecount::g_runtime_selection_mode.load(
           std::memory_order_relaxed),
       std::memory_order_relaxed);
-  if (reshade::get_config_value(nullptr, kConfigSection, "ForceMultiplier", value)) {
+  // 1.8.3: safe mode starts once without the forced multiplier and the DLSS
+  // presets; the saved values stay for the next start.
+  const bool safe_mode = mfgunlock::support::g_safe_mode.load(std::memory_order_relaxed);
+  if (!safe_mode && reshade::get_config_value(nullptr, kConfigSection, "ForceMultiplier", value)) {
     if (value != 0 && (value < 2 || value > 6)) value = 0;
     mfgunlock::framecount::g_force_multiplier.store(static_cast<unsigned int>(value),
                                                     std::memory_order_relaxed);
@@ -1012,11 +1015,11 @@ void LoadConfig() {
         std::memory_order_relaxed);
   }
   // 1.6 (plan B): 0 = the game's presets, else an sl::DLSSPreset value (J-M).
-  if (reshade::get_config_value(nullptr, kConfigSection, "DlssSuperResolutionPreset", value) &&
+  if (!safe_mode && reshade::get_config_value(nullptr, kConfigSection, "DlssSuperResolutionPreset", value) &&
       value >= 0 && mfgunlock::dlsspreset::IsSelectable(static_cast<uint32_t>(value)))
     mfgunlock::dlsspreset::g_selected.store(static_cast<uint32_t>(value), std::memory_order_relaxed);
   // 1.6 (plan B.6): 0 = the game's presets, else an sl::DLSSDPreset value (D, E).
-  if (reshade::get_config_value(nullptr, kConfigSection, "DlssRayReconstructionPreset", value) &&
+  if (!safe_mode && reshade::get_config_value(nullptr, kConfigSection, "DlssRayReconstructionPreset", value) &&
       value >= 0 && mfgunlock::dlsspreset::IsSelectableRr(static_cast<uint32_t>(value)))
     mfgunlock::dlsspreset::g_rr_selected.store(static_cast<uint32_t>(value), std::memory_order_relaxed);
   legacy_fixed_output_cap_present = reshade::get_config_value(
@@ -1222,6 +1225,9 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       g_self_module = h_module;
       if (!reshade::register_addon(h_module)) return FALSE;
       mfgunlock::support::BeginSession(mfgunlock::backend::Directory());
+      if (mfgunlock::support::ConsumeSafeMode(mfgunlock::backend::Directory()))
+        reshade::log::message(reshade::log::level::warning,
+            "mfgunlock: safe mode for this start: no DLSS preset, XMX or forced multiplier; the settings are kept.");
       {
         // Read by ReShade when it builds its fonts, after add-ons have loaded.
         int font_offered = 0;
@@ -1336,7 +1342,9 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       break;
     }
     case DLL_PROCESS_DETACH:
-      mfgunlock::support::EndSession(mfgunlock::backend::Directory());
+      // Only the game's exit ends the session: ReShade unloading a startup
+      // copy is not one, and the marker's count must survive it.
+      if (lpv_reserved != nullptr) mfgunlock::support::EndSession(mfgunlock::backend::Directory());
       // During process termination Windows is already reclaiming every mapped
       // image. Avoid detour transactions and stale provider-memory restores
       // under the loader lock; explicit addon unload still performs cleanup.

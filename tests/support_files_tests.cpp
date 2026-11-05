@@ -80,6 +80,39 @@ int main() {
   CHECK(g_previous_unclean.exchange(false));
   EndSession(folder);
 
+  // 1.8.3: unclean exits in a row are counted; ReShade's startup copies of the
+  // addon in the same process neither count nor end the session.
+  constexpr DWORD kGone = 0xFFFFFFF0;  // no such process
+  CHECK(!fs::exists(marker));
+  BeginSession(folder, kGone);
+  CHECK(g_unclean_streak.load() == 0);
+  for (uint32_t crash = 1; crash <= kSafeModeOffer; ++crash) {
+    BeginSession(folder);  // the previous process died with its marker
+    CHECK(g_previous_unclean.exchange(false) && g_unclean_streak.load() == crash);
+    BeginSession(folder);  // a second copy of the addon in this process
+    CHECK(!g_previous_unclean.load() && g_unclean_streak.load() == crash);
+    { std::ofstream(marker, std::ios::trunc) << kGone << ' ' << crash; }
+  }
+  BeginSession(folder);
+  CHECK(g_unclean_streak.load() == kSafeModeOffer + 1);
+  ResetStreak(folder);  // "Dismiss"
+  CHECK(g_unclean_streak.load() == 0 && ReadStreak(marker) == 0);
+  EndSession(folder);  // a clean exit
+  BeginSession(folder, kGone);
+  CHECK(g_unclean_streak.load() == 0);
+  { std::ofstream(marker, std::ios::trunc) << kGone; }  // a 1.8.2 marker: pid only
+  BeginSession(folder);
+  CHECK(g_previous_unclean.exchange(false) && g_unclean_streak.load() == 1);
+  EndSession(folder);
+
+  // Safe mode: requested once, held by every copy in the next process, gone after it.
+  CHECK(!ConsumeSafeMode(folder) && !g_safe_mode.load());
+  CHECK(RequestSafeMode(folder));
+  CHECK(ConsumeSafeMode(folder) && g_safe_mode.load());
+  CHECK(ConsumeSafeMode(folder));  // ReShade's next copy of the addon
+  CHECK(!ConsumeSafeMode(folder, kGone) && !fs::exists(folder / kSafeModeName));
+  CHECK(!g_safe_mode.load());
+
   CHECK(IsSupportFile(L"ReShade.log") && IsSupportFile(L"reshade.log1") && IsSupportFile(L"MFGAdaUnlock-XeMFG.log"));
   CHECK(IsSupportFile(L"MFGAdaUnlock.ini"));
   CHECK(!IsSupportFile(L"ReShade.ini") && !IsSupportFile(L"game.log") && !IsSupportFile(L"save.dat"));

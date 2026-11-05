@@ -38,17 +38,66 @@ inline DWORD ReadMarker(const std::filesystem::path& marker) {
   DWORD pid = 0;
   return file >> pid ? pid : 0;
 }
+// 1.8.3: how many sessions in a row ended without a clean exit, kept after the
+// pid. A setting that crashes the game at every start (TLOU Part II with a saved
+// DLSS preset, 1.8.2) needs a way out before the panel can be reached.
+inline std::atomic<uint32_t> g_unclean_streak{0};
+constexpr uint32_t kSafeModeOffer = 3;
+inline uint32_t ReadStreak(const std::filesystem::path& marker) {
+  std::ifstream file(marker);
+  DWORD pid = 0;
+  uint32_t streak = 0;
+  return file >> pid >> streak ? streak : 0;
+}
 // A marker left by a process that is gone: that session ended without a clean
 // exit. A game that ends itself with TerminateProcess looks the same, which is why
 // the panel says "may have".
 inline void BeginSession(const std::filesystem::path& folder, DWORD pid = GetCurrentProcessId()) {
   std::error_code error;
   const auto marker = folder / kMarkerName;
+  uint32_t streak = 0;
   if (std::filesystem::exists(marker, error)) {
     const DWORD previous = ReadMarker(marker);
-    if (previous != pid && !(previous != 0 && ProcessAlive(previous))) g_previous_unclean.store(true);
+    streak = ReadStreak(marker);
+    if (previous != pid && !(previous != 0 && ProcessAlive(previous))) {
+      g_previous_unclean.store(true);
+      ++streak;
+    }
   }
-  std::ofstream(marker, std::ios::trunc) << pid;
+  g_unclean_streak.store(streak);
+  std::ofstream(marker, std::ios::trunc) << pid << ' ' << streak;
+}
+// The player saw the notice and chose to go on: the next crash starts a new count.
+inline void ResetStreak(const std::filesystem::path& folder, DWORD pid = GetCurrentProcessId()) {
+  g_unclean_streak.store(0);
+  const auto marker = folder / kMarkerName;
+  if (ReadMarker(marker) == pid) std::ofstream(marker, std::ios::trunc) << pid << ' ' << 0;
+}
+
+// One session without the hooks a player can turn on (the DLSS preset, XMX, a
+// forced multiplier), chosen in the notice after kSafeModeOffer unclean exits.
+// The request is a file. The next process adopts it by writing its pid, so the
+// copies ReShade loads and unloads at startup all see it; a later process
+// removes it.
+constexpr const wchar_t* kSafeModeName = L"MFGAdaUnlock.safe-mode";
+inline std::atomic_bool g_safe_mode{false};
+inline bool RequestSafeMode(const std::filesystem::path& folder) {
+  std::ofstream file(folder / kSafeModeName, std::ios::trunc);
+  file << 0;
+  return bool(file);
+}
+inline bool ConsumeSafeMode(const std::filesystem::path& folder, DWORD pid = GetCurrentProcessId()) {
+  std::error_code error;
+  const auto request = folder / kSafeModeName;
+  bool safe = false;
+  if (std::filesystem::exists(request, error)) {
+    const DWORD owner = ReadMarker(request);
+    safe = owner == 0 || owner == pid;
+    if (owner == 0) std::ofstream(request, std::ios::trunc) << pid;
+    if (!safe) std::filesystem::remove(request, error);
+  }
+  g_safe_mode.store(safe);
+  return safe;
 }
 // Only its own marker: another copy of the game may have written a newer one.
 inline void EndSession(const std::filesystem::path& folder, DWORD pid = GetCurrentProcessId()) {
