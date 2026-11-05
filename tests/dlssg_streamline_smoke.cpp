@@ -79,26 +79,23 @@ int main() {
     Require(device!=nullptr,"NVIDIA device");
     auto addon=GetModuleHandleW(L"renodx-mfgunlock-native.addon64"); Require(addon,"ReShade did not load the addon");
     // 1.6 (plan B.3): the NGX driver module, mapped after the device as games
-    // that create DLSS without Streamline do; the load hook installs the preset hook.
+    // that create DLSS without Streamline do.
     auto ngx=LoadLibraryW(L"_nvngx.dll"); Require(ngx,"NGX fixture");
-    // 1.6 (plan B.3), before any slDLSSSetOptions call: a game creating DLSS
-    // through NGX gets the selected preset (K) in every mode's creation hint;
-    // another feature is left alone.
+    // 1.8.3: the preset hook on NGX's CreateFeature cannot be undone, so only a
+    // copy of the addon that stays loaded installs it, after the first real
+    // Present (ReShade's temporary startup copy left it behind, and TLOU Part II
+    // recursed through it). This process never presents: CreateFeature stays
+    // NVIDIA's, and a DLSS creation passes unchanged.
     {
       const auto create=Import<CreateFeatureFn>(ngx,"NVSDK_NGX_D3D12_CreateFeature");
-      Require(reinterpret_cast<const uint8_t*>(create)[0]==0xE9,"NGX CreateFeature was not hooked by the DLSS-G backend");
-      constexpr const char* hints[]={NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_DLAA,NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality,
-          NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Balanced,NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Performance,
-          NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_UltraPerformance,NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_UltraQuality};
+      Require(reinterpret_cast<const uint8_t*>(create)[0]!=0xE9,"NGX CreateFeature was hooked before the addon was resident");
       Parameters params; params.Set(NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality,10u);
       NVSDK_NGX_Handle* handle{};
       Require(NVSDK_NGX_SUCCEED(create(nullptr,NVSDK_NGX_Feature_SuperSampling,&params,&handle)),"NGX DLSS creation");
-      for(const auto* hint:hints) { unsigned int v{}; Require(NVSDK_NGX_SUCCEED(params.Get(hint,&v)) && v==11,"the NGX creation hint did not carry preset K"); }
-      Parameters other; other.Set(NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality,10u);
-      Require(NVSDK_NGX_SUCCEED(create(nullptr,NVSDK_NGX_Feature_FrameGeneration,&other,&handle)),"NGX other feature");
-      unsigned int v{}; Require(NVSDK_NGX_SUCCEED(other.Get(NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality,&v)) && v==10 && other.integers.size()==1,
-          "a non-DLSS feature's parameters were changed");
-      std::cout<<"NGX DLSS creation: preset hints set to K"<<std::endl;
+      unsigned int v{};
+      Require(NVSDK_NGX_SUCCEED(params.Get(NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality,&v)) && v==10 && params.integers.size()==1,
+          "a DLSS creation before the first Present was changed");
+      std::cout<<"NGX DLSS creation before the first Present: unchanged"<<std::endl;
     }
     const auto getFeature=Import<PFun_slGetFeatureFunction*>(fixture,"slGetFeatureFunction");
     const auto resolve=[&](sl::Feature feature,const char* name) {
