@@ -975,9 +975,12 @@ How to read these numbers:
 - **Only `libxess_fg.dll` 1.3.1.78.** With another version or a missing file, XMX does
   not start, NVIDIA's generator keeps running, and the panel says why.
 - **Tested on an RTX 4070 SUPER only.** Other cards are unknown.
-- **Not on RTX 20 or 30 GPUs.** XMX needs NVIDIA's DLSS-G runtime to accept the GPU, and
-  it does not on these cards, so the game never offers DLSS Frame Generation. The panel
-  says so and offers **Use XeMFG**, which runs on RTX 20 and 30.
+- **RTX 20 and 30 GPUs are experimental** (1.8.3). NVIDIA's DLSS-G runtime refuses these
+  cards on its own, so with XMX the addon admits them: the game offers DLSS Frame
+  Generation and its menu offers 3x-6x, as on RTX 40. Nothing changes on RTX 40 or 50.
+  Not yet confirmed on a real RTX 20/30. If NVIDIA's runtime still cannot create frame
+  generation on the card, the panel says why and offers **Use XeMFG**, which runs on
+  RTX 20 and 30.
 - **No more than 2x when the game's Streamline is older than 2.7** (Ghost of Tsushima,
   Horizon Zero Dawn Remastered). Forcing more crashed inside Streamline, so the panel's
   **Frame Multiplier** is not applied above 2x there, and the panel says why.
@@ -993,9 +996,9 @@ How to read these numbers:
 - If XMX fails during play, no frames are generated until the game restarts: the real
   frame is shown again, and the panel says why. Select another mode if this repeats. A
   start Intel's model refuses is tried again when the game changes resolution or HDR.
-- On a compute command list (Streamline 2.14), XMX copies its inputs as earlier versions
-  did; the D3D12 debug layer reports those barriers. NVIDIA drivers have run it without
-  problems in every tested game.
+- On a compute command list (Streamline 2.14), XMX copies the game's render-target and
+  depth inputs as non-pixel shader resources, the state Streamline hands NGX. The D3D12
+  debug layer still reports a few barriers in the first frames.
 - **Once Human:** its `nvngx_dlssg.dll` has no profile, so XMX runs at 2x only.
 - **Elden Ring with ERSS:** if ERSS generates frames without NVIDIA's DLSS frame
   generation, XMX has nothing to replace. Use XeMFG.

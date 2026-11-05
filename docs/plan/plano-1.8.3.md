@@ -235,7 +235,14 @@ Bateria completa no plano High performance com o monitor ligado, restaurando o B
 - **2.2:** o `sl.dlss_g` 2.7.2 do TLOU2 não tem o padrão do teto conhecido. O menu depende do provider com o gate aplicado; validar em jogo.
 - **2.3:** o marcador de sessão passou a contar fechamentos inesperados seguidos e só termina na saída do processo. O modo seguro é um arquivo `MFGAdaUnlock.safe-mode` adotado pelo pid do próximo processo. O XeMFG mostra o aviso sem a oferta.
 - **2.4 HZD:** uma sonda offline mostrou que o modelo 2x da Intel aceita `flags 17`. O `-1000` vem do modelo multiquadro portado (exceção capturada pelo wrapper C da XeFG). Correção: nova tentativa com o modelo 2x da Intel; o HZD só oferece 2x de qualquer forma (Streamline 2.2.1).
-- **3.1:** o log do XeMFG na 3060 Ti mostra `slIsFeatureSupported` do DLSS-G com `native_result 6` (`eErrorNoSupportedAdapterFound`). O provider 310.9.16 não compara com o id da Ada, e o manifesto do `sl.dlss_g` não tem requisito de arquitetura: a recusa vem da capacidade do NGX na pilha da NVIDIA, que o XMX não substitui. Fazer o runtime da NVIDIA aceitar uma Ampere exigiria hardware para pesquisar. O caminho isolado entregue: o XMX não engancha em GPU anterior à Ada e o painel oferece o XeMFG, que já responde a essa consulta e gera quadros nessas placas. Chave de teste `[DLSSG] SimulatePreAda=1`.
+- **3.1 (revisto em 2026-11-05, depois de estudar nefh/MFGAmpereUnlock-RenoDx e sdli1995/dlssg_for_sm86):** a primeira conclusão ("a recusa está fora do alcance do XMX") estava errada. Todo provider 310.x exporta `NVSDK_NGX_GetGPUArchitecture` = `mov eax, 0x190; ret`, o mínimo que o núcleo do NGX lê. Decisão do usuário: portar a admissão do nefh (MIT, com crédito), isolada, na 1.8.3, e o jogo deve oferecer o multiplicador pelo próprio menu, como na RTX 40/50. Entregue em `preada_admission.hpp`, ativo só com toda GPU NVIDIA anterior à Ada e XMX ligado:
+  - mínimo do provider rebaixado para Turing, registrado como código próprio;
+  - NVAPI responde Ada só dentro de `slIsFeatureSupported` e do `GetFeatureRequirements` do FG;
+  - as duas consultas admitem o adaptador;
+  - o gate multiquadro é escrito em Turing em vez de Ada.
+  
+  A recompilação de PTX do nefh não entrou, porque o XMX não roda os kernels da NVIDIA. Se o `CreateFeature` falhar numa RTX 20/30 real (módulos CUDA sm_89 na criação), o painel mostra o motivo e oferece o XeMFG, e o próximo passo seria portar essa recompilação. Simulado no Streamline Sample com `SimulatePreAda=1`; ainda sem placa real.
+- **A6 (revisto):** em lista de compute, o estado gráfico da tag vira `NON_PIXEL_SHADER_RESOURCE`, o estado que o Streamline entrega ao NGX segundo as capturas do sdli. No Streamline Sample, os erros da debug layer caíram de 15.356 para 171 (só nos primeiros quadros), com geração.
 - **3.2:** sem mudança de código. Na RTX 50, o XMX gera o que o runtime da NVIDIA pede a cada chamada; não foi generalizado para a RTX 40.
 - **A1:** o código morto do patch de vtable do NGX ficou, porque o painel ainda lê os contadores dele e ele nunca instala hook.
 - **A6:** a debug layer no Streamline Sample 2.14.16 mostrou cerca de 15 mil erros com XMX e 0 com o gerador da NVIDIA. O `Evaluate` chega numa lista de compute, enquanto os recursos do jogo estão em estados gráficos; a NVIDIA lê por CUDA. Correção parcial: estado da tag numa lista DIRECT. Em compute fica o comportamento da 1.8.0, porque nenhuma barreira é válida ali; a correção completa (cópia numa lista DIRECT própria com fence) fica para a 1.9.
@@ -250,7 +257,7 @@ Build: `build/tests/xemfg/Release/renodx-mfgunlock-native.addon64` (1.8.3.0).
 3. **HZD Remastered** com XMX: `the multi-frame model refused these inputs; Intel's 2x model runs instead` e gera a 2x.
 4. **Regressão:** Cyberpunk 2077 e Crimson Desert com XMX (3x a 6x, Alt+Tab, troca de resolução); Witcher 3 com XMX (caso do PR); Dying Light 2 (provider pré-carregado).
 5. **Modo seguro:** três fechamentos forçados seguidos (finalizar o processo), o card oferece o modo seguro, o próximo início mostra o card "Safe mode" e o seguinte volta ao normal.
-6. **Pré-Ada simulado:** `[DLSSG] SimulatePreAda=1` com XMX: o card "XMX needs an RTX 40 or 50 GPU" aparece, "Use XeMFG" salva o XeMFG; depois remover a chave.
+6. **Pré-Ada simulado:** `[DLSSG] SimulatePreAda=1` com XMX num jogo (Cyberpunk): o log tem `pre-Ada provider minimum architecture 0x190 -> 0x160`, os gates aplicados e `frame generation feature was created`; o menu do jogo oferece 3x/4x e o XMX gera. Depois remover a chave. Numa RTX 20/30 real (quem relatou): o mesmo, e o menu deve mostrar o DLSS Frame Generation.
 7. **Dynamic MFG na RTX 40 com XMX** (item 3.2), num jogo com Streamline 2.14.16: só observar e registrar.
 8. **RDR2 em Vulkan com XeMFG:** "Queue metered frames early" ligado e desligado, PresentMon com PCL a 2x.
 
