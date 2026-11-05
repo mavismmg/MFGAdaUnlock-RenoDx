@@ -71,6 +71,14 @@ std::vector<GamePresetHints> g_game_preset_hints;
 
 NVSDK_NGX_Result NVSDK_CONV HookedCreateFeature(ID3D12GraphicsCommandList* list, NVSDK_NGX_Feature feature,
                                                 NVSDK_NGX_Parameter* parameters, NVSDK_NGX_Handle** handle) {
+  // 1.8.3, RTX 20/30 with XMX: whether NVIDIA's runtime created the feature
+  // there, for the panel. Nothing in the call changes.
+  if (feature == NVSDK_NGX_Feature_FrameGeneration && g_real_create_feature != nullptr &&
+      mfgunlock::xmx::preada::Engaged()) {
+    const NVSDK_NGX_Result result = g_real_create_feature(list, feature, parameters, handle);
+    mfgunlock::xmx::preada::ObserveCreate(result);
+    return result;
+  }
   if (feature == NVSDK_NGX_Feature_SuperSampling && parameters != nullptr &&
       !mfgunlock::dlsspreset::g_wrapped.load(std::memory_order_relaxed)) {
     const uint32_t selected = mfgunlock::dlsspreset::g_selected.load(std::memory_order_relaxed);
@@ -103,8 +111,9 @@ NVSDK_NGX_Result NVSDK_CONV HookedCreateFeature(ID3D12GraphicsCommandList* list,
   return g_real_create_feature(list, feature, parameters, handle);
 }
 
-// Installed on its own, only while a preset is selected, so a session that
-// never uses the selector gains no NGX hook.
+// Installed on its own, only while a preset is selected (or, since 1.8.3, XMX
+// runs on an RTX 20/30), so a session that never uses the selector gains no
+// NGX hook.
 const std::vector<mfgunlock::hook::HookItem> kNgxPresetHooks = {
     {"NVSDK_NGX_D3D12_CreateFeature",
      reinterpret_cast<void**>(&g_real_create_feature),
@@ -114,10 +123,13 @@ std::atomic_bool g_preset_hook_installed{false};
 
 bool EnsureResident();
 
+bool PresetHookWanted() {
+  return mfgunlock::dlsspreset::g_selected.load(std::memory_order_relaxed) != 0 ||
+         mfgunlock::xmx::preada::Engaged();
+}
+
 void TryInstallPresetHook() {
-  if (mfgunlock::dlsspreset::g_selected.load(std::memory_order_relaxed) == 0 ||
-      g_preset_hook_installed.load(std::memory_order_acquire))
-    return;
+  if (!PresetHookWanted() || g_preset_hook_installed.load(std::memory_order_acquire)) return;
   // 1.8.3: not from ReShade's temporary startup copy of the addon. Its hook
   // outlived the unload and the next copy recursed through it on the first
   // DLSS creation (TLOU Part II with a saved preset could not start). The
@@ -141,9 +153,7 @@ void TryInstallPresetHook() {
 // games map _nvngx.dll through an import that bypasses the LoadLibrary hook
 // (KCD2 field test); they present their menu long before creating DLSS.
 void RetryPresetHookFromPresent() {
-  if (mfgunlock::dlsspreset::g_selected.load(std::memory_order_relaxed) == 0 ||
-      g_preset_hook_installed.load(std::memory_order_acquire))
-    return;
+  if (g_preset_hook_installed.load(std::memory_order_acquire) || !PresetHookWanted()) return;
   static std::atomic<uint64_t> last{0};
   const uint64_t now = GetTickCount64();
   uint64_t previous = last.load(std::memory_order_relaxed);
@@ -314,6 +324,8 @@ void RememberDlssgModule(HMODULE mod) {
   if (mod == nullptr || mod == g_self_module) return;
   if (std::find(g_dlssg_modules.begin(), g_dlssg_modules.end(), mod) == g_dlssg_modules.end()) {
     g_dlssg_modules.push_back(mod);
+    // RTX 20/30 with XMX only: before the NGX core reads the provider's minimum.
+    mfgunlock::xmx::preada::LowerProviderMinimum(mod);
   }
 }
 
@@ -428,8 +440,10 @@ void PatchArchGatesInModule(HMODULE mod) {
   const auto* profile = mfgunlock::binarypatch::ProfileFor(mod, 0);
   const auto* session = mfgunlock::modulesession::Acquire(mod);
   CodeTransaction transaction{mod, session ? session->generation : 0, {}};
-  if (!profile || !session || !mfgunlock::binarypatch::Plan(mod, *profile, transaction.writes) ||
-      !mfgunlock::binarypatch::Apply(mod, transaction.writes)) {
+  const bool planned = profile && session && mfgunlock::binarypatch::Plan(mod, *profile, transaction.writes);
+  // RTX 20/30 with XMX only; RTX 40/50 keep the Ada threshold written above.
+  if (planned) mfgunlock::xmx::preada::LowerGateWrites(transaction.writes);
+  if (!planned || !mfgunlock::binarypatch::Apply(mod, transaction.writes)) {
     if (mfgunlock::pointerredirect::Pending(transaction.writes)) g_gate_transactions.push_back(std::move(transaction));
     g_gate_rejected_modules.push_back(mod);
     reshade::log::message(reshade::log::level::warning,
@@ -950,6 +964,8 @@ void RunProviderMaintenance() {
   // remembers the providers; a preloaded one arrives only here (DL2's .bin).
   for (HMODULE module : providers) mfgunlock::xmx::Attach(module);
   TryInstallPresetHook();
+  mfgunlock::xmx::preada::TryInstallStreamline();
+  mfgunlock::xmx::preada::TryInstallRequirements();
   // File-version APIs are deliberately kept out of the loader callback. Only
   // candidates whose architecture gates were validated are reported here.
   for (HMODULE module : version_candidates) {

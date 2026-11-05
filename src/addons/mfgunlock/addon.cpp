@@ -140,6 +140,7 @@
 
 #include <nvsdk_ngx.h>
 #include "xmx_hook.hpp"
+#include "preada_admission.hpp"
 #include "advanced_settings.hpp"
 
 #include <deps/imgui/imgui.h>
@@ -1322,10 +1323,16 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       // Install load-time discovery before the bootstrap scan. Already mapped
       // providers are found by that one shared scan; anything mapped later is
       // patched directly here without enumerating modules from Present.
-      mfgunlock::loadhook::g_on_interposer_loaded = []() { mfgunlock::framecount::TryInstall(); };
+      mfgunlock::loadhook::g_on_interposer_loaded = []() {
+        mfgunlock::framecount::TryInstall();
+        mfgunlock::xmx::preada::TryInstallStreamline();
+      };
       mfgunlock::loadhook::g_on_dlssg_loaded = ProcessLoadedDlssgModule;
       mfgunlock::loadhook::g_on_dlssg_plugin_loaded = ProcessLoadedStreamlineDlssgPlugin;
-      mfgunlock::loadhook::g_on_ngx_loaded = []() { TryInstallPresetHook(); };
+      mfgunlock::loadhook::g_on_ngx_loaded = []() {
+        TryInstallPresetHook();
+        mfgunlock::xmx::preada::TryInstallRequirements();
+      };
       mfgunlock::loadhook::TryInstall();
       RunProviderMaintenance();
       TryPatchFrameCountCeiling();
@@ -1375,6 +1382,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       mfgunlock::framecount::Uninstall();
       mfgunlock::xmx::Uninstall();
       UninstallPresetHook();
+      mfgunlock::xmx::preada::Uninstall();
       RestoreThinGeometry();
       RestoreMidpoint();
       RestoreDlssgArchGate();

@@ -2668,14 +2668,19 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
         "The XMX mode replaces NVIDIA's generator with Intel's model. Presentation and the game's settings remain DLSS-G's.",xmx_report.generating?mfgunlock::ui::Accent:mfgunlock::ui::Muted);
     if(mfgunlock::framecount::g_game_dynamic_replaced.load(std::memory_order_relaxed))
       mfgunlock::ui::Description("The game asked for Dynamic MFG, which XMX does not support; a fixed multiplier is used.");
+    if(mfgunlock::xmx::preada::Engaged())
+      mfgunlock::ui::Description("RTX 20/30, experimental: NVIDIA's runtime is admitted on this GPU so the game offers DLSS Frame Generation. Choose the multiplier in the game's menu.");
     if(!xmx_d3d12) mfgunlock::ui::Notice("XMX only runs in Direct3D 12 games, so NVIDIA's generator is producing the frames.");
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
-    // 1.8.3: RTX 20 and 30. The game never offers DLSS Frame Generation here,
-    // because NVIDIA's runtime refuses the GPU; XeMFG generates on it.
-    else if(mfgunlock::xmx::preada::Active()) {
-      mfgunlock::ui::ProblemCard problem("##xmx_pre_ada","XMX needs an RTX 40 or 50 GPU",mfgunlock::ui::Warning);
-      ImGui::TextWrapped("XMX replaces only NVIDIA's generator, and NVIDIA's frame generation does not run on this GPU, "
-          "so the game does not offer DLSS Frame Generation. XeMFG brings its own presentation and runs on RTX 20 and 30 GPUs.");
+    // 1.8.3: RTX 20 and 30. NVIDIA's runtime is admitted on this GPU so the
+    // game offers DLSS Frame Generation; if it still cannot create the
+    // feature here, XeMFG is the way to generate on it.
+    else if(mfgunlock::xmx::preada::Engaged() && mfgunlock::xmx::preada::g_create_result.load()>=0 &&
+            NVSDK_NGX_FAILED(static_cast<NVSDK_NGX_Result>(mfgunlock::xmx::preada::g_create_result.load()))) {
+      mfgunlock::ui::ProblemCard problem("##xmx_pre_ada","XMX could not start on this GPU",mfgunlock::ui::Warning);
+      ImGui::TextWrapped("On RTX 20 and 30 GPUs, XMX needs NVIDIA's DLSS-G runtime to create frame generation, and it refused: %s. "
+          "XeMFG brings its own presentation and runs on RTX 20 and 30 GPUs.",xmx_report.failure.c_str());
+      mfgunlock::ui::SupportActions(xmx_support_report);
       static bool switch_failed=false;
       mfgunlock::ui::ButtonRow actions(1);
       if(actions("Use XeMFG","Saves XeMFG as the frame generation method. It applies after a game restart."))

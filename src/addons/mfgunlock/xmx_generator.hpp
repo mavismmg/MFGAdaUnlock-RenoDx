@@ -191,10 +191,6 @@ inline DWORD FileTimestamp(const std::filesystem::path& path) {
 // the loader lock.
 inline bool Preflight() {
   static const bool passed = [] {
-    if (preada::Active()) {
-      Fail(preada::kReason);
-      return false;
-    }
     const auto directory = backend::Directory();
     std::error_code error;
     if (!std::filesystem::exists(directory / L"libxess_fg.dll", error)) {
@@ -342,15 +338,17 @@ inline bool Capture(ID3D12Device* device, ID3D12GraphicsCommandList* list, ComPt
     copy = Texture(device, desc, kXefgInputState, D3D12_RESOURCE_FLAG_NONE);
     if (!copy) return false;
   }
-  // 1.8.3: the game's own tagged resource is still in its tagged state, which
-  // a direct list can leave and restore. Streamline 2.14 evaluates on a compute
-  // list, where graphics states (render target, depth) cannot be named at all;
-  // NVIDIA's generator reads them through CUDA. There the 1.8.0 assumption
-  // stays: invalid for the debug layer, harmless on NVIDIA drivers in the field.
-  // A copy on our own direct list, fenced with Streamline's queue, is the fix.
-  const auto from = list->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT
-                        ? static_cast<D3D12_RESOURCE_STATES>(tagstates::StateOf(source, sourceState))
-                        : sourceState;
+  // 1.8.3: the game's own tagged resource arrives in its tagged state, which a
+  // direct list can leave and restore. Streamline 2.14 evaluates on a compute
+  // list, where graphics states (render target, depth) cannot be named, and
+  // hands NGX its inputs as non-pixel shader resources (captured in Cyberpunk
+  // and Wukong by dlssg_for_sm86; in the Streamline Sample this cut the debug
+  // layer's errors from 15,356 to 171, with generation intact).
+  auto from = static_cast<D3D12_RESOURCE_STATES>(tagstates::StateOf(source, sourceState));
+  constexpr auto kGraphicsOnly = D3D12_RESOURCE_STATE_RENDER_TARGET | D3D12_RESOURCE_STATE_DEPTH_WRITE |
+                                 D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+  if (list->GetType() == D3D12_COMMAND_LIST_TYPE_COMPUTE && (from & kGraphicsOnly) != 0)
+    from = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
   Copy(list, copy.Get(), kXefgInputState, source, from);
   return true;
 }

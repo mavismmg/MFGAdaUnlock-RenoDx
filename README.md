@@ -1930,6 +1930,14 @@ execution plan and record are in [`docs/plan/`](docs/plan/).
   of that project that this fork studied. Both are GPLv3 and this project is MIT, so they
   were used as a reference only: no code is included, and this fork's implementation and
   the addresses it uses were written and verified independently against `libxess_fg.dll`.
+- [nefh/MFGAmpereUnlock-RenoDx](https://github.com/nefh/MFGAmpereUnlock-RenoDx) (MIT, a
+  fork of this project) showed how NVIDIA's DLSS-G runtime admits RTX 20 and 30 GPUs. The
+  1.8.3 RTX 20/30 path for XMX adapts its Streamline and NGX admission, its scoped NVAPI
+  architecture answer and its provider minimum (`src/addons/mfgunlock/preada_admission.hpp`).
+  Its PTX retargeting is not used: XMX never runs NVIDIA's generation kernels.
+- [sdli1995/dlssg_for_sm86](https://github.com/sdli1995/dlssg_for_sm86) documents where the
+  NGX core refuses frame generation on RTX 20 and the D3D12 states Streamline hands NGX.
+  Its source is GPLv3, so it was used as a reference only: no code is included.
 - [OptiScaler](https://github.com/optiscaler/OptiScaler) was studied as an
   API, ownership and architecture reference for the XeFG bridge. No GPL
   OptiScaler code is included (see
