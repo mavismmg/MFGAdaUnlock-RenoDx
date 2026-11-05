@@ -2669,6 +2669,21 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     if(mfgunlock::framecount::g_game_dynamic_replaced.load(std::memory_order_relaxed))
       mfgunlock::ui::Description("The game asked for Dynamic MFG, which XMX does not support; a fixed multiplier is used.");
     if(!xmx_d3d12) mfgunlock::ui::Notice("XMX only runs in Direct3D 12 games, so NVIDIA's generator is producing the frames.");
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+    // 1.8.3: RTX 20 and 30. The game never offers DLSS Frame Generation here,
+    // because NVIDIA's runtime refuses the GPU; XeMFG generates on it.
+    else if(mfgunlock::xmx::preada::Active()) {
+      mfgunlock::ui::ProblemCard problem("##xmx_pre_ada","XMX needs an RTX 40 or 50 GPU",mfgunlock::ui::Warning);
+      ImGui::TextWrapped("XMX replaces only NVIDIA's generator, and NVIDIA's frame generation does not run on this GPU, "
+          "so the game does not offer DLSS Frame Generation. XeMFG brings its own presentation and runs on RTX 20 and 30 GPUs.");
+      static bool switch_failed=false;
+      mfgunlock::ui::ButtonRow actions(1);
+      if(actions("Use XeMFG","Saves XeMFG as the frame generation method. It applies after a game restart."))
+        switch_failed=!mfgunlock::backend::SelectMode(mfgunlock::backend::Mode::XeMfg);
+      if(switch_failed) mfgunlock::ui::Description("The change was not saved. Check write access to the game folder.");
+      else if(mfgunlock::backend::ReadMode()==mfgunlock::backend::Mode::XeMfg) mfgunlock::ui::Description("Saved. Restart the game to use XeMFG.");
+    }
+#endif
     else if(!xmx_report.hooked && !xmx_report.failure.empty()) {
       mfgunlock::ui::Notice(("XMX could not start, so NVIDIA's generator is producing the frames: "+xmx_report.failure).c_str());
 #if defined(MFGUNLOCK_NATIVE_XEMFG)

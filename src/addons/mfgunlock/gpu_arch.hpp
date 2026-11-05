@@ -36,6 +36,13 @@ constexpr Family ClassifyDeviceId(uint32_t device_id) {
   return Family::kUnknown;
 }
 
+// 1.8.3: GPUs NVIDIA's DLSS-G runtime refuses outright: Pascal, Turing (RTX 20
+// and GTX 16) and Ampere (RTX 30), desktop and laptop, 0x1B00-0x267F. Kept
+// apart from Family so the Ada and Blackwell decisions above never change.
+constexpr bool IsPreAdaDeviceId(uint32_t device_id) {
+  return device_id >= 0x1B00 && device_id < 0x2680;
+}
+
 // Parses "pci\ven_10de&dev_XXXX..." (any case). Returns false for another
 // vendor or a malformed string.
 constexpr bool ParseNvidiaDeviceId(const wchar_t* text, uint32_t& device_id) {
@@ -67,11 +74,18 @@ constexpr bool ParseNvidiaDeviceId(const wchar_t* text, uint32_t& device_id) {
 struct Census {
   uint32_t nvidia = 0;
   uint32_t blackwell = 0;
+  uint32_t pre_ada = 0;
   void Add(Family family) {
     ++nvidia;
     if (family == Family::kBlackwell) ++blackwell;
   }
+  void AddDevice(uint32_t device_id) {
+    Add(ClassifyDeviceId(device_id));
+    if (IsPreAdaDeviceId(device_id)) ++pre_ada;
+  }
   constexpr bool AllBlackwell() const { return nvidia != 0 && blackwell == nvidia; }
+  // Every NVIDIA adapter predates Ada: none can run NVIDIA's frame generation.
+  constexpr bool AllPreAda() const { return nvidia != 0 && pre_ada == nvidia; }
 };
 
 // The registry functions are taken from kernelbase.dll, which every process
@@ -116,7 +130,7 @@ inline Census ReadInstalledAdapters() {
       continue;
     uint32_t device_id = 0;
     if (ParseNvidiaDeviceId(value, device_id))
-      census.Add(ClassifyDeviceId(device_id));
+      census.AddDevice(device_id);
   }
   close(klass);
   return census;
@@ -125,6 +139,12 @@ inline Census ReadInstalledAdapters() {
 // Read once; safe under the loader lock.
 inline bool AllNvidiaAdaptersBlackwell() {
   static const bool value = ReadInstalledAdapters().AllBlackwell();
+  return value;
+}
+
+// Read once; safe under the loader lock.
+inline bool AllNvidiaAdaptersPreAda() {
+  static const bool value = ReadInstalledAdapters().AllPreAda();
   return value;
 }
 

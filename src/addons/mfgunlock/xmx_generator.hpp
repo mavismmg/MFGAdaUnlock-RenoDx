@@ -22,6 +22,7 @@
 #include "backend_selection.hpp"
 #include "support_files.hpp"
 #include "xmx_policy.hpp"
+#include "xmx_preada.hpp"
 
 namespace mfgunlock::xmx::generator {
 using Microsoft::WRL::ComPtr;
@@ -189,6 +190,10 @@ inline DWORD FileTimestamp(const std::filesystem::path& path) {
 // the loader lock.
 inline bool Preflight() {
   static const bool passed = [] {
+    if (preada::Active()) {
+      Fail(preada::kReason);
+      return false;
+    }
     const auto directory = backend::Directory();
     std::error_code error;
     if (!std::filesystem::exists(directory / L"libxess_fg.dll", error)) {

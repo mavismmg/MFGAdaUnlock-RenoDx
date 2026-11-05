@@ -33,6 +33,24 @@ int main() {
   CHECK(ClassifyDeviceId(0x2901) == Family::kUnknown);
   CHECK(ClassifyDeviceId(0x3000) == Family::kUnknown);
 
+  // 1.8.3, pre-Ada: 3060 Ti (GA104), 3070 (GA104), 2070 (TU106), GTX 1660
+  // (TU116); never Ada, Blackwell or data centre.
+  CHECK(IsPreAdaDeviceId(0x2489) && IsPreAdaDeviceId(0x2484));
+  CHECK(IsPreAdaDeviceId(0x1F02) && IsPreAdaDeviceId(0x2184));
+  CHECK(!IsPreAdaDeviceId(0x2684) && !IsPreAdaDeviceId(0x2783) && !IsPreAdaDeviceId(0x28A0));
+  CHECK(!IsPreAdaDeviceId(0x2B85) && !IsPreAdaDeviceId(0x2901));
+  {
+    Census ampere;
+    ampere.AddDevice(0x2489);
+    CHECK(ampere.AllPreAda() && !ampere.AllBlackwell());
+    ampere.AddDevice(0x2783);  // an Ada card beside it can run DLSS-G
+    CHECK(!ampere.AllPreAda() && !ampere.AllBlackwell());
+    Census blackwell;
+    blackwell.AddDevice(0x2C05);
+    CHECK(blackwell.AllBlackwell() && !blackwell.AllPreAda());
+    CHECK(!Census{}.AllPreAda());
+  }
+
   uint32_t id = 0;
   CHECK(ParseNvidiaDeviceId(L"pci\\ven_10de&dev_2c05", id) && id == 0x2C05);
   CHECK(ParseNvidiaDeviceId(L"PCI\\VEN_10DE&DEV_2783&SUBSYS_00000000", id) &&

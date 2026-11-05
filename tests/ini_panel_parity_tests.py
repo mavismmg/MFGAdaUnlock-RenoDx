@@ -8,7 +8,9 @@ text = ''.join(p.read_text(encoding='utf-8', errors='ignore') for p in root.rglo
                if p.suffix in ('.cpp', '.hpp', '.inl', '.h') and 'vendor' not in p.parts)
 
 # Not settings: written by the addon itself, or replaced by a key that has a control.
-INI_EXEMPT = {('XeFG.Learned', 'Executable')}
+INI_EXEMPT = {('XeFG.Learned', 'Executable'),
+              # Test only (1.8.3): simulates an RTX 20/30 for XMX's pre-Ada path.
+              ('DLSSG', 'SimulatePreAda')}
 RESHADE_EXEMPT = {
     'DisocclusionGuardLevel',   # migrated to DepthEdgeGuardLevel
     'DynamicReflexSourceCap',   # migrated to ReflexSourceFpsCap
