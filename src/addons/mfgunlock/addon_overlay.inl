@@ -2649,7 +2649,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   }
   const char* xmx_waiting=xmx_bypassed?"NVIDIA is generating":xmx_report.evaluating?"Waiting for frames":"Paused or off in the game";
   const auto xmx_support_report=[&] {
-    std::string report="MFG Unlock 1.8.3\nmethod=";
+    std::string report="MFG Unlock 1.8.4\nmethod=";
     report+=xmx_selected?"XMX":"DLSS-G";
     report+=std::string("\nrenderer=")+RenderApiName(render_api)+"\nstatus="+player_state;
     if(xmx_selected) {

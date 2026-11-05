@@ -364,7 +364,7 @@ inline void SystemCard(const char* sync,bool xmxSelected) {
   if(sync) Readout("##system_sync","Sync",sync,nullptr,Accent);
   if(xmxSelected && scrgb) Notice("XMX has not been tested with scRGB output, and it has no conversion for it like XeMFG does.");
 }
-inline constexpr const char* kVersionLine="MFG Unlock | 1.8.3 by mavismmg also known as monet, ayase or woni";
+inline constexpr const char* kVersionLine="MFG Unlock | 1.8.4 by mavismmg also known as monet, ayase or woni";
 // Rests on the bottom of the panel when the page leaves room; otherwise follows the page.
 inline void Footer(const char* note=nullptr) {
   const char* version=kVersionLine;
