@@ -260,7 +260,7 @@ Build de teste atual: `build/renodx-mfgunlock-1.8.3-test.addon64` (SHA-256 `836A
 5. **Modo seguro:** **aprovado.** O card apareceu depois de três fechamentos forçados.
 6. **Pré-Ada simulado:** **aprovado** com `SimulatePreAda=1`: o menu do jogo ofereceu o FG e o XMX gerou. Falta uma RTX 20/30 real.
 7. **Dynamic MFG na RTX 40 com XMX:** liberado para teste por decisão do usuário (commit `6ea8175`; o painel marca como experimental com XMX). Testar no Cyberpunk e no Crimson Desert (Streamline 2.14.16); o TLOU2 (2.7.2) não tem a pilha do Dynamic. **Aprovado pelo usuário em 2026-11-05: "funcionou perfeitamente".**
-9. **Stellar Blade** (novo): build `31E1897B7959` instalado em `SB\Binaries\Win64`, com `libxess_fg.dll` 1.3.1.78 e `libxell.dll` copiados do GoT. Pendente.
+9. **Stellar Blade** (novo): build `31E1897B7959` instalado em `SB\Binaries\Win64`, com `libxess_fg.dll` 1.3.1.78 e `libxell.dll` copiados do GoT. **Aprovado pelo usuário com XMX**; entrou no README como "Working" no XMX (XeMFG CUDA não testado).
 8. **RDR2 em Vulkan com XeMFG:** sem efeito do "Queue metered frames early"; o pacing do caminho Vulkan não foi resolvido e ficou documentado com recomendação de DX12 (ver Registro).
 
 ## Registro
