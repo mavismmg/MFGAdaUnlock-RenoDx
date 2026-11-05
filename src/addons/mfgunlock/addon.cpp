@@ -1042,14 +1042,11 @@ void LoadConfig() {
   legacy_fixed_output_cap_present = reshade::get_config_value(
       nullptr, kConfigSection, "FixedOutputFpsCap",
       legacy_fixed_output_cap);
-  mfgunlock::framecount::g_game_dynamic_blocked.store(mfgunlock::xmx::generator::Enabled(),
-                                                       std::memory_order_relaxed);
-  if (reshade::get_config_value(nullptr, kConfigSection, "DynamicMFG", value)) {
-    // 1.8: not validated with XMX, where NVIDIA's module no longer generates. The
-    // saved preference stays, for when DLSS-G is selected again.
-    mfgunlock::framecount::g_dynamic_mfg_enabled.store(value != 0 && !mfgunlock::xmx::generator::Enabled(),
-                                                        std::memory_order_relaxed);
-  }
+  // 1.8.3: Dynamic MFG is open with XMX for testing on RTX 40 (1.8 blocked it as
+  // unvalidated). NVIDIA's runtime picks the count and XMX reads it per call, as
+  // on RTX 50; g_game_dynamic_blocked stays available but is no longer set.
+  if (reshade::get_config_value(nullptr, kConfigSection, "DynamicMFG", value))
+    mfgunlock::framecount::g_dynamic_mfg_enabled.store(value != 0, std::memory_order_relaxed);
   if (reshade::get_config_value(nullptr, kConfigSection, "DynamicTargetFPS", value)) {
     if (value < 0 || value > 1000) value = 0;
     mfgunlock::framecount::g_dynamic_target_fps.store(

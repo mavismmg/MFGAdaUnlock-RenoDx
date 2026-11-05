@@ -3011,20 +3011,20 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
         "Lets NVIDIA's native scheduler choose the generated-frame count. Requires D3D12, driver 595.41 or newer, DLSS-G 310.9.1/310.9.16 and Streamline 2.14.1/2.14.16. Star Wars Outlaws is kept on fixed/game-controlled MFG because its integration breaks on the Dynamic path. Toggle Frame Generation off/on after changing it.");
     ImGui::TableNextColumn();
     const bool block_dynamic_enable =
-        xmx_selected || dynamic_game_blocked || (dynamic_hard_unavailable && !dynamic_mfg);
-    if (xmx_selected) {
-      ImGui::AlignTextToFramePadding();
-      ImGui::TextDisabled("Not available with XMX.");
-    } else {
-      if (block_dynamic_enable) ImGui::BeginDisabled();
-      if (ImGui::Checkbox("##dynamic_mfg", &dynamic_mfg)) {
-        mfgunlock::framecount::g_dynamic_mfg_enabled.store(
-            dynamic_mfg, std::memory_order_relaxed);
-        mfgunlock::framecount::NotifyDynamicModeChanged();
-        reshade::set_config_value(nullptr, kConfigSection, "DynamicMFG",
-                                  dynamic_mfg ? 1 : 0);
-      }
-      if (block_dynamic_enable) ImGui::EndDisabled();
+        dynamic_game_blocked || (dynamic_hard_unavailable && !dynamic_mfg);
+    if (block_dynamic_enable) ImGui::BeginDisabled();
+    if (ImGui::Checkbox("##dynamic_mfg", &dynamic_mfg)) {
+      mfgunlock::framecount::g_dynamic_mfg_enabled.store(
+          dynamic_mfg, std::memory_order_relaxed);
+      mfgunlock::framecount::NotifyDynamicModeChanged();
+      reshade::set_config_value(nullptr, kConfigSection, "DynamicMFG",
+                                dynamic_mfg ? 1 : 0);
+    }
+    if (block_dynamic_enable) ImGui::EndDisabled();
+    if (xmx_selected && dynamic_mfg) {
+      ImGui::PushTextWrapPos();
+      ImGui::TextColored(kUiWarning, "Experimental with XMX: NVIDIA's runtime picks the count and XMX generates it.");
+      ImGui::PopTextWrapPos();
     }
 
     if (dynamic_mfg) {
