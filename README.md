@@ -1,11 +1,13 @@
 # MFG Unlock
 
 > [!NOTE]
-> ### New in 1.8.2: more games with XMX
+> ### New in 1.8.3: XMX multipliers back, NVIDIA Dynamic MFG with XMX
 >
-> XMX now works in Dying Light 2, Alan Wake 2 and Phantom Blade Zero, and the panel says
-> when NVIDIA's generator is still doing the work. See the
-> [1.8.2 release notes](docs/releases/1.8.2.md).
+> The higher XMX multipliers locked since 1.8.2 are back, and The Last of Us Part II no
+> longer crashes at start with a saved DLSS preset. XMX now works in Ghost of Tsushima,
+> Horizon Zero Dawn Remastered, The Last of Us Part II and Stellar Blade, and NVIDIA
+> Dynamic MFG works with XMX (experimental). See the
+> [1.8.3 release notes](docs/releases/1.8.3.md).
 
 > [!TIP]
 > ### New in 1.8: use XMX whenever the game has frame generation
