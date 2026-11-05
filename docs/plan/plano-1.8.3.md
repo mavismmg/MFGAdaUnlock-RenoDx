@@ -1,6 +1,6 @@
 # Plano da 1.8.3 — ciclo de vida dos hooks, XMX e relatos da comunidade
 
-Status: **código pronto na `feat/1.8.3`; testes manuais em andamento (o usuário vai instalar mais jogos). O gate completo roda depois deles, só quando o usuário pedir. Sem release.**
+Status: **lançada em 2026-11-05 (tag `1.8.3`).** Gate: 208 testes, 205 passaram e 3 opcionais pulados. O `dlssg_streamline_fixture` foi atualizado para o contrato da R1 (hook de preset só depois da residência).
 
 ## Decisões de 2026-11-05
 
