@@ -270,6 +270,7 @@ necessarily been tested with the other.
 
 | Game | Status |
 |---|---|
+| May work with every game | |
 | S.T.A.L.K.E.R. 2: Heart of Chornobyl | Working |
 | God of War Ragnarök | Working |
 | Death Stranding 2: On the Beach | Working |
@@ -313,6 +314,7 @@ necessarily been tested with the other.
 | The Sinking City 2 | Working |
 | Control Resonant | Working |
 | Phantom Blade Zero | Working |
+| Call of Duty Modern Warfare 4 | Working |
 
 These are the games personally tested with this fork; this is not a claim of
 universal compatibility. Results may vary with the game version, DLSS and
@@ -327,11 +329,11 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Game | API | XeMFG CUDA | XMX | Notes |
 |---|---|---|---|---|
 | Resident Evil Requiem | DX12 | Working | Working |  |
-| Monster Hunter Wilds | DX12 | Working | Maybe |  |
-| Dragon's Dogma 2 | DX12 | Working | Maybe |  |
+| Monster Hunter Wilds | DX12 | Working | Working |  |
+| Dragon's Dogma 2 | DX12 | Working | Working |  |
 | Onimusha: Way of the Sword | DX12 | Working | Working |  |
-| PRAGMATA | DX12 | Working | Maybe |  |
-| Control Resonant | DX12 | Working | Maybe |  |
+| PRAGMATA | DX12 | Working | Working |  |
+| Control Resonant | DX12 | Working | Working |  |
 | Assassin's Creed IV: Black Flag Resynced | DX12 | Working | Maybe | A built-in profile turns off native-output retention for this game |
 | Cyberpunk 2077 | DX12 | Working | Working | After a game update, run **Install / update files** again (see [below](#the-panel-says-intel-files-are-missing-or-a-different-version)) |
 | The Witcher 3: Wild Hunt (next-gen) | DX12 | Working | Working | Turn off the game's **VSync** for correct frame pacing on CUDA. Fixed in 1.5.3: changing path tracing or other graphics settings with frame generation on no longer loses the graphics device |
@@ -343,19 +345,26 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Mafia: The Old Country | DX12 | Working | Maybe |  |
 | Resonance: A Plague Tale Legacy | DX12 | Working | Working |  |
 | Death Stranding 2: On the Beach | DX12 | Working | Maybe | Its jittered motion vectors are corrected automatically |
-| Ghostrunner 2 | DX12 | Working | Maybe |  |
+| Ghostrunner 2 | DX12 | Working | Working |  |
 | S.T.A.L.K.E.R. 2: Heart of Chornobyl | DX12 | Working | Maybe | Set the display mode to **Borderless / Windowed Fullscreen** |
-| Warhammer 40,000: Darktide | DX12 | Working | Maybe | Fixed in 1.5.1; on 1.5.0, add `[Adapters] FidelityFX=0` to `MFGAdaUnlock.ini` |
-| Black Myth: Wukong | DX12 | Working | Maybe |  |
-| Kingdom Come: Deliverance II | DX12 | Working | DLSS-SR still not supported on XMX | With the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) XMX is not expected to work here: it needs DLSS-G in DX12. |
-| Red Dead Redemption 2 | DX12, Vulkan | Working | DLSS-SR still not supported on XMX | DX12: working with the DLSS-SR input (user report; the game has no native frame generation): turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)). Vulkan (experimental, 1.7): generates with DLSS on, but pacing is poor; use DX12 (see [Red Dead Redemption 2: use DX12](#red-dead-redemption-2-use-dx12)). XMX is not expected to work here: it needs DLSS-G in DX12. |
-| Elden Ring | DX12 | Working | DLSS-SR still not supported on XMX | With the DLSS-SR input and the EldenRingDLSS addon, offline with Easy Anti-Cheat off; turn on **Force game VSync off** in the panel for correct frame pacing (see [Elden Ring](#elden-ring)) XMX is not expected to work here: it needs DLSS-G in DX12. |
-| Metro Exodus Enhanced Edition | DX12 | Working | DLSS-SR still not supported on XMX | With the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) XMX is not expected to work here: it needs DLSS-G in DX12. |
+| Warhammer 40,000: Darktide | DX12 | Working | Working | Fixed in 1.5.1; on 1.5.0, add `[Adapters] FidelityFX=0` to `MFGAdaUnlock.ini` |
+| Black Myth: Wukong | DX12 | Working | Working |  |
+| Kingdom Come: Deliverance II | DX12 | Working | DLSS-SR not supported on XMX | With the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) XMX is not expected to work here: it needs DLSS-G in DX12. |
+| Red Dead Redemption 2 | DX12, Vulkan | Working | DLSS-SR not supported on XMX | DX12: working with the DLSS-SR input (user report; the game has no native frame generation): turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)). Vulkan (experimental, 1.7): generates with DLSS on, but pacing is poor; use DX12 (see [Red Dead Redemption 2: use DX12](#red-dead-redemption-2-use-dx12)). XMX is not expected to work here: it needs DLSS-G in DX12. |
+| Elden Ring | DX12 | Working | DLSS-SR not supported on XMX | With the DLSS-SR input and the EldenRingDLSS addon, offline with Easy Anti-Cheat off; turn on **Force game VSync off** in the panel for correct frame pacing (see [Elden Ring](#elden-ring)) XMX is not expected to work here: it needs DLSS-G in DX12. |
+| Metro Exodus Enhanced Edition | DX12 | Working | DLSS-SR not supported on XMX | With the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) XMX is not expected to work here: it needs DLSS-G in DX12. |
 | Indiana Jones and the Great Circle | Vulkan | Working | Vulkan not supported on XMX | Experimental (1.7): turn DLSS on (Super Resolution or Ray Reconstruction); the game's Frame Generation switch turns XeMFG on and off. Launch with `+r_allowBlackListedLayers 1` so ReShade can load XMX is not expected to work here: it needs DLSS-G in DX12. |
 | Crimson Desert | DX12 | Working | Working |  |
-| Phantom Blade Zero | DX12 | Maybe | Working | XMX since 1.8.2 |
-| Dying Light 2 | DX12 | Maybe | Working | XMX since 1.8.2 |
+| Phantom Blade Zero | DX12 | Not Working | Working | XMX since 1.8.2 |
+| Dying Light 2 | DX12 | Working | Working | XMX since 1.8.2 |
 | Grand Theft Auto 5 Enhanced | DX12 | Maybe | Working |  |
+| Titans of The Tide | DX12 | Working | Maybe |  |
+| Hogwarts Legacy | DX12 | Maybe | Working |  |
+| STAR WARS: Galactic Racer | DX12 | Maybe | Working |  |
+| Call of Duty Modern Warfare 4 | DX12 | Maybe | Working |  |
+| The Blood of Dawnwalker | DX12 | Maybe | Working |  |
+| Silent Hill 2 Remake | DX12 | Not Working | Working |  |
+| Ghotic 1 Remake | DX12 | Not Working | Working |  |
 
 **XeMFG CUDA** shows the games tested with the XeMFG backend. In the **XMX** column,
 **Maybe** means it has not been tested in that game yet, so
