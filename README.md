@@ -1,12 +1,13 @@
 # MFG Unlock
 
 > [!NOTE]
-> ### New in 1.8.3: XMX multipliers back, NVIDIA Dynamic MFG with XMX
+> ### New in 1.8.4: MFG on DLSS-G versions with no profile yet
 >
-> The higher XMX multipliers locked since 1.8.2 are back, and The Last of Us Part II no
-> longer crashes at start with a saved DLSS preset. XMX now works in Ghost of Tsushima,
-> Horizon Zero Dawn Remastered, The Last of Us Part II and Stellar Blade, and NVIDIA
-> Dynamic MFG works with XMX (experimental). See the
+> MFG now unlocks on a DLSS frame generation file the addon has no exact profile for,
+> when it has the same gate as every reviewed version. This fixes Assassin's Creed IV
+> Black Flag Resynced, which ships its own build, and keeps MFG working after NVIDIA's
+> next update. See the [1.8.4 release notes](docs/releases/1.8.4.md). 1.8.3 brought the
+> XMX multipliers back and NVIDIA Dynamic MFG with XMX: see the
 > [1.8.3 release notes](docs/releases/1.8.3.md).
 
 > [!TIP]
@@ -336,7 +337,7 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Onimusha: Way of the Sword | DX12 | Working | Working |  |
 | PRAGMATA | DX12 | Working | Working |  |
 | Control Resonant | DX12 | Working | Working |  |
-| Assassin's Creed IV: Black Flag Resynced | DX12 | Working | Maybe | A built-in profile turns off native-output retention for this game |
+| Assassin's Creed IV: Black Flag Resynced | DX12 | Working | Working | A built-in profile turns off native-output retention for this game. MFG with XMX and DLSS-G since 1.8.4 |
 | Cyberpunk 2077 | DX12 | Working | Working | After a game update, run **Install / update files** again (see [below](#the-panel-says-intel-files-are-missing-or-a-different-version)) |
 | The Witcher 3: Wild Hunt (next-gen) | DX12 | Working | Working | Turn off the game's **VSync** for correct frame pacing on CUDA. Fixed in 1.5.3: changing path tracing or other graphics settings with frame generation on no longer loses the graphics device |
 | Alan Wake 2 | DX12 | Working | Working | XMX since 1.8.2 |
@@ -1021,7 +1022,13 @@ How to read these numbers:
 - On a compute command list (Streamline 2.14), XMX copies the game's render-target and
   depth inputs as non-pixel shader resources, the state Streamline hands NGX. The D3D12
   debug layer still reports a few barriers in the first frames.
-- **Once Human:** its `nvngx_dlssg.dll` has no profile, so XMX runs at 2x only.
+- **A DLSS-G file with no exact profile** (a game's own build, or a newer NVIDIA
+  download) is unlocked when it has exactly the gate every reviewed version has; the
+  log then says `generic gate`. Turn it off with **Generic provider gate** in the
+  panel's advanced settings, or `[DLSSG] GenericGate=0` in `MFGAdaUnlock.ini`, and
+  restart the game. A file with another gate is still refused.
+- **Once Human:** its `nvngx_dlssg.dll` has the timestamp of the 310.3 build, whose gate
+  has four compares instead of two, so XMX likely stays at 2x there.
 - **Elden Ring with ERSS:** if ERSS generates frames without NVIDIA's DLSS frame
   generation, XMX has nothing to replace. Use XeMFG.
 - A newer `nvngx_dlssg.dll` might change how the module reacts to XMX's hook. It ran
