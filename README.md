@@ -1,7 +1,14 @@
 # MFG Unlock
 
 > [!NOTE]
-> ### New in 1.8.5: Dynamic MFG ceiling, and Dynamic MFG with the NVIDIA app override
+> ### New in 1.8.6: XMX multi-frame in games with jittered motion vectors
+>
+> XMX now generates 3x–6x in games whose motion vectors carry the camera jitter, such as
+> Death Stranding 2 and Horizon Zero Dawn Remastered, where 1.8.3–1.8.5 fell back to
+> Intel's 2x model. With the XeMFG backend, Elden Ring's ERSS mod is now treated as the
+> game's own XeFG integration (trial). See the [1.8.6 release notes](docs/releases/1.8.6.md).
+>
+> ### 1.8.5: Dynamic MFG ceiling, and Dynamic MFG with the NVIDIA app override
 >
 > Choose **Up to 2x–6x** for NVIDIA Dynamic MFG in the panel, as the NVIDIA app does,
 > without changing the driver profile. Dynamic MFG no longer stays at "Waiting for runtime
@@ -1013,8 +1020,13 @@ How to read these numbers:
 - **No more than 2x when the game's Streamline is older than 2.7** (Ghost of Tsushima,
   Horizon Zero Dawn Remastered). Forcing more crashed inside Streamline, so the panel's
   **Frame Multiplier** is not applied above 2x there, and the panel says why.
-- **Horizon Zero Dawn Remastered** uses Intel's own 2x model, because the ported
-  multi-frame model refuses its jittered motion vectors.
+- **Games with jittered motion vectors** (Horizon Zero Dawn Remastered, Death Stranding 2):
+  the ported multi-frame model refuses the jittered-motion flag, so 1.8.3–1.8.5 used
+  Intel's own 2x model there and repeated its frame at higher multipliers. Since 1.8.6 the
+  multi-frame model starts without that flag; the motion vectors still carry the camera
+  jitter (about a render pixel at most), and no artifact was seen in Death Stranding 2.
+  **XMX multi-frame with jittered motion: Off** in the panel's advanced settings, or
+  `[DLSSG] XmxJitter=0` in `MFGAdaUnlock.ini`, restores the 2x model.
 - **Only Crimson Desert was measured.** Cyberpunk 2077 was tested by playing it, without
   captures.
 - **NVIDIA Dynamic MFG with XMX is experimental** (since 1.8.3). NVIDIA's runtime
