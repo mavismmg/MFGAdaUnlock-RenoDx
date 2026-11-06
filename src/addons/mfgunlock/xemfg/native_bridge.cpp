@@ -48,16 +48,51 @@ uint32_t DisplayCapIntervalForWindow(HWND window) noexcept {
   State().displayRefreshMilliHz=WindowRefreshMilliHz(window);
   return DisplayCapIntervalForOutput();
 }
+// 1.8.6: why the last Hook() failed, for the factory diagnostics below.
+static thread_local std::string lastHookFailure;
 bool Hook(void* entry,void* replacement,void** original) {
   static std::recursive_mutex lock; std::lock_guard guard(lock);
   static std::set<void*> installed;
-  if(!entry) return false;
-  if(installed.contains(entry)) return *original!=nullptr;
+  lastHookFailure.clear();
+  if(!entry) { lastHookFailure="null entry"; return false; }
+  if(installed.contains(entry)) { if(!*original) lastHookFailure="installed earlier without a trampoline"; return *original!=nullptr; }
   const auto init=MH_Initialize();
-  if(init!=MH_OK && init!=MH_ERROR_ALREADY_INITIALIZED) return false;
-  if(MH_CreateHook(entry,replacement,original)!=MH_OK) return false;
-  if(MH_EnableHook(entry)!=MH_OK) { MH_RemoveHook(entry); *original=nullptr; return false; }
+  if(init!=MH_OK && init!=MH_ERROR_ALREADY_INITIALIZED) { lastHookFailure=std::string("MH_Initialize ")+MH_StatusToString(init); return false; }
+  if(const auto created=MH_CreateHook(entry,replacement,original); created!=MH_OK) {
+    lastHookFailure=std::string("MH_CreateHook ")+MH_StatusToString(created); return false;
+  }
+  if(const auto enabled=MH_EnableHook(entry); enabled!=MH_OK) {
+    lastHookFailure=std::string("MH_EnableHook ")+MH_StatusToString(enabled);
+    MH_RemoveHook(entry); *original=nullptr; return false;
+  }
   installed.insert(entry); return true;
+}
+// The module that owns an entry, and where its first jump goes: another layer
+// that already patched the same DXGI method shows up here.
+static std::string DescribeEntry(void* entry) {
+  const auto owner=[](const void* p)->std::string {
+    HMODULE module{}; wchar_t path[MAX_PATH]{};
+    if(!p || !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        static_cast<LPCWSTR>(p),&module) || !GetModuleFileNameW(module,path,MAX_PATH)) return "unknown";
+    std::string name; for(const wchar_t* c=wcsrchr(path,L'\\')?wcsrchr(path,L'\\')+1:path; *c; ++c) name+=static_cast<char>(*c<128?*c:'?');
+    return name;
+  };
+  std::string text="owner "+owner(entry);
+  unsigned char bytes[14]{}; SIZE_T n{};
+  if(entry && ReadProcessMemory(GetCurrentProcess(),entry,bytes,sizeof(bytes),&n) && n==sizeof(bytes)) {
+    char hex[3*sizeof(bytes)+1]{};
+    for(size_t i=0;i<sizeof(bytes);++i) sprintf_s(hex+3*i,4,"%02x ",bytes[i]);
+    text+=", bytes "+std::string(hex,3*sizeof(bytes)-1);
+    const unsigned char* target=nullptr; int32_t rel{};
+    if(bytes[0]==0xe9) { memcpy(&rel,bytes+1,4); target=static_cast<const unsigned char*>(entry)+5+rel; }
+    else if(bytes[0]==0xff && bytes[1]==0x25) {
+      memcpy(&rel,bytes+2,4); uintptr_t absolute{};
+      if(ReadProcessMemory(GetCurrentProcess(),static_cast<const unsigned char*>(entry)+6+rel,&absolute,8,&n) && n==8)
+        target=reinterpret_cast<const unsigned char*>(absolute);
+    }
+    if(target) text+=", jumps into "+owner(target);
+  }
+  return text;
 }
 bool Api::Load() {
   if(!EnsureModel()) return false;
@@ -451,8 +486,18 @@ bool Install() {
     Report("XeMFG factory hook unavailable; restart with early ReShade addon loading"); return false;
   }
   const bool legacy=originalLegacyFactory || Hook(table[10],reinterpret_cast<void*>(&LegacyFactoryHook),reinterpret_cast<void**>(&originalLegacyFactory));
+  const std::string legacyFailure=legacy?std::string():lastHookFailure;
   const bool hwnd=originalFactory || Hook(table[15],reinterpret_cast<void*>(&FactoryHook),reinterpret_cast<void**>(&originalFactory));
+  const std::string hwndFailure=hwnd?std::string():lastHookFailure;
   if(!legacy || !hwnd) {
+    // 1.8.6: say which method failed, why, and who already owns it.
+    static std::atomic_bool logged{false};
+    if(!logged.exchange(true)) {
+      std::string fields;
+      if(!legacy) fields+="\"CreateSwapChain\":\""+escape(legacyFailure+"; "+DescribeEntry(table[10]))+"\"";
+      if(!hwnd) fields+=std::string(fields.empty()?"":",")+"\"CreateSwapChainForHwnd\":\""+escape(hwndFailure+"; "+DescribeEntry(table[15]))+"\"";
+      xess_mod::WriteLog("native_factory_hook_failure",fields);
+    }
     Report("XeMFG factory entrypoint hook incomplete; restart with early ReShade addon loading"); return false;
   }
   xess_mod::WriteLog("native_factory_hooks","\"legacy\":true,\"hwnd\":true");

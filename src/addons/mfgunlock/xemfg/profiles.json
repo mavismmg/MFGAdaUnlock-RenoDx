@@ -57,6 +57,12 @@
       "evidence": "2026-11-02 field log, RTX 3060 Ti, Streamline 2.14.1: slSetFeatureLoaded returned eErrorFeatureMissing with sl.common loaded and sl.dlss_g absent; three restarts refused the same way. Trial for this game only"
     },
     {
+      "id": "elden-ring-erss-xefg",
+      "match": {"executable": "eldenring.exe"},
+      "game_xefg_modules": ["zzz_ERSS.dll"],
+      "evidence": "2026-11-06 field log (FusselBob, RTX 4090, Elden Ring Reforged + ERSS6): ERSS creates XeFG from zzz_ERSS.dll, so XeMFG passed it through as a foreign caller and stayed at Intel's 2x. Trial for this game and module only"
+    },
+    {
       "id": "reframework-xefg-monitor",
       "match": {},
       "known_bad_reframework_sha256": ["70a2a3c24030d8bc3695554e7f929fd1b0b4b757fb5ba2c9d34f42d7155005ac"],

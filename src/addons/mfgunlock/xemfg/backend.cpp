@@ -129,10 +129,20 @@ bool SdkAddress(const void* p) noexcept {
   return p && VirtualQuery(p,&m,sizeof(m))==sizeof(m) && m.Type==MEM_IMAGE
       && (m.AllocationBase==fg || m.AllocationBase==ll);
 }
+// 1.8.6: modules a profile names as this game's XeFG integration (Elden Ring's
+// ERSS calls XeFG from zzz_ERSS.dll, not from eldenring.exe). Lower-case
+// file names, set once in Start() under `mutex`.
+std::vector<std::wstring> gameXefgModules;
 bool GameAddress(const void* p) noexcept {
   MEMORY_BASIC_INFORMATION m{};
-  return p && VirtualQuery(p,&m,sizeof(m))==sizeof(m) && m.Type==MEM_IMAGE
-      && m.AllocationBase==GetModuleHandleW(nullptr);
+  if(!p || VirtualQuery(p,&m,sizeof(m))!=sizeof(m) || m.Type!=MEM_IMAGE) return false;
+  if(m.AllocationBase==GetModuleHandleW(nullptr)) return true;
+  if(gameXefgModules.empty()) return false;
+  wchar_t path[MAX_PATH]{};
+  if(!GetModuleFileNameW(static_cast<HMODULE>(m.AllocationBase),path,MAX_PATH)) return false;
+  const wchar_t* name=wcsrchr(path,L'\\'); name=name?name+1:path;
+  std::wstring lower(name); for(auto& c:lower) c=static_cast<wchar_t>(towlower(c));
+  return std::find(gameXefgModules.begin(),gameXefgModules.end(),lower)!=gameXefgModules.end();
 }
 std::string CallerName(const void* p) noexcept {
   try {
@@ -564,6 +574,14 @@ void Start() {
   if (mfgunlock::backend::Read()!=mfgunlock::backend::Kind::XeMfg) { Detail("DLSS-G selected; XeMFG companion inactive"); return; }
 #ifdef MFGUNLOCK_NATIVE_XEMFG
   host=self; // Explicitly admitted in-process transport, never an OptiScaler impersonation.
+  {
+    const auto policy=mfgunlock::xemfg::native::CurrentPolicy();
+    gameXefgModules=policy.gameXefgModules;
+    for(const auto& name:gameXefgModules) {
+      std::string ascii; for(const auto c:name) ascii+=static_cast<char>(c);
+      xess_mod::WriteLog("native_game_xefg_module","\"module\":\""+ascii+"\"");
+    }
+  }
   // Bridges that patch the same Intel runtime come from profiles.json.
   for(const auto& name:mfgunlock::xemfg::native::CurrentPolicy().conflictingModules)
     if(GetModuleHandleW(name.c_str())) {

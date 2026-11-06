@@ -63,6 +63,7 @@ inline constexpr Option kDiagnostics[]{
 };
 inline constexpr Option kDlssG[]{
   {L"DLSSG",L"GenericGate","Generic provider gate","Unlocks MFG on a DLSS-G provider with no exact profile when it has the reviewed two-compare gate. Restart to apply.",L"1",MFGUNLOCK_CHOICES(kOnOff)},
+  {L"DLSSG",L"XmxJitter","XMX multi-frame with jittered motion","XMX: games with jittered motion vectors (HZD Remastered, Death Stranding 2) get the multi-frame model. Off uses Intel's 2x model there. Restart to apply.",L"1",MFGUNLOCK_CHOICES(kOnOff)},
   {L"DLSSG",L"ForceBorderless","Force borderless","Serves the game as a borderless window. Removed from the main controls in 1.7.",L"0",MFGUNLOCK_CHOICES(kOnOff)},
 };
 #undef MFGUNLOCK_CHOICES

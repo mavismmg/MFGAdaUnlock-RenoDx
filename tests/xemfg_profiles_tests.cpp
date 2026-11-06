@@ -10,7 +10,7 @@ int main(int argc,char** argv) {
   try {
     Require(argc==2,"usage: xemfg_profiles_tests <embedded profiles.json>");
     std::ifstream file(argv[1],std::ios::binary); std::stringstream text; text<<file.rdbuf();
-    Rules embedded; std::string error;
+    Rules embedded, broken_any; std::string error;
     Require(Parse(text.str(),"embedded",embedded,error) && error.empty(),"shipped profiles.json does not parse");
     for(const auto& rule:embedded) Require(!rule.id.empty() && !rule.evidence.empty(),"every shipped rule needs an id and its evidence");
     // Defaults apply everywhere; module rules only while that module is mapped.
@@ -39,6 +39,11 @@ int main(int argc,char** argv) {
     Require(!AcceptMissingDlssgPlugin(true,false,true,false),"accepted with a DLSS-G plugin present");
     Require(!AcceptMissingDlssgPlugin(true,true,false,false),"accepted before the plugins loaded");
     Require(!AcceptMissingDlssgPlugin(true,true,true,true),"took presentation from the game's own XeFG");
+    // 1.8.6: ERSS integrates XeFG for Elden Ring; only that game and module.
+    Require(Contains(Resolve(embedded,Context{L"eldenring.exe",{}}).gameXefgModules,L"zzz_erss.dll"),"Elden Ring lost its ERSS profile");
+    Require(Resolve(embedded,Context{L"Game.exe",{}}).gameXefgModules.empty(),"another game treats a module as its XeFG integration");
+    Require(!Parse(R"({"schema":1,"profiles":[{"id":"x","match":{},"evidence":"e","game_xefg_modules":["Any.dll"]}]})","override",broken_any,error)
+        && broken_any.empty(),"game_xefg_modules accepted without an executable");
     // The game-folder file overrides scalar fields and extends lists.
     Rules local;
     Require(Parse(R"({"schema":1,"profiles":[{"id":"local","match":{"executable":"game.exe"},"evidence":"user",

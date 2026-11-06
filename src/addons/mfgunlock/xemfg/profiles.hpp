@@ -18,13 +18,16 @@ struct Rule {
   std::wstring executable,module; // lower case; empty matches everything
   std::optional<bool> retainNativeOutput,depthInverted,motionJittered,acceptMissingDlssgPlugin;
   std::vector<std::wstring> observerModules,conflictingModules;
+  // 1.8.6: modules that integrate XeFG on the game's behalf (Elden Ring's
+  // ERSS): their XeFG calls are treated as the game's own.
+  std::vector<std::wstring> gameXefgModules;
   std::vector<std::string> knownBadReframework;
 };
 using Rules=std::vector<Rule>;
 struct Context { std::wstring executable; std::vector<std::wstring> modules; };
 struct Policy {
   std::optional<bool> retainNativeOutput,depthInverted,motionJittered,acceptMissingDlssgPlugin;
-  std::vector<std::wstring> observerModules,conflictingModules;
+  std::vector<std::wstring> observerModules,conflictingModules,gameXefgModules;
   std::vector<std::string> knownBadReframework,applied,sources;
 };
 // A Streamline with its plugins loaded and no DLSS-G among them has nothing to
@@ -46,7 +49,8 @@ inline bool Parse(const std::string& text,const std::string& source,Rules& out,s
     const auto root=nlohmann::json::parse(text);
     if(root.value("schema",0)!=1 || !root.contains("profiles") || !root["profiles"].is_array()) { error="unsupported schema"; return false; }
     static const char* known[]={"id","match","evidence","retain_native_output","depth_inverted","motion_jittered",
-        "observer_modules","conflicting_modules","known_bad_reframework_sha256","accept_missing_dlssg_plugin"};
+        "observer_modules","conflicting_modules","known_bad_reframework_sha256","accept_missing_dlssg_plugin",
+        "game_xefg_modules"};
     Rules rules;
     for(const auto& item:root["profiles"]) {
       for(const auto& [key,value]:item.items())
@@ -66,6 +70,10 @@ inline bool Parse(const std::string& text,const std::string& source,Rules& out,s
       for(const auto& m:item.value("observer_modules",nlohmann::json::array())) rule.observerModules.push_back(Lower(Wide(m.get<std::string>())));
       for(const auto& m:item.value("conflicting_modules",nlohmann::json::array())) rule.conflictingModules.push_back(Lower(Wide(m.get<std::string>())));
       for(const auto& h:item.value("known_bad_reframework_sha256",nlohmann::json::array())) rule.knownBadReframework.push_back(h.get<std::string>());
+      for(const auto& m:item.value("game_xefg_modules",nlohmann::json::array())) rule.gameXefgModules.push_back(Lower(Wide(m.get<std::string>())));
+      // Only for one game: a module named for every game would take any
+      // overlay's XeFG.
+      if(!rule.gameXefgModules.empty() && rule.executable.empty()) { error="game_xefg_modules without an executable"; return false; }
       rules.push_back(std::move(rule));
     }
     out=std::move(rules); return true;
@@ -85,6 +93,7 @@ inline Policy Resolve(const Rules& rules,const Context& context) {
     if(rule.motionJittered) policy.motionJittered=rule.motionJittered;
     if(rule.acceptMissingDlssgPlugin) policy.acceptMissingDlssgPlugin=rule.acceptMissingDlssgPlugin;
     add(policy.observerModules,rule.observerModules); add(policy.conflictingModules,rule.conflictingModules);
+    add(policy.gameXefgModules,rule.gameXefgModules);
     add(policy.knownBadReframework,rule.knownBadReframework);
     policy.applied.push_back(rule.id); policy.sources.push_back(rule.source);
   }

@@ -402,11 +402,23 @@ inline void MatchDepthAndMotion(const NVSDK_NGX_Parameter* params, FrameData& da
   Assign(data.depth, depth);
   Assign(data.motion, motion);
 }
+constexpr uint32_t kFlagDepthInverted = 1u << 0;
+constexpr uint32_t kFlagMotionJittered = 1u << 4;
+// 1.8.6: the ported multi-frame model refuses the jittered-motion flag
+// (HZD Remastered, Death Stranding 2) and 1.8.3 fell back to Intel's 2x model.
+// It is now started without that flag; the motion vectors still carry the
+// camera jitter (about a render pixel at most), with no visible artifact in
+// Death Stranding 2. [DLSSG] XmxJitter=0 restores the 2x fallback.
+inline bool JitterFlagStripped() {
+  static const bool stripped =
+      GetPrivateProfileIntW(L"DLSSG", L"XmxJitter", 1, (backend::Directory() / L"MFGAdaUnlock.ini").c_str()) != 0;
+  return stripped;
+}
 inline bool Prepare(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* params, const D3D12_RESOURCE_DESC& output) {
   auto& state = Get();
   uint32_t flags = 0;
-  if (Value<int>(params, "DLSSG.DepthInverted", 0) != 0) flags |= 1u << 0;
-  if (Value<int>(params, "DLSSG.MvecJittered", 0) != 0) flags |= 1u << 4;
+  if (Value<int>(params, "DLSSG.DepthInverted", 0) != 0) flags |= kFlagDepthInverted;
+  if (Value<int>(params, "DLSSG.MvecJittered", 0) != 0) flags |= kFlagMotionJittered;
   const auto width = static_cast<uint32_t>(output.Width);
   ComPtr<ID3D12Device> device;
   if (FAILED(list->GetDevice(IID_PPV_ARGS(&device)))) return false;
@@ -448,18 +460,23 @@ inline bool Prepare(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* 
   init.width = width;
   init.height = output.Height;
   init.format = output.Format;
-  init.flags = flags;
+  const bool strip = (flags & kFlagMotionJittered) != 0 && state.maxFrames > 1 && JitterFlagStripped();
+  init.flags = strip ? flags & ~kFlagMotionJittered : flags;
   init.maxFrames = state.maxFrames;
   init.creationMask = 1;
   init.visibleMask = 1;
   const auto initialize = [&] {
     const auto result = Guarded(reinterpret_cast<unsigned char*>(state.fg) + kInitRva, state.context, &init, nullptr);
     Log("init " + std::to_string(width) + "x" + std::to_string(output.Height) + " format " +
-        std::to_string(static_cast<int>(output.Format)) + " flags " + std::to_string(flags) + " frames " +
+        std::to_string(static_cast<int>(output.Format)) + " flags " + std::to_string(init.flags) + " frames " +
         std::to_string(init.maxFrames) + " result " + std::to_string(result));
     return result;
   };
   auto result = initialize();
+  if (strip && result == 0)
+    Log("the multi-frame model runs without the jittered-motion flag ([DLSSG] XmxJitter=0 restores Intel's 2x model)");
+  // Intel's 2x model below gets the game's real flags.
+  init.flags = flags;
   // 1.8.3: the ported multi-frame model throws inside Init (-1000) on inputs
   // Intel's own 2x model takes: HZD Remastered's jittered motion vectors
   // (flags 17). Intel's model on a fresh context still generates 2x.
