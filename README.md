@@ -352,11 +352,11 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Alan Wake 2 | DX12 | Working | Working | XMX since 1.8.2 |
 | Stellar Blade | DX12 | Not tested | Working | XMX since 1.8.3 |
 | Ghost of Tsushima | DX12 | Not tested | Working | XMX since 1.8.3. Its Streamline (2.4) has no multi-frame generation: 2x only, and a forced 3x or more is not applied |
-| Horizon Zero Dawn Remastered | DX12 | Not tested | Working | XMX since 1.8.3, with Intel's 2x model (the game sends jittered motion vectors). Its Streamline (2.2.1) offers 2x only |
+| Horizon Zero Dawn Remastered | DX12 | Not tested | Working | XMX since 1.8.3. It sends jittered motion vectors: Intel's 2x model until 1.8.5, the multi-frame model since 1.8.6 (not retested). Its Streamline (2.2.1) offers 2x only |
 | The Last of Us Part II Remastered | DX12 | Working | Working | XMX since 1.8.3; in 1.8.2 a saved DLSS preset crashed the game at start |
 | Mafia: The Old Country | DX12 | Working | Maybe |  |
 | Resonance: A Plague Tale Legacy | DX12 | Working | Working |  |
-| Death Stranding 2: On the Beach | DX12 | Working | Maybe | Its jittered motion vectors are corrected automatically |
+| Death Stranding 2: On the Beach | DX12 | Working | Working | Its jittered motion vectors are corrected automatically. XMX: 3x–6x since 1.8.6 (Intel's 2x model before) |
 | Ghostrunner 2 | DX12 | Working | Working |  |
 | S.T.A.L.K.E.R. 2: Heart of Chornobyl | DX12 | Working | Maybe | Set the display mode to **Borderless / Windowed Fullscreen** |
 | Warhammer 40,000: Darktide | DX12 | Working | Working | Fixed in 1.5.1; on 1.5.0, add `[Adapters] FidelityFX=0` to `MFGAdaUnlock.ini` |
