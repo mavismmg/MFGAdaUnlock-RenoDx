@@ -183,14 +183,43 @@ inline NVSDK_NGX_Result NVSDK_CONV HookedRequirements(IDXGIAdapter* adapter, con
     AdmissionScope scope;
     result = g_real_requirements(adapter, info, out);
   }
-  // Only the adapter answer changes; a driver or OS refusal stays.
-  if (!NVSDK_NGX_FAILED(result) && out != nullptr &&
-      out->FeatureSupported == NVSDK_NGX_FeatureSupportResult_AdapterUnsupported) {
-    out->FeatureSupported = NVSDK_NGX_FeatureSupportResult_Supported;
-    out->MinHWArchitecture = kLoweredMinimum;
-    if (!g_requirements_relaxed.exchange(true)) Log("NGX frame generation requirements: adapter admitted");
+  // FeatureSupported is a bit mask. Only the adapter bit is cleared; a driver
+  // or OS refusal stays and keeps the feature unsupported.
+  if (!NVSDK_NGX_FAILED(result) && out != nullptr) {
+    const auto bits = static_cast<uint32_t>(out->FeatureSupported);
+    constexpr auto kAdapter = static_cast<uint32_t>(NVSDK_NGX_FeatureSupportResult_AdapterUnsupported);
+    if ((bits & kAdapter) != 0) {
+      out->FeatureSupported = static_cast<NVSDK_NGX_Feature_Support_Result>(bits & ~kAdapter);
+      out->MinHWArchitecture = kLoweredMinimum;
+      if (!g_requirements_relaxed.exchange(true)) {
+        Log("NGX frame generation requirements: adapter admitted" +
+            ((bits & ~kAdapter) != 0 ? " (other refusal bits remain: " + std::to_string(bits & ~kAdapter) + ")"
+                                     : std::string()));
+      }
+    }
   }
   return result;
+}
+
+// ------------------------------------------------------------------ slInit
+// Streamline loads its plugins inside slInit and drops sl.dlss_g there when
+// NVAPI or NGX say the GPU predates Ada. framecount's slInit hook calls these
+// around the whole call, so every architecture query on that thread answers
+// Ada. The hook exists only if the addon loaded before the game called
+// slInit (ReShade's LoadFromDllMain); the panel warns when it did not.
+inline std::atomic_bool g_init_observed{false};
+inline thread_local bool g_init_previous = false;
+inline bool InitHookWanted() { return Engaged(); }
+inline void InitScope(bool begin) {
+  if (!Engaged()) return;
+  if (begin) {
+    EnsureArchHook();
+    g_init_previous = g_in_admission;
+    g_in_admission = true;
+    if (!g_init_observed.exchange(true)) Log("slInit runs inside the admission scope");
+  } else {
+    g_in_admission = g_init_previous;
+  }
 }
 
 inline const std::vector<hook::HookItem> kRequirementHooks = {

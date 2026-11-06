@@ -873,7 +873,8 @@ inline void ObserveStreamlineFunctionOwner(const void* function) {
   // retain the directly discovered sl.dlss_g candidate in that case.
   const bool is_streamline_owner =
       std::wcsstr(path.data(), L"sl.dlss_g") != nullptr ||
-      std::wcsstr(path.data(), L"\\models\\sl_dlss_g_0\\") != nullptr ||
+      // 1.8.5: also the NVIDIA app's override copy (sl_dlss_g_override_0).
+      std::wcsstr(path.data(), L"\\models\\sl_dlss_g_") != nullptr ||
       std::wcsstr(path.data(), L"sl.interposer") != nullptr;
   if (is_streamline_owner) ObserveStreamlinePluginVersion(owner, true);
 }
@@ -1980,8 +1981,21 @@ inline sl::Result HookedSetConstants(const sl::Constants& values,
 //
 // Both flags are in the SDK's own default; the app can actively drop them. We
 // preserve the game's request unless the user selected an explicit policy.
+// 1.8.5: XMX on RTX 20/30 (preada_admission.hpp) needs slInit too: Streamline
+// loads or refuses sl.dlss_g there. g_init_wanted adds the hook; g_init_scope
+// runs around the whole call (true before, false after).
+inline std::atomic<bool (*)()> g_init_wanted{nullptr};
+inline std::atomic<void (*)(bool)> g_init_scope{nullptr};
+inline sl::Result InitWithPolicy(const sl::Preferences& pref, uint64_t sdk_version);
 inline sl::Result HookedInit(const sl::Preferences& pref, uint64_t sdk_version) {
   if (g_real_init == nullptr) return sl::Result::eErrorNotInitialized;
+  const auto scope = g_init_scope.load(std::memory_order_acquire);
+  if (scope != nullptr) scope(true);
+  const sl::Result result = InitWithPolicy(pref, sdk_version);
+  if (scope != nullptr) scope(false);
+  return result;
+}
+inline sl::Result InitWithPolicy(const sl::Preferences& pref, uint64_t sdk_version) {
   if (!g_addon_enabled.load(std::memory_order_relaxed))
     return g_real_init(pref, sdk_version);
 
@@ -2942,9 +2956,12 @@ inline void TryInstall() {
         {"slSetConstants", reinterpret_cast<void**>(&internal::g_real_set_constants),
          reinterpret_cast<void*>(&internal::HookedSetConstants)});
   }
-  // slInit is only detoured for an explicit provider-selection override.
+  // slInit is only detoured for an explicit provider-selection override, or
+  // (1.8.5) for XMX's admission on RTX 20/30.
+  const auto init_wanted = internal::g_init_wanted.load(std::memory_order_acquire);
   if (g_runtime_selection_mode.load(std::memory_order_relaxed) !=
-      static_cast<unsigned int>(RuntimeSelectionMode::kGameDefault)) {
+          static_cast<unsigned int>(RuntimeSelectionMode::kGameDefault) ||
+      (init_wanted != nullptr && init_wanted())) {
     hooks.push_back(
         {"slInit", reinterpret_cast<void**>(&internal::g_real_init),
          reinterpret_cast<void*>(&internal::HookedInit)});

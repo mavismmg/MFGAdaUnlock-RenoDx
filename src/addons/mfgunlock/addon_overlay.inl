@@ -2649,7 +2649,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   }
   const char* xmx_waiting=xmx_bypassed?"NVIDIA is generating":xmx_report.evaluating?"Waiting for frames":"Paused or off in the game";
   const auto xmx_support_report=[&] {
-    std::string report="MFG Unlock 1.8.4\nmethod=";
+    std::string report="MFG Unlock 1.8.5\nmethod=";
     report+=xmx_selected?"XMX":"DLSS-G";
     report+=std::string("\nrenderer=")+RenderApiName(render_api)+"\nstatus="+player_state;
     if(xmx_selected) {
@@ -2663,13 +2663,38 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   mfgunlock::ui::Hero(multiplier_text.c_str(),xmx_running?"XMX":"DLSS-G",RenderApiName(render_api),
       xmx_failed?"Frame generation stopped":xmx_running?(xmx_report.generating?"Generating frames":xmx_waiting):player_state,
       xmx_running?xmx_report.generating:mfg_live);
+  // 1.8.5: only the driver's built-in provider is in use (2x at most).
+  if(const auto driver_only=CheckDriverOnlyProvider(); driver_only.active) {
+    mfgunlock::ui::ProblemCard problem("##driver_only_provider","Only 2x: NVIDIA is using the driver's built-in frame generation",mfgunlock::ui::Warning);
+    ImGui::TextWrapped("This game is using the frame generation file built into the NVIDIA driver%s, which has no multi-frame support, so the game offers 2x at most and Dynamic MFG is unavailable. "
+        "In the NVIDIA app, open this game, set \"DLSS Override - Frame Generation\" to Latest (or remove the game's own override so the global setting applies), then restart the game.",
+        driver_only.version.empty()?"":(" ("+driver_only.version+")").c_str());
+  }
   if(xmx_selected) {
     mfgunlock::ui::Readout("##xmx_generator","Generator",!xmx_running?"NVIDIA DLSS-G (XMX not started)":xmx_bypassed?"NVIDIA DLSS-G (XMX not being called)":xmx_failed?"None (XMX failed)":xmx_report.generating?"Intel XeFG model, in DLSS-G's presentation":xmx_report.evaluating?"Intel XeFG model - waiting for frames":"Intel XeFG model - not being called",
         "The XMX mode replaces NVIDIA's generator with Intel's model. Presentation and the game's settings remain DLSS-G's.",xmx_report.generating?mfgunlock::ui::Accent:mfgunlock::ui::Muted);
     if(mfgunlock::framecount::g_game_dynamic_replaced.load(std::memory_order_relaxed))
       mfgunlock::ui::Description("The game asked for Dynamic MFG, which XMX does not support; a fixed multiplier is used.");
-    if(mfgunlock::xmx::preada::Engaged())
+    if(mfgunlock::xmx::preada::Engaged()) {
       mfgunlock::ui::Description("RTX 20/30, experimental: NVIDIA's runtime is admitted on this GPU so the game offers DLSS Frame Generation. Choose the multiplier in the game's menu.");
+      // 1.8.5: Streamline drops DLSS-G inside slInit on these GPUs; the
+      // admission reaches slInit only when the addon loads early.
+      if(!mfgunlock::xmx::preada::g_init_observed.load(std::memory_order_acquire)) {
+        if(!HasEarlyLoadEntry()) {
+          mfgunlock::ui::Notice("This game started Streamline before the addon loaded, so DLSS Frame Generation may stay locked in its menu. Enable early loading and restart the game.");
+          static int early_state=0;  // 0 not tried, 1 saved, 2 failed
+          mfgunlock::ui::ButtonRow early(1);
+          if(early("Enable early addon loading","Adds this addon to ReShade's LoadFromDllMain list in ReShade.ini, so it loads before the game starts Streamline. It applies after a game restart.")) {
+            early_state=EnsureEarlyLoadEntry()?1:2;
+            reshade::log::message(early_state==1?reshade::log::level::info:reshade::log::level::error,
+                early_state==1?"mfgunlock: added this addon to ADDON.LoadFromDllMain for the pre-Ada admission; restart required."
+                              :"mfgunlock: could not update ADDON.LoadFromDllMain; add renodx-mfgunlock.addon64 manually and restart.");
+          }
+          if(early_state==1) mfgunlock::ui::Description("Saved. Restart the game.");
+          else if(early_state==2) mfgunlock::ui::Description("ReShade.ini could not be updated. Add renodx-mfgunlock.addon64 to LoadFromDllMain under [ADDON] and restart.");
+        }
+      }
+    }
     if(!xmx_d3d12) mfgunlock::ui::Notice("XMX only runs in Direct3D 12 games, so NVIDIA's generator is producing the frames.");
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
     // 1.8.3: RTX 20 and 30. NVIDIA's runtime is admitted on this GPU so the
@@ -2998,17 +3023,36 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
 
     bool dynamic_mfg = dynamic_enabled && !dynamic_game_blocked;
 
+    // 1.8.5: name the missing piece instead of a generic "waiting".
+    std::string dynamic_status;
+    if (dynamic_game_blocked) {
+      dynamic_status = "Disabled for this game's compatibility.";
+    } else if (dynamic_available) {
+      dynamic_status = "Runtime support detected.";
+    } else if (dynamic_renderer_blocked) {
+      dynamic_status = "Unavailable: NVIDIA Dynamic MFG needs Direct3D 12.";
+    } else if (dynamic_version_blocked &&
+               !mfgunlock::runtimeversion::IsDynamicStreamlineVersion(streamline_version)) {
+      dynamic_status = "Unavailable: this game loads Streamline " + streamline_text + "; Dynamic needs 2.14 or newer.";
+    } else if (dynamic_version_blocked) {
+      dynamic_status = "Unavailable: this game loads DLSS-G " + dlssg_text + "; Dynamic needs 310.9.1 or newer.";
+    } else if (dynamic_provider_blocked) {
+      dynamic_status = "Unavailable: NVIDIA's runtime reports Dynamic MFG unsupported on this system (driver or GPU).";
+    } else if (!streamline_seen) {
+      dynamic_status = "Waiting: Streamline has not been detected in this game yet.";
+    } else if (!dlssg_seen) {
+      dynamic_status = "Waiting: Streamline " + streamline_text + " found; NVIDIA's frame generation file has not loaded yet.";
+    } else {
+      dynamic_status = "Waiting: Streamline " + streamline_text + " and DLSS-G " + dlssg_text +
+                       " found; the runtime has not answered the Dynamic support query yet. Turn Frame Generation on in the game.";
+    }
+
     ImGui::TableNextRow();
     ImGui::TableNextColumn();
     SettingLabel(
         "NVIDIA Dynamic MFG",
-        dynamic_game_blocked
-            ? "Disabled for this game's compatibility."
-            : (dynamic_available ? "Runtime support detected."
-                                 : (dynamic_hard_unavailable
-                                        ? "Required runtime is unavailable."
-                                        : "Waiting for runtime detection.")),
-        "Lets NVIDIA's native scheduler choose the generated-frame count. Requires D3D12, driver 595.41 or newer, DLSS-G 310.9.1/310.9.16 and Streamline 2.14.1/2.14.16. Star Wars Outlaws is kept on fixed/game-controlled MFG because its integration breaks on the Dynamic path. Toggle Frame Generation off/on after changing it.");
+        dynamic_status.c_str(),
+        "Lets NVIDIA's native scheduler choose the generated-frame count. Requires D3D12, driver 595.41 or newer, DLSS-G 310.9.1 or newer and Streamline 2.14 or newer; NVIDIA's runtime has the final say. Star Wars Outlaws is kept on fixed/game-controlled MFG because its integration breaks on the Dynamic path. Toggle Frame Generation off/on after changing it.");
     ImGui::TableNextColumn();
     const bool block_dynamic_enable =
         dynamic_game_blocked || (dynamic_hard_unavailable && !dynamic_mfg);
@@ -3049,6 +3093,45 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
                                   "DynamicTargetFPS", dynamic_target);
       }
       if (dynamic_hard_unavailable) ImGui::EndDisabled();
+
+      // 1.8.5: the ceiling the NVIDIA app calls "Multiplier: Up to Nx".
+      {
+        static const char* const kCeilings[] = {"Auto (driver / NVIDIA app)", "Up to 2x", "Up to 3x", "Up to 4x",
+                                                "Up to 5x", "Up to 6x"};
+        const uint32_t configured = mfgunlock::drsoverride::g_max_multiplier.load(std::memory_order_relaxed);
+        int ceiling = configured >= 2 ? static_cast<int>(configured) - 1 : 0;
+        std::string ceiling_status;
+        const uint32_t answered = mfgunlock::drsoverride::g_answered_value.load(std::memory_order_relaxed);
+        if (answered != UINT32_MAX && answered == mfgunlock::drsoverride::DrsValueFor(configured)) {
+          ceiling_status = "Applied: NVIDIA's runtime read this ceiling.";
+        } else if (answered != UINT32_MAX) {
+          ceiling_status = "Restart the game to apply. This session uses up to " + std::to_string(answered + 1) + "x.";
+        } else if (configured != 0 && mfgunlock::drsoverride::g_read_seen.load(std::memory_order_acquire)) {
+          ceiling_status = "Restart the game to apply. This session uses the driver's ceiling.";
+        } else if (configured != 0) {
+          ceiling_status = "Restart the game to apply: NVIDIA's runtime reads it when it starts.";
+        } else {
+          const uint32_t driver = mfgunlock::drsoverride::g_driver_value.load(std::memory_order_relaxed);
+          ceiling_status = driver != UINT32_MAX && driver != 0
+                               ? "Driver profile: up to " + std::to_string(driver + 1) + "x."
+                               : "NVIDIA's runtime picks up to the highest multiplier offered.";
+        }
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        SettingLabel("Dynamic multiplier ceiling", ceiling_status.c_str(),
+                     "The highest multiplier NVIDIA's Dynamic MFG may pick, as the NVIDIA app's \"Multiplier: Up to\" setting. "
+                     "The addon gives this value to NVIDIA's runtime in this game only; the driver profile is not changed. "
+                     "Auto keeps the driver's or NVIDIA app's value. Applies after a game restart.");
+        ImGui::TableNextColumn();
+        if (dynamic_hard_unavailable) ImGui::BeginDisabled();
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::Combo("##dynamic_ceiling", &ceiling, kCeilings, IM_ARRAYSIZE(kCeilings))) {
+          const uint32_t multiplier = ceiling == 0 ? 0u : static_cast<uint32_t>(ceiling) + 1u;
+          mfgunlock::drsoverride::g_max_multiplier.store(multiplier, std::memory_order_relaxed);
+          reshade::set_config_value(nullptr, kConfigSection, "DynamicMaxMultiplier", static_cast<int>(multiplier));
+        }
+        if (dynamic_hard_unavailable) ImGui::EndDisabled();
+      }
 
       ImGui::TableNextRow();
       ImGui::TableNextColumn();

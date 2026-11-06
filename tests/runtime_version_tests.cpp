@@ -28,15 +28,25 @@ int wmain(int argc, wchar_t** argv) {
   CHECK(IsDynamicDlssgVersion(Pack(310, 9, 16, 0)));
   CHECK(IsDynamicStreamlineVersion(streamline));
   CHECK(IsDynamicStreamlineVersion(Pack(2, 14, 16, 0)));
-  // Do not treat the allowlist as a minimum version or truncate patch digits.
-  for (uint16_t patch : {0, 2, 15, 17}) {
-    CHECK(!IsDynamicDlssgVersion(Pack(310, 9, patch, 0)));
-    CHECK(!IsDynamicStreamlineVersion(Pack(2, 14, patch, 0)));
-  }
-  CHECK(!IsDynamicDlssgVersion(Pack(310, 10, 16, 0)));
-  CHECK(!IsDynamicStreamlineVersion(Pack(2, 15, 16, 0)));
-  CHECK(!IsDynamicDlssgVersion(Pack(310, 9, 16, 1)));
-  CHECK(!IsDynamicStreamlineVersion(Pack(2, 14, 16, 1)));
+  // 1.8.5: a minimum (DLSS-G 310.9.1, Streamline 2.14.0), not an exact list.
+  for (uint16_t patch : {2, 15, 17}) CHECK(IsDynamicDlssgVersion(Pack(310, 9, patch, 0)));
+  for (uint16_t patch : {0, 2, 15, 17}) CHECK(IsDynamicStreamlineVersion(Pack(2, 14, patch, 0)));
+  CHECK(IsDynamicDlssgVersion(Pack(310, 10, 16, 0)));
+  CHECK(IsDynamicStreamlineVersion(Pack(2, 15, 16, 0)));
+  CHECK(IsDynamicDlssgVersion(Pack(310, 9, 16, 1)));
+  CHECK(IsDynamicStreamlineVersion(Pack(2, 14, 16, 1)));
+  // Below the minimum: no Dynamic ABI.
+  CHECK(!IsDynamicDlssgVersion(Pack(310, 9, 0, 0)));
+  CHECK(!IsDynamicDlssgVersion(Pack(310, 6, 0, 0)));
+  CHECK(!IsDynamicDlssgVersion(Pack(310, 4, 0, 0)));
+  CHECK(!IsDynamicStreamlineVersion(Pack(2, 13, 99, 0)));
+  CHECK(!IsDynamicStreamlineVersion(Pack(2, 12, 3, 0)));
+  CHECK(!IsDynamicStreamlineVersion(Pack(2, 7, 32, 0)));
+  // Another product line is never read as a newer version.
+  CHECK(!IsDynamicDlssgVersion(Pack(311, 0, 0, 0)));
+  CHECK(!IsDynamicDlssgVersion(Pack(3, 10, 0, 0)));
+  CHECK(!IsDynamicStreamlineVersion(Pack(3, 0, 0, 0)));
+  CHECK(!IsDynamicStreamlineVersion(Pack(310, 9, 16, 0)));
   CHECK(!IsDynamicDlssgVersion(0));
   CHECK(!IsDynamicStreamlineVersion(0));
 

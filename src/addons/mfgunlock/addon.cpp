@@ -141,6 +141,7 @@
 #include <nvsdk_ngx.h>
 #include "xmx_hook.hpp"
 #include "preada_admission.hpp"
+#include "drs_override.hpp"
 #include "advanced_settings.hpp"
 
 #include <deps/imgui/imgui.h>
@@ -725,6 +726,8 @@ void RunCreationMaintenance(const char* event) {
   if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
   mfgunlock::framecount::TryInstall();
   mfgunlock::loadhook::TryInstall();
+  if (mfgunlock::drsoverride::g_max_multiplier.load(std::memory_order_relaxed) != 0)
+    mfgunlock::drsoverride::TryInstall(true);
   QueryPerformanceCounter(&end);
   QueryPerformanceFrequency(&frequency);
   if (reported.fetch_add(1, std::memory_order_relaxed) < 6 && frequency.QuadPart > 0) {
@@ -1047,6 +1050,10 @@ void LoadConfig() {
   // on RTX 50; g_game_dynamic_blocked stays available but is no longer set.
   if (reshade::get_config_value(nullptr, kConfigSection, "DynamicMFG", value))
     mfgunlock::framecount::g_dynamic_mfg_enabled.store(value != 0, std::memory_order_relaxed);
+  // 1.8.5: Dynamic MFG ceiling (0 = Auto, 2..6), answered to Streamline's DRS read.
+  if (!safe_mode && reshade::get_config_value(nullptr, kConfigSection, "DynamicMaxMultiplier", value) &&
+      value >= 0 && mfgunlock::drsoverride::IsSelectable(static_cast<uint32_t>(value)))
+    mfgunlock::drsoverride::g_max_multiplier.store(static_cast<uint32_t>(value), std::memory_order_relaxed);
   if (reshade::get_config_value(nullptr, kConfigSection, "DynamicTargetFPS", value)) {
     if (value < 0 || value > 1000) value = 0;
     mfgunlock::framecount::g_dynamic_target_fps.store(
@@ -1212,7 +1219,7 @@ void LoadConfig() {
 extern "C" __declspec(dllexport) constexpr const char* NAME = "MFG Unlock";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
-    "MFG Unlock 1.8.4 - DLSS-G and XeMFG backends";
+    "MFG Unlock 1.8.5 - DLSS-G and XeMFG backends";
 #elif defined(MFGUNLOCK_DUAL_BACKEND)
     "Dual Backend Preview X1 - official 1.4.5 base; DLSS-G and XeMFG via OptiScaler; gameplay validation pending";
 #elif defined(MFGUNLOCK_RELEASE_1_4_5)
@@ -1342,6 +1349,30 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       };
       mfgunlock::loadhook::g_on_dlssg_loaded = ProcessLoadedDlssgModule;
       mfgunlock::framecount::internal::g_before_frame_generation.store(BeforeFrameGeneration, std::memory_order_release);
+      // 1.8.5: RTX 20/30 with XMX. Streamline keeps or drops sl.dlss_g inside
+      // slInit, so the admission must cover that call.
+      // The Dynamic MFG ceiling also needs slInit: Streamline may read the
+      // driver profile while it loads its plugins.
+      mfgunlock::framecount::internal::g_init_scope.store(
+          [](bool begin) {
+            if (begin && mfgunlock::drsoverride::g_max_multiplier.load(std::memory_order_relaxed) != 0)
+              mfgunlock::drsoverride::TryInstall(true);
+            mfgunlock::xmx::preada::InitScope(begin);
+          },
+          std::memory_order_release);
+      mfgunlock::framecount::internal::g_init_wanted.store(
+          []() {
+            return mfgunlock::xmx::preada::InitHookWanted() ||
+                   mfgunlock::drsoverride::g_max_multiplier.load(std::memory_order_relaxed) != 0;
+          },
+          std::memory_order_release);
+      if (mfgunlock::drsoverride::g_max_multiplier.load(std::memory_order_relaxed) != 0)
+        mfgunlock::drsoverride::TryInstall();
+      if (mfgunlock::xmx::preada::Engaged() && !HasEarlyLoadEntry()) {
+        reshade::log::message(
+            reshade::log::level::warning,
+            "mfgunlock: pre-Ada XMX without ADDON.LoadFromDllMain; games that call slInit before normal addon loading keep DLSS Frame Generation locked. Use the overlay button and restart.");
+      }
       mfgunlock::loadhook::g_on_dlssg_plugin_loaded = ProcessLoadedStreamlineDlssgPlugin;
       mfgunlock::loadhook::g_on_ngx_loaded = []() {
         TryInstallPresetHook();
@@ -1397,6 +1428,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       mfgunlock::xmx::Uninstall();
       UninstallPresetHook();
       mfgunlock::xmx::preada::Uninstall();
+      mfgunlock::drsoverride::Uninstall();
       RestoreThinGeometry();
       RestoreMidpoint();
       RestoreDlssgArchGate();

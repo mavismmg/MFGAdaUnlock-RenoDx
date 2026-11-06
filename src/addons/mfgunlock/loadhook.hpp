@@ -67,7 +67,9 @@ constexpr wchar_t kOtaNeedle[] = L"\\models\\dlssg\\";
 constexpr wchar_t kInterposerNeedle[] = L"sl.interposer";
 constexpr wchar_t kNgxNeedle[] = L"_nvngx.dll";
 constexpr wchar_t kDlssgPluginNeedle[] = L"sl.dlss_g";
-constexpr wchar_t kDlssgPluginOtaNeedle[] = L"\\models\\sl_dlss_g_0\\";
+// 1.8.5: a prefix, so the NVIDIA app's override copy (sl_dlss_g_override_0)
+// is found as well as the OTA one (sl_dlss_g_0).
+constexpr wchar_t kDlssgPluginOtaNeedle[] = L"\\models\\sl_dlss_g_";
 
 inline bool NameContains(const wchar_t* path, const wchar_t* needle) {
   if (path == nullptr) return false;

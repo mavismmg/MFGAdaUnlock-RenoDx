@@ -40,14 +40,20 @@ inline constexpr bool Is(uint64_t packed, uint16_t major, uint16_t minor,
   return packed != 0 && packed == Pack(major, minor, patch, 0);
 }
 
-// Keep the Dynamic API allowlist separate from the kernel fingerprint checks.
+// Keep the Dynamic API gate separate from the kernel fingerprint checks.
 // A newer file version alone must never authorize a binary/kernel patch.
+// 1.8.5: a minimum instead of an exact list. NVIDIA ships Dynamic MFG from
+// Streamline 2.14.0 and updates both files over the air; the runtime's own
+// DLSSGState::bIsDynamicMFGSupported still decides whether eDynamic is sent.
+inline constexpr uint64_t kDynamicDlssgMinimum = Pack(310, 9, 1, 0);
+inline constexpr uint64_t kDynamicStreamlineMinimum = Pack(2, 14, 0, 0);
+
 inline constexpr bool IsDynamicDlssgVersion(uint64_t packed) {
-  return Is(packed, 310, 9, 1) || Is(packed, 310, 9, 16);
+  return packed != 0 && packed >= kDynamicDlssgMinimum && (packed >> 48u) == 310;
 }
 
 inline constexpr bool IsDynamicStreamlineVersion(uint64_t packed) {
-  return Is(packed, 2, 14, 1) || Is(packed, 2, 14, 16);
+  return packed != 0 && packed >= kDynamicStreamlineMinimum && (packed >> 48u) == 2;
 }
 
 inline bool IsMappedImage(HMODULE module) {

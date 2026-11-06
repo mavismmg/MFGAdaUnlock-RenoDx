@@ -956,6 +956,12 @@ void ProcessLoadedDlssgModule(HMODULE mod) {
   ReleaseSRWLockExclusive(&g_provider_maintenance_lock);
 }
 
+struct DriverOnlyProvider {
+  bool active = false;
+  std::string version;
+};
+DriverOnlyProvider CheckDriverOnlyProvider();
+
 void RunProviderMaintenance() {
   std::vector<HMODULE> version_candidates;
   AcquireSRWLockExclusive(&g_provider_maintenance_lock);
@@ -982,6 +988,60 @@ void RunProviderMaintenance() {
   for (HMODULE module : version_candidates) {
     mfgunlock::framecount::ObserveDlssgProviderVersion(module);
   }
+  CheckDriverOnlyProvider();
+}
+
+// 1.8.5: NVIDIA used only the driver's own nvngx_dlssg.dll (DriverStore, an
+// older 310.x build without the multi-frame gate) and Streamline reports 2x as
+// its maximum. That happens when this game's driver profile turns the NVIDIA
+// app's frame generation override off (it can write that when the game's
+// settings are opened), or when no override exists and the game ships no
+// provider. The fix is the same: the override set to Latest for this game.
+// Judged by the outcome, so it never reads or writes the driver profile.
+DriverOnlyProvider CheckDriverOnlyProvider() {
+  // Called from provider maintenance and from the panel: never blocks either.
+  static SRWLOCK lock = SRWLOCK_INIT;
+  static DriverOnlyProvider cached;
+  static size_t checked_count = SIZE_MAX;
+  static bool logged = false;
+  if (!mfgunlock::framecount::g_state_seen.load(std::memory_order_acquire) ||
+      mfgunlock::framecount::g_runtime_max_generated.load(std::memory_order_relaxed) > 1)
+    return {};
+  if (!TryAcquireSRWLockExclusive(&lock)) return {};
+  struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&lock); } } unlock;
+  std::vector<HMODULE> providers;
+  if (!TryAcquireSRWLockShared(&g_provider_maintenance_lock)) return cached;
+  providers = g_dlssg_modules;
+  ReleaseSRWLockShared(&g_provider_maintenance_lock);
+  if (providers.size() == checked_count) return cached;
+  checked_count = providers.size();
+  DriverOnlyProvider result;
+  bool driver_store = false, other = false;
+  for (HMODULE module : providers) {
+    wchar_t path[MAX_PATH]{};
+    if (GetModuleFileNameW(module, path, MAX_PATH) == 0) continue;
+    for (wchar_t* c = path; *c; ++c) *c = static_cast<wchar_t>(towlower(*c));
+    if (std::wcsstr(path, L"\\driverstore\\") != nullptr) {
+      driver_store = true;
+      const auto v = mfgunlock::runtimeversion::FromModule(module);
+      if (v.valid)
+        result.version = std::to_string(v.major) + "." + std::to_string(v.minor) + "." + std::to_string(v.patch);
+    } else {
+      other = true;
+    }
+  }
+  result.active = driver_store && !other;
+  cached = result;
+  if (result.active && !logged) {
+    logged = true;
+    reshade::log::message(
+        reshade::log::level::warning,
+        ("mfgunlock: NVIDIA is using only the driver's built-in frame generation file" +
+         (result.version.empty() ? std::string() : " (" + result.version + ")") +
+         ", and Streamline offers 2x at most. Set \"DLSS Override - Frame Generation\" to Latest for this game in the NVIDIA app, then restart.")
+            .c_str());
+  }
+  return result;
 }
 
 void RestoreMidpoint() {

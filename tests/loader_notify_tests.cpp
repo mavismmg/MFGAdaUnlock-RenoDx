@@ -26,5 +26,9 @@ int main(){
   l::internal::Notify(module,L"SL.DLSS_G.DLL");
   CHECK(providers==2 && plugins==1 && interposers==1);
   CHECK(l::internal::NameContains(L"C:\\MODELS\\SL_DLSS_G_0\\1\\opaque.dll",l::internal::kDlssgPluginOtaNeedle));
+  // 1.8.5: the NVIDIA app's override copy, and not the other Streamline plugins.
+  CHECK(l::internal::NameContains(L"C:\\ProgramData\\NVIDIA\\NGX\\models\\sl_dlss_g_override_0\\versions\\134672\\files\\190_E658700.dll",l::internal::kDlssgPluginOtaNeedle));
+  CHECK(!l::internal::NameContains(L"C:\\ProgramData\\NVIDIA\\NGX\\models\\sl_dlss_0\\versions\\1\\files\\190_E658703.dll",l::internal::kDlssgPluginOtaNeedle));
+  CHECK(!l::internal::NameContains(L"C:\\ProgramData\\NVIDIA\\NGX\\models\\sl_dlss_d_override_0\\versions\\1\\files\\190_E658700.dll",l::internal::kDlssgPluginOtaNeedle));
   std::cout<<"10000 warmed Notify calls: zero C++ heap allocations; basename, OTA, case and callback reentry passed\n";
 }
