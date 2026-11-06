@@ -370,6 +370,7 @@ artifact on a HUD/UI element, switch back to **Native**.
 | The Blood of Dawnwalker | DX12 | Maybe | Working |  |
 | Silent Hill 2 Remake | DX12 | Not Working | Working |  |
 | Ghotic 1 Remake | DX12 | Not Working | Working |  |
+| Once Human | DX12 | Maybe | Working |  |
 
 **XeMFG CUDA** shows the games tested with the XeMFG backend. In the **XMX** column,
 **Maybe** means it has not been tested in that game yet, so
