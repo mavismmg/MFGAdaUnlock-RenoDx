@@ -1045,8 +1045,6 @@ How to read these numbers:
   log then says `generic gate`. Turn it off with **Generic provider gate** in the
   panel's advanced settings, or `[DLSSG] GenericGate=0` in `MFGAdaUnlock.ini`, and
   restart the game. A file with another gate is still refused.
-- **Once Human:** its `nvngx_dlssg.dll` has the timestamp of the 310.3 build, whose gate
-  has four compares instead of two, so XMX likely stays at 2x there.
 - **Elden Ring with ERSS:** if ERSS generates frames without NVIDIA's DLSS frame
   generation, XMX has nothing to replace. Use XeMFG.
 - A newer `nvngx_dlssg.dll` might change how the module reacts to XMX's hook. It ran
