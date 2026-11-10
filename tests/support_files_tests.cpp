@@ -115,6 +115,7 @@ int main() {
 
   CHECK(IsSupportFile(L"ReShade.log") && IsSupportFile(L"reshade.log1") && IsSupportFile(L"MFGAdaUnlock-XeMFG.log"));
   CHECK(IsSupportFile(L"MFGAdaUnlock.ini"));
+  CHECK(IsSupportFile(L"sl.log") && IsSupportFile(L"SL.LOG") && !IsSupportFile(L"sl.interposer.dll"));
   CHECK(!IsSupportFile(L"ReShade.ini") && !IsSupportFile(L"game.log") && !IsSupportFile(L"save.dat"));
 
   // A log the game still holds open for writing is copied too.

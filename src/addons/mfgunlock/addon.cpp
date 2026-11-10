@@ -144,6 +144,7 @@
 #include "drs_override.hpp"
 #include "drs_report.hpp"
 #include "advanced_settings.hpp"
+#include "streamline_log.hpp"
 
 #include <deps/imgui/imgui.h>
 #include <include/reshade.hpp>
@@ -1341,6 +1342,15 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       g_self_module = h_module;
       if (!reshade::register_addon(h_module)) return FALSE;
       mfgunlock::support::BeginSession(mfgunlock::backend::Directory());
+      // 1.10.0: Streamline's own log, before the game can call slInit. Every
+      // ReShade startup copy runs this; the second finds the variables set.
+      if (mfgunlock::streamlinelog::Requested()) {
+        const auto state = mfgunlock::streamlinelog::Apply(mfgunlock::backend::Directory());
+        if (state == mfgunlock::streamlinelog::State::kSet || state == mfgunlock::streamlinelog::State::kFailed)
+          reshade::log::message(state == mfgunlock::streamlinelog::State::kFailed ? reshade::log::level::warning
+                                                                                   : reshade::log::level::info,
+                                ("mfgunlock: Streamline log requested: " + mfgunlock::streamlinelog::Describe(state) + ".").c_str());
+      }
       if (mfgunlock::support::ConsumeSafeMode(mfgunlock::backend::Directory()))
         reshade::log::message(reshade::log::level::warning,
             "mfgunlock: safe mode for this start: no DLSS preset, XMX or forced multiplier; the settings are kept.");

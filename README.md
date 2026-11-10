@@ -1893,9 +1893,18 @@ Settings in `MFGAdaUnlock.ini` (next to the game), under `[DLSSG]`:
 |---|---|---|
 | `PreAdaAdmission` | `1` | `0` turns the whole RTX 20/30 path off |
 | `AutoEarlyLoad` | `1` | `0` stops the addon from adding itself to `LoadFromDllMain` |
+| `StreamlineLog` | `0` | `1` makes the addon set `SL_LOG_LEVEL=2`, `SL_LOG_PATH` (the game folder) and `SL_LOG_NAME=sl.log` in the game's environment before it starts Streamline, so Streamline writes its own `sl.log` beside the game; **Save support files** copies it (1.10.0) |
 
 Nothing changes on RTX 40 or 50. When something fails, the panel's
 **Frame generation chain** card and **Save support files** show where.
+
+When the panel says frame generation was requested but no frames are generated,
+turn on **Streamline log (sl.log)** under **Support → All settings (advanced)**
+(or `[DLSSG] StreamlineLog=1`), restart, reproduce, and save the support files:
+`sl.log` holds Streamline's own reason. If the chain card says Streamline started
+before the addon could hook it, the environment is read too early; then set, in
+the registry under `HKCU\SOFTWARE\NVIDIA Corporation\Global\Streamline`, `LogLevel`
+(DWORD) `2` and `LogPath` (string) to the game folder, and restart.
 
 ### Other options on RTX 20/30
 

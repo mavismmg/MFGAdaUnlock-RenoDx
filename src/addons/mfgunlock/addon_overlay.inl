@@ -2724,6 +2724,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
           +"\nxmx_frames_limit="+std::to_string(xmx_report.framesLimit);
     }
     report+=std::string("\npre_ada_admitted=")+(mfgunlock::xmx::preada::Admitted()?"1":"0");
+    report+="\nstreamline_log="+mfgunlock::streamlinelog::Describe(mfgunlock::streamlinelog::Current());
     // 1.9.0: the driver profile, read only, and only now: this runs when
     // the report is saved or copied.
     return report+"\n"+FrameGenChainReport()+mfgunlock::drsreport::Describe()+mfgunlock::system::Report();
@@ -3965,6 +3966,20 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   if (page == UiPage::Support) {
     // 1.9.0: always available here, not only on a problem card.
     mfgunlock::ui::SupportActions(xmx_support_report);
+    // 1.10.0: Streamline's own log (streamline_log.hpp). The setting itself is
+    // in "All settings (advanced)"; this says what happened at this start.
+    {
+      const auto state=mfgunlock::streamlinelog::Current();
+      const bool requested=mfgunlock::streamlinelog::Requested();
+      if(requested || state!=mfgunlock::streamlinelog::State::kOff) {
+        const std::string text="Streamline log: "+mfgunlock::streamlinelog::Describe(state)+
+            (state==mfgunlock::streamlinelog::State::kOff?" (applies from the next start)":"")+".";
+        mfgunlock::ui::Notice(text.c_str(),state==mfgunlock::streamlinelog::State::kFailed?mfgunlock::ui::Danger:mfgunlock::ui::Muted);
+        mfgunlock::ui::Description("If the chain card says Streamline started before the addon could hook it, the game read the environment too early. "
+            "Then set, in the registry under HKCU\\SOFTWARE\\NVIDIA Corporation\\Global\\Streamline, LogLevel (DWORD) = 2 and LogPath (string) = this game's folder, and restart. "
+            "Save support files copies sl.log from the game folder.");
+      }
+    }
     ImGui::Spacing();
     ImGui::TextDisabled("SUPPORT DIAGNOSTICS");
     ImGui::Separator();

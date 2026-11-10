@@ -67,6 +67,8 @@ inline constexpr Option kDlssG[]{
   {L"DLSSG",L"PreAdaAdmission","RTX 20/30 frame generation","RTX 20/30 only: admits NVIDIA's DLSS-G runtime on this GPU and prepares its kernels, for DLSS-G and XMX. Off leaves NVIDIA's refusal in place. Restart to apply.",L"1",MFGUNLOCK_CHOICES(kOnOff)},
   {L"DLSSG",L"AutoEarlyLoad","RTX 20/30 automatic early loading","RTX 20/30 only: the addon adds itself to LoadFromDllMain in ReShade.ini at start, which these GPUs need. Off leaves ReShade.ini alone. Restart to apply.",L"1",MFGUNLOCK_CHOICES(kOnOff)},
   {L"DLSSG",L"XmxJitter","XMX multi-frame with jittered motion","XMX: games with jittered motion vectors (HZD Remastered, Death Stranding 2) get the multi-frame model. Off uses Intel's 2x model there. Restart to apply.",L"1",MFGUNLOCK_CHOICES(kOnOff)},
+  // 1.10.0: Streamline's own log, for support (streamline_log.hpp).
+  {L"DLSSG",L"StreamlineLog","Streamline log (sl.log)","Writes Streamline's own log, sl.log, in the game folder from the next start, for support reports. Needs the game to start Streamline after the addon loads; otherwise use the registry route shown on the Support page.",L"0",MFGUNLOCK_CHOICES(kOnOff)},
   {L"DLSSG",L"ForceBorderless","Force borderless","Serves the game as a borderless window. Removed from the main controls in 1.7.",L"0",MFGUNLOCK_CHOICES(kOnOff)},
 };
 #undef MFGUNLOCK_CHOICES

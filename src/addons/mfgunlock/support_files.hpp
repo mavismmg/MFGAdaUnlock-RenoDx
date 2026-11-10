@@ -110,6 +110,8 @@ inline bool IsSupportFile(std::wstring name) {
   const bool log = name.find(L".log") != std::wstring::npos;
   if (name.rfind(L"reshade", 0) == 0) return log;
   if (name.rfind(L"mfgadaunlock", 0) == 0) return log || name.ends_with(L".ini");
+  // 1.10.0: Streamline's own log (sl.log), written when [DLSSG] StreamlineLog=1.
+  if (name.rfind(L"sl.", 0) == 0) return log;
   return false;
 }
 // The game and ReShade hold their logs open for writing, which CopyFile can refuse.
