@@ -438,6 +438,21 @@ inline void ObserveCreate(NVSDK_NGX_Result result) {
   }
 }
 
+// 1.10.0 (plan 1.3): when the game first turned frame generation on, so the
+// panel and the log can say that NVIDIA's runtime never created the feature
+// afterwards (OW2 and Keeper on an RTX 3060 Ti: SetOptions accepted, no
+// CreateFeature, zero frames).
+inline std::atomic<uint64_t> g_first_on_tick{0};
+inline void ObserveFrameGenerationOn() {
+  uint64_t expected = 0;
+  g_first_on_tick.compare_exchange_strong(expected, GetTickCount64());
+}
+constexpr uint64_t kCreateGraceMs = 5000;
+inline bool CreateMissing(uint64_t now) {
+  const uint64_t on = g_first_on_tick.load(std::memory_order_acquire);
+  return Admitted() && on != 0 && now - on >= kCreateGraceMs && g_create_result.load() < 0;
+}
+
 // Explicit unload only: these hooks go in before the first Present.
 inline void Uninstall() {
   if (g_support_hooked.load() && hook::Uninstall(kStreamlineHooks)) g_support_hooked.store(false);

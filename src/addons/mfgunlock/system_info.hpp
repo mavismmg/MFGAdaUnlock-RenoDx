@@ -7,7 +7,49 @@
 #include <cstdint>
 #include <string>
 
+#include "runtime_version.hpp"
+
 namespace mfgunlock::system {
+// 1.10.0 (plan 1.4): hardware-accelerated GPU scheduling, which DLSS Frame
+// Generation requires. HwSchMode 2 is on, 1 is off; no value means Windows'
+// default for this GPU, which the addon cannot tell from here.
+enum class Hags { kUnknown, kOn, kOff };
+inline Hags HagsFromMode(bool present, uint32_t mode) {
+  if (!present) return Hags::kUnknown;
+  return mode == 2 ? Hags::kOn : mode == 1 ? Hags::kOff : Hags::kUnknown;
+}
+inline const char* HagsName(Hags hags) {
+  switch (hags) {
+    case Hags::kOn: return "on";
+    case Hags::kOff: return "off";
+    default: return "not set (Windows default)";
+  }
+}
+// RegGetValueW is resolved from kernelbase at run time, like gpu_arch.hpp:
+// a static advapi32 import would break ReShade's early loading
+// (tests/xemfg_import_tests.py keeps the 1.4.5 import set).
+inline Hags ReadHags() {
+  const HMODULE kernelbase = GetModuleHandleW(L"kernelbase.dll");
+  using GetValue = LSTATUS(WINAPI*)(HKEY, LPCWSTR, LPCWSTR, DWORD, LPDWORD, PVOID, LPDWORD);
+  const auto get = kernelbase ? reinterpret_cast<GetValue>(GetProcAddress(kernelbase, "RegGetValueW")) : nullptr;
+  if (get == nullptr) return Hags::kUnknown;
+  DWORD value = 0, size = sizeof(value);
+  const bool present = get(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers", L"HwSchMode",
+                           RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS;
+  return HagsFromMode(present, value);
+}
+// The NGX core the driver mapped into this process, or empty before it loads.
+inline std::string NgxCoreVersion() {
+  for (const wchar_t* name : {L"_nvngx.dll", L"nvngx.dll"}) {
+    const HMODULE module = GetModuleHandleW(name);
+    if (module == nullptr) continue;
+    const auto v = runtimeversion::FromModule(module);
+    if (!v.valid) continue;
+    return std::to_string(v.major) + "." + std::to_string(v.minor) + "." + std::to_string(v.patch) + "." +
+           std::to_string(v.revision);
+  }
+  return {};
+}
 struct Display {
   bool known{};
   int format{};      // DXGI numbering, which reshade::api::format shares
@@ -120,6 +162,9 @@ inline Display g_display{};  // written and read on the overlay's thread
 inline std::string Report() {
   const auto& machine = ReadMachine();
   std::string report = "gpu=" + machine.gpu + "\ndriver=" + machine.driver + "\nwindows=" + machine.windows;
+  // 1.10.0: HAGS and the NGX core, read when the report is made.
+  report += std::string("\nhags=") + HagsName(ReadHags());
+  if (const auto ngx = NgxCoreVersion(); !ngx.empty()) report += "\nngx_core=" + ngx;
   if (g_display.known)
     report += std::string("\noutput=") + OutputName(g_display.format, g_display.windowsHdr) + "\nformat=" +
               std::to_string(g_display.format) + "\nresolution=" + std::to_string(g_display.width) + "x" +

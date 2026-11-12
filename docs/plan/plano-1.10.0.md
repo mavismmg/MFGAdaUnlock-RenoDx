@@ -205,3 +205,4 @@ Respondidas em 2026-11-10: versão 1.10.0; chinês só simplificado; espanhol ne
 - 2026-11-10: plano escrito (1.9.1 + 1.9.2 em fases); branch `feat/1.9.1` criada; nenhum código.
 - 2026-11-10: decisão de release única com seis idiomas; plano reescrito como 1.10.0 em cinco blocos.
 - 2026-11-10: aprovado; branch renomeada para `feat/1.10.0`; início pelo item 1.1.
+- 2026-11-10: bloco 1 escrito (1.1 a 1.8). Diferenças em relação ao plano: a linha de sistema sai no primeiro `init_device`, não no `DllMain` (ler o adaptador pode carregar `dxgi.dll`, proibido sob o loader lock); o card "System check" fica na página General ao lado do cartão da cadeia, fechado por padrão, e HAGS desligado vira um card de problema; `get_color_space` passou a 4 Hz em vez de "só na troca"; `DEVICE_REMOVED` só loga e para o XMX, sem desarmar outros hooks.

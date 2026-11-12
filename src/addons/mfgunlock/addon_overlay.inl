@@ -496,6 +496,11 @@ std::string FrameGenChainGenerator(ChainHealth* health = nullptr) {
   out = report.generating ? ChainHealth::kOk : ChainHealth::kWarn;
   return report.generating ? "XMX (Intel's model) generating" : report.hooked ? "XMX ready" : "XMX selected; not started";
 }
+// 1.10.0 (plan 1.4): the registry, read once per panel session.
+mfgunlock::system::Hags SystemCheckHags() {
+  static const mfgunlock::system::Hags hags = mfgunlock::system::ReadHags();
+  return hags;
+}
 ImVec4 ChainColor(ChainHealth health) {
   switch (health) {
     case ChainHealth::kOk: return mfgunlock::ui::Accent;  // the panel's colour for a good value
@@ -508,8 +513,42 @@ std::string FrameGenChainReport() {
   const auto chain = DescribeFrameGenChain();
   if (chain.streamline.empty()) return std::string();
   return "chain_streamline=" + chain.streamline + "\nchain_provider=" + chain.provider + "\nchain_gate=" + chain.gate +
-         "\nchain_slinit=" + chain.slinit + "\nchain_dynamic=" + chain.dynamic + "\nchain_generator=" +
+         "\nchain_slinit=" + chain.slinit + "\nchain_dynamic=" + chain.dynamic +
+         (chain.ngx_feature.empty() ? std::string() : "\nchain_ngx_feature=" + chain.ngx_feature) + "\nchain_generator=" +
          FrameGenChainGenerator() + "\n";
+}
+// 1.10.0 (plan 1.4): what a support report needs to say about this PC and
+// this install, one verdict per line. Closed by default, like the chain card.
+void DrawSystemCheckCard() {
+  if (!ImGui::CollapsingHeader("System check")) return;
+  mfgunlock::ui::Description("What frame generation needs from this PC and this install.");
+  mfgunlock::ui::Card card("##system_check_card");
+  using mfgunlock::ui::Readout;
+  const auto& machine = mfgunlock::system::ReadMachine();
+  Readout("##sys_gpu", "GPU", machine.gpu.c_str(), nullptr, mfgunlock::ui::Muted);
+  Readout("##sys_driver", "Driver", machine.driver.c_str(), nullptr, mfgunlock::ui::Muted);
+  Readout("##sys_windows", "Windows", machine.windows.c_str(), nullptr, mfgunlock::ui::Muted);
+  const auto hags = SystemCheckHags();
+  Readout("##sys_hags", "HAGS", mfgunlock::system::HagsName(hags),
+          "Hardware-accelerated GPU scheduling. DLSS Frame Generation requires it on every GPU.",
+          ChainColor(hags == mfgunlock::system::Hags::kOn ? ChainHealth::kOk : hags == mfgunlock::system::Hags::kOff ? ChainHealth::kFail : ChainHealth::kUnknown));
+  static std::string ngx;
+  if (ngx.empty()) ngx = mfgunlock::system::NgxCoreVersion();
+  Readout("##sys_ngx", "NGX core", ngx.empty() ? "not loaded yet" : ngx.c_str(),
+          "The driver's _nvngx.dll, which loads the frame generation file and answers whether it is available.",
+          ChainColor(ngx.empty() ? ChainHealth::kUnknown : ChainHealth::kOk));
+  if (mfgunlock::xmx::preada::Admitted()) {
+    const bool early = HasEarlyLoadEntry();
+    Readout("##sys_early", "Early loading", early ? "in ReShade.ini (LoadFromDllMain)" : "not in ReShade.ini",
+            "RTX 20/30 need the addon loaded before the game starts Streamline.",
+            ChainColor(early ? ChainHealth::kOk : ChainHealth::kWarn));
+  }
+  const auto copies = CheckAddonCopies();
+  const std::string copies_text = copies.others.empty() && copies.stale_early.empty()
+      ? "one addon file"
+      : std::to_string(copies.others.size()) + " other file(s), " + std::to_string(copies.stale_early.size()) + " stale early-load entr(y/ies)";
+  Readout("##sys_copies", "Addon files", copies_text.c_str(), "Only one MFG Unlock addon file may sit beside the game.",
+          ChainColor(copies.others.empty() && copies.stale_early.empty() ? ChainHealth::kOk : ChainHealth::kWarn));
 }
 void DrawFrameGenChainCard() {
   static FrameGenChain shown;
@@ -535,6 +574,10 @@ void DrawFrameGenChainCard() {
   Readout("##chain_dynamic", "Dynamic MFG", shown.dynamic.c_str(),
           "Whether NVIDIA's runtime reports Dynamic MFG support. Unknown until the game asks.",
           ChainColor(shown.dynamic_health));
+  if (!shown.ngx_feature.empty())
+    Readout("##chain_ngx_feature", "NGX feature", shown.ngx_feature.c_str(),
+            "Whether NVIDIA's runtime created frame generation through NGX after the game turned it on. RTX 20/30 only.",
+            ChainColor(shown.ngx_feature_health));
   ChainHealth generator_health = ChainHealth::kUnknown;
   const std::string generator = FrameGenChainGenerator(&generator_health);
   Readout("##chain_generator", "Generator", generator.c_str(), nullptr, ChainColor(generator_health));
@@ -2708,6 +2751,8 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   const bool xmx_failed=xmx_running && !xmx_report.generating && !xmx_report.failure.empty();
   // Not called at all: the game turned frame generation off, or NGX uses a module without the hook.
   const bool xmx_bypassed=xmx_running && mfgunlock::xmx::policy::Bypassed(xmx_report.hooked,xmx_report.everEvaluated,mfg_live);
+  // 1.10.0 (plan 1.3): RTX 20/30, frame generation on, and NVIDIA never created it.
+  const bool create_missing=mfgunlock::xmx::preada::CreateMissing(GetTickCount64());
   if(xmx_bypassed) {
     static std::atomic_flag logged=ATOMIC_FLAG_INIT;
     if(!logged.test_and_set()) mfgunlock::xmx::Log("not called while the driver reports generated frames: NVIDIA's generator is still active");
@@ -2725,6 +2770,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     }
     report+=std::string("\npre_ada_admitted=")+(mfgunlock::xmx::preada::Admitted()?"1":"0");
     report+="\nstreamline_log="+mfgunlock::streamlinelog::Describe(mfgunlock::streamlinelog::Current());
+    report+=CapabilityReport();
     // 1.9.0: the driver profile, read only, and only now: this runs when
     // the report is saved or copied.
     return report+"\n"+FrameGenChainReport()+mfgunlock::drsreport::Describe()+mfgunlock::system::Report();
@@ -2750,6 +2796,12 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     }
     ImGui::TextWrapped("%s",text.c_str());
   }
+  // 1.10.0: DLSS Frame Generation needs HAGS on every GPU; NVIDIA's plugin
+  // goes quiet without it, so the game shows the option and nothing happens.
+  if(SystemCheckHags()==mfgunlock::system::Hags::kOff) {
+    mfgunlock::ui::ProblemCard problem("##hags_off","Hardware-accelerated GPU scheduling is off",mfgunlock::ui::Warning);
+    ImGui::TextWrapped("DLSS Frame Generation requires it. In Windows, open Settings > System > Display > Graphics > Default graphics settings, turn on Hardware-accelerated GPU scheduling, and restart the PC.");
+  }
   // 1.8.5: only the driver's built-in provider is in use (2x at most).
   if(const auto driver_only=CheckDriverOnlyProvider(); driver_only.active) {
     mfgunlock::ui::ProblemCard problem("##driver_only_provider","Only 2x: NVIDIA is using the driver's built-in frame generation",mfgunlock::ui::Warning);
@@ -2758,7 +2810,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
         driver_only.version.empty()?"":(" ("+driver_only.version+")").c_str());
   }
   if(xmx_selected) {
-    mfgunlock::ui::Readout("##xmx_generator","Generator",!xmx_running?"NVIDIA DLSS-G (XMX not started)":xmx_bypassed?"NVIDIA DLSS-G (XMX not being called)":xmx_failed?"None (XMX failed)":xmx_report.generating?"Intel XeFG model, in DLSS-G's presentation":xmx_report.evaluating?"Intel XeFG model - waiting for frames":"Intel XeFG model - not being called",
+    mfgunlock::ui::Readout("##xmx_generator","Generator",!xmx_running?"NVIDIA DLSS-G (XMX not started)":xmx_bypassed?"NVIDIA DLSS-G (XMX not being called)":xmx_failed?"None (XMX failed)":xmx_report.generating?"Intel XeFG model, in DLSS-G's presentation":xmx_report.evaluating?"Intel XeFG model - waiting for frames":create_missing?"Not started: NVIDIA's runtime never created frame generation":"Intel XeFG model - not being called",
         "The XMX mode replaces NVIDIA's generator with Intel's model. Presentation and the game's settings remain DLSS-G's.",xmx_report.generating?mfgunlock::ui::Accent:mfgunlock::ui::Muted);
     if(mfgunlock::framecount::g_game_dynamic_replaced.load(std::memory_order_relaxed))
       mfgunlock::ui::Description("The game asked for Dynamic MFG, which XMX does not support; a fixed multiplier is used.");
@@ -5031,6 +5083,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   if (page == UiPage::General) {
     mfgunlock::ui::SystemCard(!sleep_status_available ? nullptr : driver_vsync_active && gsync_active ? "Driver VSync + G-SYNC" : driver_vsync_active ? "Driver VSync" : gsync_active ? "G-SYNC" : "Off", xmx_selected);
     DrawFrameGenChainCard();
+    DrawSystemCheckCard();
   }
   mfgunlock::ui::Footer("Changes marked for restart keep the current session unchanged.");
 }

@@ -175,8 +175,49 @@ void ConcurrentPatchKeepsTheOriginal() {
 
 }  // namespace
 
+// 1.10.0 (plan 1.2): the int slot (12) is patched with its own state, next to
+// the unsigned slot (11), and each restore only touches its own slot.
+using GetInt32Fn = int (*)(void* self, const char* name, int* out);
+int OriginalGetInt(void*, const char*, int* out) {
+  *out = 1;
+  return 0;
+}
+VTablePatch* g_int_state = nullptr;
+int HookGetInt(void* self, const char* name, int* out) {
+  const int result = reinterpret_cast<GetInt32Fn>(static_cast<void*>(g_int_state->original))(self, name, out);
+  *out = 7;
+  return result;
+}
+void PatchesTwoSlotsIndependently() {
+  using mfgunlock::ngxparam::kGetInt32Slot;
+  auto** table = static_cast<void**>(VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+  CHECK(table != nullptr);
+  for (size_t i = 0; i < 16; ++i) table[i] = nullptr;
+  table[kGetUInt32Slot] = reinterpret_cast<void*>(&OriginalGet);
+  table[kGetInt32Slot] = reinterpret_cast<void*>(&OriginalGetInt);
+  DWORD previous = 0;
+  CHECK(VirtualProtect(table, 4096, PAGE_READONLY, &previous) != 0);
+  FakeParameter object{table};
+  VTablePatch state, int_state;
+  g_state = &state;
+  g_int_state = &int_state;
+  CHECK(mfgunlock::ngxparam::Patch(int_state, &object, reinterpret_cast<void*>(&HookGetInt), kGetInt32Slot) ==
+        PatchResult::kPatched);
+  CHECK(mfgunlock::ngxparam::Patch(state, &object, reinterpret_cast<void*>(&HookGet)) == PatchResult::kPatched);
+  int value = 0;
+  reinterpret_cast<GetInt32Fn>(object.vtable[kGetInt32Slot])(&object, "FrameGeneration.Available", &value);
+  CHECK(value == 7);
+  CHECK(CallSlot(object) == 5);
+  mfgunlock::ngxparam::Restore(int_state);
+  CHECK(object.vtable[kGetInt32Slot] == reinterpret_cast<void*>(&OriginalGetInt));
+  CHECK(CallSlot(object) == 5);  // the unsigned slot keeps its hook
+  mfgunlock::ngxparam::Restore(state);
+  CHECK(object.vtable[kGetUInt32Slot] == reinterpret_cast<void*>(&OriginalGet));
+}
+
 int main() {
   PatchesAndRestoresSlot();
+  PatchesTwoSlotsIndependently();
   RejectsObjectWithoutVTable();
   RefusesToAdoptTheHookAsOriginal();
   ConcurrentPatchKeepsTheOriginal();

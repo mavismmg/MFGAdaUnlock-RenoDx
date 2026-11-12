@@ -43,8 +43,17 @@ int wmain(int argc, wchar_t** argv) {
   a::architecture::Configure(architecture);
   int failures = 0;
   int temporal_applied = 0;
+  int missing = 0;
   for (int i = first; i < argc; ++i) {
     std::wprintf(L"== %ls\n", argv[i]);
+    // 1.10.0: the list is a configure-time cache value; a game update or an
+    // uninstall removes a file from it. An absent input is not a provider the
+    // preparation failed on.
+    if (GetFileAttributesW(argv[i]) == INVALID_FILE_ATTRIBUTES) {
+      std::puts("  missing on disk; not counted");
+      ++missing;
+      continue;
+    }
     HMODULE module = LoadLibraryExW(argv[i], nullptr, DONT_RESOLVE_DLL_REFERENCES);
     if (module == nullptr) {
       std::printf("  cannot map (error %lu)\n", GetLastError());
@@ -88,7 +97,11 @@ int wmain(int argc, wchar_t** argv) {
       if (!ok) ++failures;
     }
   }
-  std::printf("%d of %d provider(s) not prepared; temporal correction on %d\n", failures, argc - first,
-              temporal_applied);
+  std::printf("%d of %d provider(s) not prepared; temporal correction on %d; %d missing on disk\n", failures,
+              argc - first - missing, temporal_applied, missing);
+  if (missing == argc - first) {
+    std::puts("every provider input is missing; skipped");
+    return 77;
+  }
   return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

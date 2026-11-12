@@ -3001,7 +3001,7 @@ inline void TryInstall() {
     reshade::log::message(reshade::log::level::info,
                           GetModuleHandleW(L"sl.dlss_g.dll") != nullptr
                               ? "mfgunlock: slInit hook installed, but sl.dlss_g.dll is already mapped: Streamline was initialized before this hook."
-                              : "mfgunlock: slInit hook installed before Streamline loaded its DLSS-G plugin.");
+                              : "mfgunlock: slInit hook installed; no DLSS-G plugin mapped yet (slInit may still be running on another thread).");
   }
   internal::g_installed_hooks = std::move(hooks);
   g_hooked.store(true, std::memory_order_release);

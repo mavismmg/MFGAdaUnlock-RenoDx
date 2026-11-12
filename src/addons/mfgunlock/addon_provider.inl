@@ -1084,9 +1084,10 @@ struct FrameGenChain {
   std::string gate;
   std::string slinit;
   std::string dynamic;
+  std::string ngx_feature;  // 1.10.0: RTX 20/30 only; empty elsewhere
   ChainHealth streamline_health = ChainHealth::kUnknown, provider_health = ChainHealth::kUnknown,
               gate_health = ChainHealth::kUnknown, slinit_health = ChainHealth::kUnknown,
-              dynamic_health = ChainHealth::kUnknown;
+              dynamic_health = ChainHealth::kUnknown, ngx_feature_health = ChainHealth::kUnknown;
 };
 std::string ChainVersion(HMODULE module) {
   const auto v = mfgunlock::runtimeversion::FromModule(module);
@@ -1153,9 +1154,14 @@ FrameGenChain DescribeFrameGenChain() {
   } else if (GetModuleHandleW(L"sl.interposer.dll") != nullptr) {
     const bool needed = mfgunlock::xmx::preada::Admitted() ||
                         mfgunlock::drsoverride::g_max_multiplier.load(std::memory_order_relaxed) != 0;
-    chain.slinit = std::string(mfgunlock::framecount::internal::g_real_init != nullptr
-                                   ? "not called since the addon loaded"
-                                   : "ran before the addon loaded (or not hooked)") +
+    // 1.10.0 (plan 1.5): the hook is in and never ran, yet the DLSS-G plugin is
+    // mapped, which only slInit does: slInit was already running when the
+    // addon loaded (Rift Apart: the interposer loads ReShade's dxgi.dll).
+    const bool hooked = mfgunlock::framecount::internal::g_real_init != nullptr;
+    const bool in_flight = hooked && GetModuleHandleW(L"sl.dlss_g.dll") != nullptr;
+    chain.slinit = std::string(in_flight ? "started before the addon could hook it (the game loads ReShade from inside Streamline)"
+                               : hooked  ? "not called since the addon loaded"
+                                         : "ran before the addon loaded (or not hooked)") +
                    (needed ? "" : "; not needed here");
     // Only RTX 20/30 and the Dynamic MFG ceiling depend on it.
     chain.slinit_health = needed ? ChainHealth::kWarn : ChainHealth::kUnknown;
@@ -1170,6 +1176,28 @@ FrameGenChain DescribeFrameGenChain() {
   } else {
     chain.dynamic = "not supported";
     chain.dynamic_health = ChainHealth::kWarn;
+  }
+  // 1.10.0 (plan 1.3): whether NVIDIA's runtime created the feature, RTX 20/30 only.
+  if (mfgunlock::xmx::preada::Admitted()) {
+    const int64_t created = mfgunlock::xmx::preada::g_create_result.load();
+    const uint64_t on = mfgunlock::xmx::preada::g_first_on_tick.load(std::memory_order_acquire);
+    if (created >= 0 && NVSDK_NGX_FAILED(static_cast<NVSDK_NGX_Result>(created))) {
+      std::ostringstream text;
+      text << "could not be created (0x" << std::hex << static_cast<uint32_t>(created) << ")";
+      chain.ngx_feature = text.str();
+      chain.ngx_feature_health = ChainHealth::kFail;
+    } else if (created >= 0) {
+      chain.ngx_feature = "created";
+      chain.ngx_feature_health = ChainHealth::kOk;
+    } else if (on == 0) {
+      chain.ngx_feature = "not requested yet (frame generation off in the game)";
+    } else if (mfgunlock::xmx::preada::CreateMissing(now)) {
+      chain.ngx_feature = "not created " + std::to_string((now - on) / 1000) +
+                          " s after the game turned frame generation on; nothing is generated (see the Streamline log)";
+      chain.ngx_feature_health = ChainHealth::kFail;
+    } else {
+      chain.ngx_feature = "waiting for NVIDIA's runtime";
+    }
   }
   cached = chain;
   return chain;

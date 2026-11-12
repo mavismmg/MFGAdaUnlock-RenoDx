@@ -459,10 +459,10 @@ void UpdateReflexPacingLab(reshade::api::swapchain* swapchain) {
   ReleaseSRWLockExclusive(&g_reflex_waitable.lock);
 }
 
-bool QueryVideoMemory(reshade::api::device* device,
-                      DXGI_MEMORY_SEGMENT_GROUP group,
-                      DXGI_QUERY_VIDEO_MEMORY_INFO& info) {
-  if (device == nullptr || device->get_native() == 0) return false;
+// 1.10.0 (plan 1.7): the adapter is kept per device. A factory per sample
+// went through ReShade's CreateDXGIFactory1 hook once a second while the
+// panel was open, and filled every field log with that line.
+IDXGIAdapter3* ResolveVideoMemoryAdapter(reshade::api::device* device) {
   IDXGIAdapter3* adapter3 = nullptr;
   if (device->get_api() == reshade::api::device_api::d3d12) {
     auto* d3d12 = reinterpret_cast<ID3D12Device*>(
@@ -495,10 +495,26 @@ bool QueryVideoMemory(reshade::api::device* device,
       dxgi_device->Release();
     }
   }
-  if (adapter3 == nullptr) return false;
-  const bool ok = SUCCEEDED(adapter3->QueryVideoMemoryInfo(0, group, &info));
-  adapter3->Release();
-  return ok;
+  return adapter3;
+}
+
+// Called from the present callback only (UpdateVramDiagnostics).
+bool QueryVideoMemory(reshade::api::device* device,
+                      DXGI_MEMORY_SEGMENT_GROUP group,
+                      DXGI_QUERY_VIDEO_MEMORY_INFO& info) {
+  if (device == nullptr || device->get_native() == 0) return false;
+  static IDXGIAdapter3* cached = nullptr;
+  static uint64_t cached_device = 0;
+  if (cached != nullptr && cached_device != device->get_native()) {
+    cached->Release();
+    cached = nullptr;
+  }
+  if (cached == nullptr) {
+    cached = ResolveVideoMemoryAdapter(device);
+    cached_device = device->get_native();
+  }
+  if (cached == nullptr) return false;
+  return SUCCEEDED(cached->QueryVideoMemoryInfo(0, group, &info));
 }
 
 void UpdateVramDiagnostics(reshade::api::swapchain* swapchain) {

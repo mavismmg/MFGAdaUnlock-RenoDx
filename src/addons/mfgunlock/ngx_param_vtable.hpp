@@ -15,6 +15,9 @@ namespace mfgunlock::ngxparam {
 
 // Slot 11 of NVSDK_NGX_Parameter == Get(const char*, unsigned int*).
 inline constexpr size_t kGetUInt32Slot = 11;
+// 1.10.0: slot 12 == Get(const char*, int*), which Streamline's DLSS-G plugin
+// uses for FrameGeneration.Available and the driver-version answers.
+inline constexpr size_t kGetInt32Slot = 12;
 
 enum class PatchResult { kPatched, kAlreadyPatched, kNoObject, kProtectFailed, kForeignHook };
 

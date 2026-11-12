@@ -533,6 +533,46 @@ bool IsHdrColorSpace(reshade::api::color_space color_space) {
 // fatal where it is not loaded at all.
 
 mfgunlock::ngxparam::VTablePatch g_vtable_patch;
+// 1.10.0 (plan 1.2): the int slot too, for the capability answers below.
+mfgunlock::ngxparam::VTablePatch g_vtable_patch_int;
+
+// 1.10.0 (plan 1.2): the capability answers NVIDIA's plugin reads about
+// frame generation (strings in sl.dlss_g 2.14.16: "NGX indicates DLSS-G is
+// not available - DLSS-G cannot run"), once each in the log and kept for the
+// support report. Nothing is changed here.
+constexpr const char* kCapabilityNames[] = {
+    "FrameGeneration.Available",           "FrameGeneration.NeedsUpdatedDriver",
+    "FrameGeneration.MinDriverVersionMajor", "FrameGeneration.MinDriverVersionMinor",
+    "FrameGeneration.FeatureInitResult",    "DLSSG.MultiFrameCountMax"};
+std::atomic<int64_t> g_capability_values[std::size(kCapabilityNames)];
+std::atomic<unsigned int> g_capability_seen{0};
+void ObserveCapability(const char* name, bool failed, int64_t value, NVSDK_NGX_Result result) {
+  for (size_t i = 0; i < std::size(kCapabilityNames); ++i) {
+    if (std::strcmp(name, kCapabilityNames[i]) != 0) continue;
+    g_capability_values[i].store(failed ? -1 : value, std::memory_order_relaxed);
+    const unsigned int bit = 1u << i;
+    if ((g_capability_seen.fetch_or(bit, std::memory_order_acq_rel) & bit) != 0) return;
+    std::stringstream s;
+    s << "mfgunlock: NGX capability " << name << " = ";
+    if (failed) s << "failure 0x" << std::hex << static_cast<unsigned int>(result) << std::dec;
+    else s << value;
+    s << '.';
+    reshade::log::message(reshade::log::level::info, s.str().c_str());
+    return;
+  }
+}
+// For the support report: only the answers seen this session.
+std::string CapabilityReport() {
+  std::string report;
+  const unsigned int seen = g_capability_seen.load(std::memory_order_acquire);
+  for (size_t i = 0; i < std::size(kCapabilityNames); ++i) {
+    if ((seen & (1u << i)) == 0) continue;
+    const int64_t value = g_capability_values[i].load(std::memory_order_relaxed);
+    report += std::string("\nngx_") + kCapabilityNames[i] + "=" + (value < 0 ? std::string("failure") : std::to_string(value));
+  }
+  return report;
+}
+using GetInt32Fn = NVSDK_NGX_Result (*)(void* self, const char* name, int* out);
 std::atomic_bool g_override_reported{false};
 std::atomic<unsigned int> g_override_hits{0};
 std::atomic<unsigned int> g_runtime_reported_value{0};
@@ -549,6 +589,7 @@ NVSDK_NGX_Result HookedGetUInt32(void* self, const char* name, unsigned int* out
 
   if (!g_enabled.load(std::memory_order_relaxed)) return result;
   if (name == nullptr || out == nullptr) return result;
+  ObserveCapability(name, NgxFailed(result), NgxFailed(result) ? 0 : static_cast<int64_t>(*out), result);
   if (std::strcmp(name, kParamName) != 0) return result;
 
   const bool failed = NgxFailed(result);
@@ -577,8 +618,19 @@ NVSDK_NGX_Result HookedGetUInt32(void* self, const char* name, unsigned int* out
   return NVSDK_NGX_Result_Success;
 }
 
+NVSDK_NGX_Result HookedGetInt32(void* self, const char* name, int* out) {
+  const auto real = reinterpret_cast<GetInt32Fn>(g_vtable_patch_int.original.load(std::memory_order_acquire));
+  const NVSDK_NGX_Result result = real(self, name, out);
+  if (name != nullptr && out != nullptr)
+    ObserveCapability(name, NgxFailed(result), NgxFailed(result) ? 0 : static_cast<int64_t>(*out), result);
+  return result;
+}
+
 bool PatchParameterVTable(NVSDK_NGX_Parameter* params) {
   using mfgunlock::ngxparam::PatchResult;
+  // 1.10.0: the int slot only observes; its failure is not the override's.
+  mfgunlock::ngxparam::Patch(g_vtable_patch_int, params, reinterpret_cast<void*>(&HookedGetInt32),
+                             mfgunlock::ngxparam::kGetInt32Slot);
   const auto result = mfgunlock::ngxparam::Patch(
       g_vtable_patch, params, reinterpret_cast<void*>(&HookedGetUInt32));
   if (result == PatchResult::kProtectFailed) {
@@ -601,7 +653,10 @@ bool PatchParameterVTable(NVSDK_NGX_Parameter* params) {
   return result == PatchResult::kPatched || result == PatchResult::kAlreadyPatched;
 }
 
-void RestoreParameterVTable() { mfgunlock::ngxparam::Restore(g_vtable_patch); }
+void RestoreParameterVTable() {
+  mfgunlock::ngxparam::Restore(g_vtable_patch);
+  mfgunlock::ngxparam::Restore(g_vtable_patch_int);
+}
 
 #include "./addon_provider.inl"
 
@@ -635,9 +690,54 @@ bool EnsureResident() {
 // frame generation on NVIDIA's unhooked generator and then presented the real
 // frames alone (62 presents per second against 144 in 1.8.2, which hooked at load).
 void BeforeFrameGeneration() {
-  if (!mfgunlock::xmx::generator::Enabled()) return;
+  // 1.10.0 (plan 1.3): when the game first turned frame generation on.
+  mfgunlock::xmx::preada::ObserveFrameGenerationOn();
+  const bool xmx = mfgunlock::xmx::generator::Enabled();
+  // 1.10.0 (plan 1.6): the CreateFeature hook too, before NVIDIA's runtime
+  // creates frame generation. A game that turns it on before its first
+  // Present (Ghost of Tsushima) otherwise leaves g_create_seen unset, and
+  // the RTX 20/30 preparation trusts that flag not to rewrite a live provider.
+  if (!xmx && !PresetHookWanted()) return;
   if (!g_resident.load(std::memory_order_acquire) && !PinResident("when the game turned DLSS-G on")) return;
-  mfgunlock::xmx::Release(true);
+  TryInstallPresetHook();
+  if (xmx) mfgunlock::xmx::Release(true);
+}
+
+// 1.10.0 (plan 1.3): the game turned frame generation on and NVIDIA's
+// runtime never created the feature. Once, as a warning, with the next step.
+void WarnCreateMissingOnce() {
+  static std::atomic_bool logged{false};
+  if (logged.load(std::memory_order_relaxed) || !mfgunlock::xmx::preada::CreateMissing(GetTickCount64())) return;
+  if (logged.exchange(true, std::memory_order_relaxed)) return;
+  reshade::log::message(reshade::log::level::warning,
+      "mfgunlock: the game turned DLSS Frame Generation on 5 s ago and NVIDIA's runtime has not created the feature, so nothing is generated. "
+      "Turn on the Streamline log ([DLSSG] StreamlineLog=1), restart, reproduce, and send sl.log with the support files.");
+}
+
+// 1.10.0 (plan 1.8): a removed device, checked once a second, so the log
+// says so instead of ending in silence, and XMX stops evaluating on it.
+void CheckDeviceRemoved(reshade::api::swapchain* swapchain) {
+  static ULONGLONG next_ms = 0;
+  static std::atomic_bool logged{false};
+  const ULONGLONG now = GetTickCount64();
+  if (swapchain == nullptr || now < next_ms || logged.load(std::memory_order_relaxed)) return;
+  next_ms = now + 1000;
+  auto* device = swapchain->get_device();
+  if (device == nullptr || device->get_native() == 0) return;
+  const auto native = static_cast<uintptr_t>(device->get_native());
+  HRESULT reason = S_OK;
+  if (device->get_api() == reshade::api::device_api::d3d12)
+    reason = reinterpret_cast<ID3D12Device*>(native)->GetDeviceRemovedReason();
+  else if (device->get_api() == reshade::api::device_api::d3d11)
+    reason = reinterpret_cast<ID3D11Device*>(native)->GetDeviceRemovedReason();
+  else
+    return;
+  if (SUCCEEDED(reason) || logged.exchange(true, std::memory_order_relaxed)) return;
+  std::stringstream s;
+  s << "mfgunlock: the graphics device was removed (0x" << std::hex << static_cast<unsigned int>(reason) << std::dec
+    << "); frame generation stops until the game recreates it. The game's own crash log says why.";
+  reshade::log::message(reshade::log::level::warning, s.str().c_str());
+  if (mfgunlock::xmx::generator::Enabled()) mfgunlock::xmx::generator::Fail("the graphics device was removed");
 }
 
 bool PinResident(const char* when) {
@@ -696,8 +796,12 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
       mfgunlock::framecount::NotifySwapchainTransition();
     }
   }
-  if (swapchain != nullptr &&
+  // 1.10.0 (plan 1.7): four times a second, not every Present. An HDR
+  // transition reaches the quality guard within 250 ms.
+  static ULONGLONG next_color_space_ms = 0;
+  if (const ULONGLONG now = GetTickCount64(); swapchain != nullptr && now >= next_color_space_ms &&
       swapchain == g_primary_swapchain.load(std::memory_order_acquire)) {
+    next_color_space_ms = now + 250;
     const auto color_space = swapchain->get_color_space();
     if (color_space != reshade::api::color_space::unknown) {
       if (mfgunlock::inputdiag::g_enabled.load(std::memory_order_relaxed)) {
@@ -718,6 +822,8 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
   UpdateLatencyGuard(swapchain);
   mfgunlock::framecount::PublishLatencyGuardView();
   UpdateVramDiagnostics(swapchain);
+  WarnCreateMissingOnce();
+  CheckDeviceRemoved(swapchain);
   StartDiscoveryWorker();
   RetryPresetHookFromPresent();
 #if !defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
@@ -836,7 +942,23 @@ void RunCreationMaintenance(const char* event) {
 
 // These remain immediate, finite retries during graphics-device initialization. They do
 // not start a thread and therefore cannot keep a temporary addon instance alive.
+// 1.10.0 (plan 1.4): the PC, once, in the log, so a report starts with it.
+// Not from DllMain: ReadMachine may load dxgi.dll, and that path runs
+// under the loader lock when ReShade loads the addon early.
+void LogSystemOnce() {
+  static std::atomic_bool logged{false};
+  if (logged.exchange(true, std::memory_order_relaxed)) return;
+  const auto& machine = mfgunlock::system::ReadMachine();
+  const auto hags = mfgunlock::system::ReadHags();
+  reshade::log::message(hags == mfgunlock::system::Hags::kOff ? reshade::log::level::warning : reshade::log::level::info,
+      ("mfgunlock: system: " + machine.gpu + "; driver " + machine.driver + "; Windows " + machine.windows +
+       "; HAGS " + mfgunlock::system::HagsName(hags) +
+       (hags == mfgunlock::system::Hags::kOff ? "; DLSS Frame Generation requires hardware-accelerated GPU scheduling." : "."))
+          .c_str());
+}
+
 void OnInitDevice(reshade::api::device* device) {
+  LogSystemOnce();
   if (device != nullptr) {
     const DetectedRenderApi detected = RenderApiOf(device);
     const bool no_primary =

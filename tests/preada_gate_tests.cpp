@@ -82,6 +82,10 @@ int wmain(int argc, wchar_t** argv) {
   int regressions = 0;
   for (int i = 1; i < argc; ++i) {
     std::wprintf(L"== %ls\n", argv[i]);
+    if (GetFileAttributesW(argv[i]) == INVALID_FILE_ATTRIBUTES) {
+      std::puts("  missing on disk; not counted");  // 1.10.0: see ampere_prepare_tests
+      continue;
+    }
     HMODULE module = LoadLibraryExW(argv[i], nullptr, DONT_RESOLVE_DLL_REFERENCES);
     if (module == nullptr) {
       std::printf("  cannot map (error %lu)\n", GetLastError());
