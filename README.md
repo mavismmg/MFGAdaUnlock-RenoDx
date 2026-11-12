@@ -288,6 +288,10 @@ through [my Ko-fi](https://ko-fi.com/mavismmg).
 
 ## Tested Games
 
+Since 1.10.0 every report also goes into the generated [compatibility matrix](docs/compat/matrix.md)
+(backend, GPU, runtime versions, source and date). To report a game, use the **Game report** issue
+form and paste the panel's support report.
+
 The two backends are tested separately. A game listed for one backend has not
 necessarily been tested with the other.
 
@@ -900,6 +904,20 @@ To attach the files by hand, take these from the game folder:
 
 Also mention the game version, GPU and driver, and whether the problem
 appears with the **NVIDIA DLSS-G** backend too.
+
+### Panel languages
+
+Since 1.10.0 the panel is available in English, Portuguese (Brazil), Spanish, Japanese, Korean and
+Simplified Chinese. It follows ReShade's language, then Windows'; the selector at the bottom of the
+panel changes it at once (`[Panel] Language` in `MFGAdaUnlock.ini`: `auto`, `en`, `pt-BR`, `es`,
+`ja`, `ko`, `zh-CN`). The translations other than English are machine translations marked `*`;
+corrections go in `src/addons/mfgunlock/i18n/strings_<language>.inl`. Logs and the support report
+stay in English.
+
+For Japanese, Korean and Chinese the panel needs a font with those characters. When ReShade's font
+is empty or is the Cascadia Mono the addon set, the addon sets the Windows font ReShade itself uses for
+that language; a font you chose is kept. If the font cannot draw the language, the panel stays in
+English until the next start.
 
 ### The panel's font
 
