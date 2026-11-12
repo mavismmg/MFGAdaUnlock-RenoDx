@@ -16,7 +16,10 @@ int main() {
   // addon_*.inl are fragments of addon.cpp (plan 6.2-6.6).
   for (const auto* name : {"addon.cpp", "addon_provider.inl", "addon_streamline.inl", "addon_discovery.inl",
                            "addon_latency.inl", "addon_overlay.inl", "framecount.hpp", "input_diagnostics.hpp",
-                           "thin_geometry.hpp"}) {
+                           "thin_geometry.hpp",
+                           // 1.10.0 (plan 4.3): the panel pages split out of addon_overlay.inl.
+                           "overlay_page_general.inl", "overlay_page_quality.inl", "overlay_page_latency.inl",
+                           "overlay_page_support.inl", "overlay_page_dlssinfo.inl"}) {
     const auto source = Read(root / "src/addons/mfgunlock" / name);
     for (const auto* forbidden : {"MFGUNLOCK_QUALITY_PIPELINE_LAB", "warp_quality_lab.hpp", "Warp Quality Lab", "pipeline_ngx.hpp", "ngxprearm", "g_warp_preset"})
       CHECK(source.find(forbidden) == std::string::npos);
