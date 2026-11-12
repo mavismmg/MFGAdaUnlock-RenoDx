@@ -1,0 +1,55 @@
+# 1.10.0 (plan 4.1): build the DLSS-G addon and run the tests that need no game,
+# no GPU and no file from the development PC. The XeMFG backend needs Intel's
+# SDK and program inputs that are not public, and the field-style tests need
+# game DLLs, so both stay in the local gate (docs/releases/<version>.md).
+name: build
+
+on:
+  push:
+    branches: [main, develop, "feat/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    env:
+      # The RenoDX checkout the local gate uses (its external/ submodules pin
+      # Streamline, ReShade, Detours, DLSS, json, frozen and gtl).
+      RENODX_COMMIT: 98934e0f68d1d3ae2027fc6299fb3e8631cc66b4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: RenoDX dependencies
+        uses: actions/checkout@v4
+        with:
+          repository: clshortfuse/renodx
+          ref: ${{ env.RENODX_COMMIT }}
+          path: renodx
+          submodules: recursive
+
+      - name: MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build Detours
+        working-directory: renodx/external/Detours/src
+        run: nmake
+
+      - name: Configure
+        run: cmake -S tests -B build -G "Visual Studio 17 2022" -A x64 -DRENODX_SOURCE_DIR="${{ github.workspace }}/renodx"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Unit tests
+        # Pure tests only: policies, parsers, tables, generated documents.
+        run: >-
+          ctest --test-dir build -C Release --output-on-failure
+          -R "^(config_atomic_save|latency_marker_admission|xmx_policy|streamline_log|i18n|fg_chain_tests|ngx_param_vtable_tests|preada_caller|generic_gate_tests|runtime_version_tests|pacing_policy_tests|reflex_pacing_tests|drs_report_tests|dlss_preset_tests|force_policy_tests|memory_policy_tests|validation_status_tests|panel_strings|panel_tables|ini_panel_parity|release_isolation_tests)"
+
+      - name: Compatibility matrix is current
+        run: python tools/build_compat_matrix.py --check

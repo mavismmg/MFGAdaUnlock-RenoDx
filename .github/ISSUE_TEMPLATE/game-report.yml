@@ -1,0 +1,60 @@
+name: Game report
+description: A game that works, half works or does not work with MFG Unlock.
+title: "[Game] "
+labels: ["game report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you. The report below is what lets us tell a game problem from a setup problem.
+        In the MFG Unlock panel open **Support**, press **Copy report**, and paste it below.
+        If frame generation was requested but nothing was generated, also turn on
+        **Support > All settings (advanced) > Streamline log (sl.log)**, restart, reproduce, and attach
+        the folder that **Save support files** creates (it includes ReShade.log and sl.log).
+  - type: input
+    id: game
+    attributes:
+      label: Game
+      description: Name, store (Steam, Game Pass, ...) and game version if you know it.
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Working
+        - Partially working
+        - Not working
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Frame generation method (panel, General)
+      options:
+        - DLSS-G
+        - XMX
+        - XeMFG
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Support report (Support > Copy report)
+      description: Paste it whole. It has no personal paths.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What you did, what you expected, what you saw. Multiplier chosen in the game and in the panel.
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Logs
+      description: Drag the MFG-Support-... folder (zipped) here, or ReShade.log and sl.log.

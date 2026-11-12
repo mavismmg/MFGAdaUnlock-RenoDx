@@ -253,6 +253,12 @@ target_include_directories(xemfg_panel_preview PRIVATE "${XEMFG_SDK_ROOT}/inc/xe
   "${RENODX_SOURCE_DIR}/external/Streamline/include" "${RENODX_SOURCE_DIR}/external/reshade"
   "${RENODX_SOURCE_DIR}/external/json/include")
 target_link_libraries(xemfg_panel_preview PRIVATE d3d12 dxgi user32 ole32 windowscodecs bcrypt version psapi shell32)
+# 1.10.0 (plan 3.2/5): image regression of the panel in its six languages.
+add_executable(image_ssim "${CMAKE_SOURCE_DIR}/image_ssim.cpp")
+target_link_libraries(image_ssim PRIVATE windowscodecs ole32)
+add_test(NAME panel_images COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/panel_image_tests.py"
+  --preview $<TARGET_FILE:xemfg_panel_preview> --ssim $<TARGET_FILE:image_ssim> --work "${CMAKE_BINARY_DIR}/ui-preview/i18n")
+set_tests_properties(panel_images PROPERTIES RUN_SERIAL TRUE SKIP_RETURN_CODE 77)
 foreach(page RANGE 0 3)
   add_test(NAME xemfg_panel_page_${page} COMMAND xemfg_panel_preview "${CMAKE_BINARY_DIR}/ui-preview/page-${page}.png" ${page} 800)
   set_tests_properties(xemfg_panel_page_${page} PROPERTIES RUN_SERIAL TRUE)

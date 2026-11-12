@@ -1,0 +1,13 @@
+# 1.10.0 (plan 4.4): for new files and new functions. The existing code mixes
+# a dense style (panel, XeMFG) with Google style (DLSS-G backend); reformatting
+# it would bury every real change in whitespace, so format only what you write:
+#   git clang-format            (formats the lines changed since HEAD)
+BasedOnStyle: Google
+ColumnLimit: 120
+IndentWidth: 2
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+DerivePointerAlignment: false
+PointerAlignment: Left
+SortIncludes: Never
+IncludeBlocks: Preserve
