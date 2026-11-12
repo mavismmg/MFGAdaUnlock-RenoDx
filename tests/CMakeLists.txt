@@ -268,6 +268,16 @@ add_test(NAME generic_gate_tests COMMAND generic_gate_tests)
 add_executable(gpu_arch_tests gpu_arch_tests.cpp)
 target_link_libraries(gpu_arch_tests PRIVATE advapi32)
 add_test(NAME gpu_arch_tests COMMAND gpu_arch_tests)
+# 1.10.0 (plan 2.1): the caller rule of the RTX 20/30 architecture answer.
+add_executable(preada_caller_tests preada_caller_tests.cpp)
+target_compile_definitions(preada_caller_tests PRIVATE NOMINMAX
+  MFGUNLOCK_LOCAL_LOW_OVERHEAD MFGUNLOCK_LOCAL_STABILITY MFGUNLOCK_CONTINUOUS_BORDER_AXES
+  MFGUNLOCK_RELEASE_1_4_3 MFGUNLOCK_RELEASE_1_4_4)
+target_compile_options(preada_caller_tests PRIVATE /bigobj)
+target_include_directories(preada_caller_tests SYSTEM PRIVATE
+  $<TARGET_PROPERTY:mfgunlock_addon_compile,INCLUDE_DIRECTORIES>)
+target_link_libraries(preada_caller_tests PRIVATE ${MFGUNLOCK_NATIVE_LIBRARIES})
+add_test(NAME preada_caller COMMAND preada_caller_tests)
 add_executable(fg_chain_tests fg_chain_tests.cpp)
 add_test(NAME fg_chain_tests COMMAND fg_chain_tests)
 add_executable(drs_report_tests drs_report_tests.cpp)

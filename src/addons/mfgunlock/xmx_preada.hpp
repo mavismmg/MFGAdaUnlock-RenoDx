@@ -13,9 +13,18 @@ namespace mfgunlock::xmx::preada {
 // Test only, INI only: [DLSSG] SimulatePreAda=1 takes this path on an Ada or
 // Blackwell GPU. There every answer it changes is already Ada's, so it shows
 // that the path runs and changes nothing, not that an RTX 30 is accepted.
-inline bool Simulated() {
-  return GetPrivateProfileIntW(L"DLSSG", L"SimulatePreAda", 0, (backend::Directory() / L"MFGAdaUnlock.ini").c_str()) == 1;
+inline int SimulationLevel() {
+  static const int level =
+      GetPrivateProfileIntW(L"DLSSG", L"SimulatePreAda", 0, (backend::Directory() / L"MFGAdaUnlock.ini").c_str());
+  return level;
 }
+inline bool Simulated() { return SimulationLevel() >= 1; }
+// 1.10.0: SimulatePreAda=2 also makes NVAPI's architecture query answer
+// Ampere (0x170) to everyone on this Ada GPU, so Streamline refuses DLSS-G
+// as it does on an RTX 30, and only the admission answers Ada again. That
+// shows the admission works, not only that its path runs. NGX's own answer
+// (FrameGeneration.Available) still comes from the real GPU.
+inline bool SimulatedStrict() { return SimulationLevel() >= 2; }
 // Read once; safe under the loader lock.
 inline bool Active() {
   static const bool value = gpuarch::AllNvidiaAdaptersPreAda() || Simulated();

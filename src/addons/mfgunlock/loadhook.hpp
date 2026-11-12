@@ -56,6 +56,8 @@ inline void (*g_on_interposer_loaded)() = nullptr;
 // 1.6 (plan B.3): the NGX driver module, mapped by games that create DLSS
 // through NGX; it usually loads after the device-creation maintenance.
 inline void (*g_on_ngx_loaded)() = nullptr;
+// 1.10.0 (plan 2.1): nvapi64.dll, for the RTX 20/30 architecture answer.
+inline void (*g_on_nvapi_loaded)() = nullptr;
 inline std::atomic_bool g_hooked{false};
 inline std::atomic_bool g_installing{false};
 inline std::atomic<unsigned int> g_catches{0};
@@ -66,6 +68,7 @@ constexpr wchar_t kNeedle[] = L"nvngx_dlssg";
 constexpr wchar_t kOtaNeedle[] = L"\\models\\dlssg\\";
 constexpr wchar_t kInterposerNeedle[] = L"sl.interposer";
 constexpr wchar_t kNgxNeedle[] = L"_nvngx.dll";
+constexpr wchar_t kNvapiNeedle[] = L"nvapi64.dll";
 constexpr wchar_t kDlssgPluginNeedle[] = L"sl.dlss_g";
 // 1.8.5: a prefix, so the NVIDIA app's override copy (sl_dlss_g_override_0)
 // is found as well as the OTA one (sl_dlss_g_0).
@@ -125,6 +128,9 @@ inline void Notify(HMODULE module, const wchar_t* path) {
   }
   if (g_on_ngx_loaded != nullptr && (NameContains(path, kNgxNeedle) || NameContains(resolved, kNgxNeedle))) {
     g_on_ngx_loaded();
+  }
+  if (g_on_nvapi_loaded != nullptr && (NameContains(path, kNvapiNeedle) || NameContains(resolved, kNvapiNeedle))) {
+    g_on_nvapi_loaded();
   }
 }
 

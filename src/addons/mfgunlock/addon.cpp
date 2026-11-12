@@ -1597,6 +1597,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
         mfgunlock::drsoverride::TryInstall();
       TryAutoEarlyLoad();
       mfgunlock::loadhook::g_on_dlssg_plugin_loaded = ProcessLoadedStreamlineDlssgPlugin;
+      mfgunlock::loadhook::g_on_nvapi_loaded = mfgunlock::xmx::preada::OnNvapiLoaded;
       mfgunlock::loadhook::g_on_ngx_loaded = []() {
         TryInstallPresetHook();
         mfgunlock::xmx::preada::TryInstallRequirements();

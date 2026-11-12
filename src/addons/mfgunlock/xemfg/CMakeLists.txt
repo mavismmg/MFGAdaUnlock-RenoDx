@@ -347,6 +347,14 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
       set_tests_properties(xemfg_sl_sample_${version} PROPERTIES RUN_SERIAL TRUE TIMEOUT 120
         LABELS sl_sample SKIP_REGULAR_EXPRESSION "SKIP:")
     endforeach()
+    # 1.10.0 (plan 2.1/3.1): the RTX 20/30 admission on a simulated RTX 30
+    # (SimulatePreAda=2), in the Rift Apart load order, judged by sl.log.
+    add_test(NAME preada_admission_sl_sample COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/preada_admission_sample_tests.py" --bin "${XEMFG_SL_SAMPLES_ROOT}/sample-v2.14.16/_bin"
+      --addon $<TARGET_FILE:mfgunlock_native_xemfg> --reshade "${XEMFG_OFFLINE_RESHADE}"
+      --work "${CMAKE_BINARY_DIR}/native-checks")
+    set_tests_properties(preada_admission_sl_sample PROPERTIES RUN_SERIAL TRUE TIMEOUT 120
+      LABELS sl_sample SKIP_RETURN_CODE 77 SKIP_REGULAR_EXPRESSION "SKIP:")
   endif()
   add_test(NAME xemfg_native_retained_legacy COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"

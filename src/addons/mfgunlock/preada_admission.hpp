@@ -20,12 +20,14 @@
 // changes on RTX 40 or 50.
 #include <d3d12.h>
 #include <dxgi1_4.h>
+#include <intrin.h>
 #include <windows.h>
 #include <wrl/client.h>
 
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <cwctype>
 #include <filesystem>
 #include <mutex>
 #include <sstream>
@@ -50,6 +52,8 @@ namespace mfgunlock::xmx::preada {
 constexpr uint32_t kAdaArchitecture = 0x190;
 // Turing: the lowest architecture this path accepts, so RTX 20 and 30 pass.
 constexpr uint32_t kLoweredMinimum = 0x160;
+// SimulatePreAda=2 (test only): what NVAPI answers on this Ada GPU.
+constexpr uint32_t kSimulatedAmpere = 0x170;
 
 // XMX selected, its files present, and this GPU older than Ada.
 inline bool Engaged() {
@@ -73,8 +77,13 @@ inline void Log(const std::string& text, bool warning = false) {
 }
 
 // ------------------------------------------------- the architecture answer
-// NVAPI's GetArchInfo answers Ada, but only on a thread inside one of the
-// admission queries below and only for an architecture older than Ada.
+// NVAPI's GetArchInfo answers Ada for an architecture older than Ada when the
+// thread is inside one of the admission queries below, or (1.10.0, plan 2.1)
+// when the caller is Streamline's own code or the NGX core. The thread-local
+// window missed two real cases on an RTX 3060 Ti: Rift Apart's slInit was
+// already running when the addon loaded (the interposer loads ReShade's
+// dxgi.dll), and the DLSS-G plugin checks the GPU again when the device is
+// set. The game's own queries keep the real answer.
 struct ArchInfo {
   uint32_t version, architecture, implementation, revision;
 };
@@ -88,31 +97,121 @@ struct AdmissionScope {
   AdmissionScope() { g_in_admission = true; }
   ~AdmissionScope() { g_in_admission = previous; }
 };
+// The path of a module NVIDIA's frame generation runtime calls from. A strict
+// simulation on the development PC (SimulatePreAda=2, Streamline Sample 2.14.16)
+// traced every architecture query: the refusal came from the NVIDIA app's copy
+// of the DLSS-G plugin (...\NGX\models\sl_dlss_g_0\...\190_E658700.dll) and
+// its frame generation file (...\models\dlssg\...\160_E658700.bin), names
+// that carry no "sl." or "nvngx_dlssg". So: sl.*.dll (interposer, sl.common,
+// the game's sl.dlss_g), any nvngx_dlssg* file, the NGX core, and anything in
+// NVIDIA's NGX models folder. Pure, for the test.
+inline bool RuntimeModulePath(const wchar_t* path) {
+  if (path == nullptr || path[0] == L'\0') return false;
+  std::wstring lower(path);
+  for (auto& c : lower) c = static_cast<wchar_t>(towlower(c));
+  if (lower.find(L"\\nvidia\\ngx\\models\\") != std::wstring::npos) return true;
+  const size_t slash = lower.find_last_of(L"\\/");
+  const std::wstring name = slash == std::wstring::npos ? lower : lower.substr(slash + 1);
+  if (name == L"_nvngx.dll" || name == L"nvngx.dll") return true;
+  if (name.compare(0, 11, L"nvngx_dlssg") == 0) return true;
+  return name.size() > 7 && name.compare(0, 3, L"sl.") == 0 && name.compare(name.size() - 4, 4, L".dll") == 0;
+}
+inline bool CallerIsRuntime(const void* address) {
+  HMODULE module = nullptr;
+  if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                          static_cast<LPCWSTR>(address), &module) ||
+      module == nullptr)
+    return false;
+  // A handful of modules ever ask; the verdict per module is kept.
+  static SRWLOCK lock = SRWLOCK_INIT;
+  static std::vector<std::pair<HMODULE, bool>> verdicts;
+  AcquireSRWLockShared(&lock);
+  for (const auto& [known, verdict] : verdicts)
+    if (known == module) {
+      ReleaseSRWLockShared(&lock);
+      return verdict;
+    }
+  ReleaseSRWLockShared(&lock);
+  wchar_t path[MAX_PATH]{};
+  const DWORD length = GetModuleFileNameW(module, path, MAX_PATH);
+  const bool verdict = length != 0 && length < MAX_PATH && RuntimeModulePath(path);
+  AcquireSRWLockExclusive(&lock);
+  if (verdicts.size() < 32) verdicts.emplace_back(module, verdict);
+  ReleaseSRWLockExclusive(&lock);
+  return verdict;
+}
+inline std::atomic<uint32_t> g_runtime_answers{0};  // answers given by the caller rule alone
 inline int __cdecl HookedArchInfo(void* gpu, ArchInfo* info) {
+  const void* caller = _ReturnAddress();
   const int result = g_real_arch_info(gpu, info);
-  if (g_in_admission && result == 0 && info != nullptr && info->architecture >= kLoweredMinimum &&
-      info->architecture < kAdaArchitecture)
-    info->architecture = kAdaArchitecture;
+  // Test only: an Ampere answer on this Ada GPU (xmx_preada.hpp).
+  if (SimulatedStrict() && result == 0 && info != nullptr && info->architecture >= kAdaArchitecture)
+    info->architecture = kSimulatedAmpere;
+  if (result != 0 || info == nullptr || info->architecture < kLoweredMinimum || info->architecture >= kAdaArchitecture)
+    return result;
+  bool admit = g_in_admission;
+  if (!admit && Admitted() && CallerIsRuntime(caller)) {
+    admit = true;
+    if (g_runtime_answers.fetch_add(1, std::memory_order_relaxed) == 0)
+      Log("architecture answered Ada to NVIDIA's runtime outside the slInit window (caller rule)");
+  }
+  if (admit) info->architecture = kAdaArchitecture;
+  // Test only (SimulatePreAda=2): every answer in a file beside the game, since
+  // ReShade drops add-on log lines written while Streamline starts.
+  if (SimulatedStrict()) {
+    static std::atomic<int> traced{0};
+    if (traced.fetch_add(1, std::memory_order_relaxed) < 64) {
+      wchar_t module_path[MAX_PATH]{};
+      HMODULE module = nullptr;
+      GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                         static_cast<LPCWSTR>(caller), &module);
+      if (module) GetModuleFileNameW(module, module_path, MAX_PATH);
+      char line[512];
+      snprintf(line, sizeof(line), "tid %lu caller %ls scope %d admitted %d answer 0x%x\n", GetCurrentThreadId(),
+               std::filesystem::path(module_path).filename().c_str(), g_in_admission ? 1 : 0, Admitted() ? 1 : 0,
+               info->architecture);
+      const auto file = backend::Directory() / L"MFGAdaUnlock-archtrace.txt";
+      if (FILE* f = _wfopen(file.c_str(), L"a")) { fputs(line, f); fclose(f); }
+    }
+  }
   return result;
 }
-// Never from the loader callback: it may load nvapi64.dll.
-inline void EnsureArchHook() {
-  std::call_once(g_arch_once, [] {
-    HMODULE nvapi = GetModuleHandleW(L"nvapi64.dll");
-    if (nvapi == nullptr) nvapi = LoadLibraryExW(L"nvapi64.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-    using QueryFn = void*(__cdecl*)(uint32_t);
-    const auto query = nvapi ? reinterpret_cast<QueryFn>(GetProcAddress(nvapi, "nvapi_QueryInterface")) : nullptr;
-    void* target = query ? query(0xd8265d24) : nullptr;  // NvAPI_GPU_GetArchInfo
-    if (target == nullptr) {
+// may_load: only outside the loader lock. From a loader callback the hook goes
+// in only once nvapi64.dll is already mapped; the loadhook calls again when
+// it maps. 1.10.0: no longer once-only, so that retry can happen.
+inline SRWLOCK g_arch_lock = SRWLOCK_INIT;
+inline bool g_arch_tried_with_load = false;
+inline void EnsureArchHook(bool may_load = true) {
+  if (g_arch_hooked.load(std::memory_order_acquire)) return;
+  AcquireSRWLockExclusive(&g_arch_lock);
+  struct Unlock {
+    ~Unlock() { ReleaseSRWLockExclusive(&g_arch_lock); }
+  } unlock;
+  if (g_arch_hooked.load(std::memory_order_relaxed) || g_arch_tried_with_load) return;
+  HMODULE nvapi = GetModuleHandleW(L"nvapi64.dll");
+  if (nvapi == nullptr) {
+    if (!may_load) return;  // the loadhook retries when nvapi64.dll maps
+    nvapi = LoadLibraryExW(L"nvapi64.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+  }
+  if (may_load) g_arch_tried_with_load = true;
+  using QueryFn = void*(__cdecl*)(uint32_t);
+  const auto query = nvapi ? reinterpret_cast<QueryFn>(GetProcAddress(nvapi, "nvapi_QueryInterface")) : nullptr;
+  void* target = query ? query(0xd8265d24) : nullptr;  // NvAPI_GPU_GetArchInfo
+  if (target == nullptr) {
+    if (nvapi != nullptr) {
+      g_arch_tried_with_load = true;
       Log("NVAPI architecture query not found; admission relies on the other answers", true);
-      return;
     }
-    g_real_arch_info = reinterpret_cast<GetArchInfoFn>(target);
-    if (hook::InstallOne(reinterpret_cast<void**>(&g_real_arch_info), reinterpret_cast<void*>(&HookedArchInfo)))
-      g_arch_hooked.store(true, std::memory_order_release);
-    else
-      Log("NVAPI architecture hook failed", true);
-  });
+    return;
+  }
+  g_real_arch_info = reinterpret_cast<GetArchInfoFn>(target);
+  if (hook::InstallOne(reinterpret_cast<void**>(&g_real_arch_info), reinterpret_cast<void*>(&HookedArchInfo))) {
+    g_arch_hooked.store(true, std::memory_order_release);
+    Log("NVAPI architecture hook installed");
+  } else {
+    g_arch_tried_with_load = true;
+    Log("NVAPI architecture hook failed", true);
+  }
 }
 
 // --------------------------------------------------------------- Streamline
@@ -153,11 +252,19 @@ inline sl::Result HookedIsFeatureSupported(sl::Feature feature, const sl::Adapte
     AdmissionScope scope;
     result = g_real_support(feature, adapter);
   }
-  if ((result == sl::Result::eErrorNoSupportedAdapterFound || result == sl::Result::eErrorAdapterNotSupported) &&
-      IsNvidiaAdapter(adapter))
-    result = sl::Result::eOk;
+  // 1.10.0 (plan 2.3): until now a refusal that survived the re-query was
+  // turned into OK for an NVIDIA adapter. Streamline's plugin manager keeps
+  // its own answer, so the game offered a menu whose functions it never got
+  // (Rift Apart). The real answer goes back, and the log says what it was.
   if (result == sl::Result::eOk && !g_support_relaxed.exchange(true))
     Log("Streamline DLSS-G admission: " + std::to_string(static_cast<int>(native)) + " -> ok");
+  if (result != sl::Result::eOk && IsNvidiaAdapter(adapter)) {
+    static std::atomic_bool logged{false};
+    if (!logged.exchange(true))
+      Log("Streamline still refuses DLSS-G on this GPU (" + std::to_string(static_cast<int>(result)) +
+              "): its plugin decided when it loaded. The game keeps the real answer; see the Frame generation chain card.",
+          true);
+  }
   return result;
 }
 
@@ -168,7 +275,12 @@ inline const std::vector<hook::HookItem> kStreamlineHooks = {
 // Installed when sl.interposer.dll maps; slIsFeatureSupported comes long before
 // the first Present. Removed on an explicit unload.
 inline void TryInstallStreamline() {
-  if (g_support_hooked.load(std::memory_order_acquire) || !Admitted()) return;
+  if (SimulatedStrict()) EnsureArchHook(false);
+  if (!Admitted()) return;
+  // 1.10.0 (plan 2.1): the architecture answer as soon as Streamline is in
+  // the process, without loading nvapi64.dll from a loader callback.
+  EnsureArchHook(false);
+  if (g_support_hooked.load(std::memory_order_acquire)) return;
   static SRWLOCK lock = SRWLOCK_INIT;
   AcquireSRWLockExclusive(&lock);
   if (!g_support_hooked.load(std::memory_order_relaxed)) {
@@ -454,6 +566,11 @@ inline bool CreateMissing(uint64_t now) {
 }
 
 // Explicit unload only: these hooks go in before the first Present.
+// 1.10.0 (plan 2.1): the loadhook saw nvapi64.dll map (under the loader lock).
+inline void OnNvapiLoaded() {
+  if (Admitted() || SimulatedStrict()) EnsureArchHook(false);
+}
+
 inline void Uninstall() {
   if (g_support_hooked.load() && hook::Uninstall(kStreamlineHooks)) g_support_hooked.store(false);
   if (g_requirements_hooked.load() && hook::Uninstall(kRequirementHooks)) g_requirements_hooked.store(false);

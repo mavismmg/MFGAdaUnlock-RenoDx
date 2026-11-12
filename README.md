@@ -1893,6 +1893,7 @@ Settings in `MFGAdaUnlock.ini` (next to the game), under `[DLSSG]`:
 |---|---|---|
 | `PreAdaAdmission` | `1` | `0` turns the whole RTX 20/30 path off |
 | `AutoEarlyLoad` | `1` | `0` stops the addon from adding itself to `LoadFromDllMain` |
+| `SimulatePreAda` | `0` | Test only. `1` takes the RTX 20/30 path on an RTX 40/50; `2` also makes NVAPI answer Ampere there, so Streamline refuses DLSS-G as on an RTX 30 unless the admission works (1.10.0) |
 | `StreamlineLog` | `0` | `1` makes the addon set `SL_LOG_LEVEL=2`, `SL_LOG_PATH` (the game folder) and `SL_LOG_NAME=sl.log` in the game's environment before it starts Streamline, so Streamline writes its own `sl.log` beside the game; **Save support files** copies it (1.10.0) |
 
 Nothing changes on RTX 40 or 50. When something fails, the panel's
