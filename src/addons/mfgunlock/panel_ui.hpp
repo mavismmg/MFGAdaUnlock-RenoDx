@@ -8,8 +8,10 @@
 #include "backend_selection.hpp"
 #include "support_files.hpp"
 #include "system_info.hpp"
+#include "i18n/strings.hpp"
 #include <algorithm>
 #include <cfloat>
+#include <filesystem>
 #include <string>
 #include <shellapi.h>
 
@@ -105,8 +107,8 @@ template<class F> void Setting(const char* id,const char* title,const char* desc
     label(); ImGui::SetNextItemWidth(-1); control(); Tooltip(description); return;
   }
   if(ImGui::BeginTable(id,2,ImGuiTableFlags_SizingStretchSame|ImGuiTableFlags_NoPadOuterX)) {
-    ImGui::TableSetupColumn("Setting",ImGuiTableColumnFlags_WidthStretch);
-    ImGui::TableSetupColumn("Control",ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn(T(Str::kSetting_754b),ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn(T(Str::kControl_bf3e),ImGuiTableColumnFlags_WidthStretch);
     ImGui::TableNextColumn(); label();
     ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1); control(); Tooltip(description); ImGui::EndTable();
   }
@@ -229,7 +231,7 @@ inline void Hero(const char* multiplier,const char* backend,const char* renderer
   StatusDot(active?Accent:Warning);
   ImGui::PushTextWrapPos(); ImGui::TextColored(active?Accent:Warning,"%s",state); ImGui::PopTextWrapPos();
   const char* values[]={multiplier,backend,renderer};
-  const char* labels[]={"Multiplier","Backend","Renderer"};
+  const char* labels[]={T(Str::kMultiplier_bc06),T(Str::kBackend_b9ef),T(Str::kRenderer_391e)};
   // These are readouts, including the child-container item added by EndChild.
   // Keep real settings outside this scope so keyboard navigation still works.
   NoNavigation summaries;
@@ -261,27 +263,24 @@ inline void BackendSelector() {
   static bool saveFailed{};
   static const auto startup=backend::ReadMode();
   const auto selected=backend::Read(); const auto mode=backend::ReadMode(); int choice=int(mode);
-  Setting("##backend_selection","Frame generation method","NVIDIA DLSS-G: NVIDIA's generator.\n"
-      "Intel XeMFG (CUDA): Intel's model on NVIDIA Tensor Cores, with Intel's presentation.\n"
-      "XeMFG via DLSS-G (XMX): Intel's model in DLSS-G's presentation. The game still reports DLSS-G, but Intel's model generates the frames. Experimental; needs Intel's files in the game folder.\n"
-      "Requires a game restart.",[&] {
-    constexpr const char* kMethods[]={"DLSS-G","XeMFG","XMX"};
+  Setting("##backend_selection",T(Str::kFrameGenerationMethod_fd2d),T(Str::kNvidiaDlssGNvidiaS_572e),[&] {
+    const char* kMethods[] = {"DLSS-G","XeMFG","XMX"};
     if(Segmented("##backend",choice,kMethods,3))
       saveFailed=!backend::SelectMode(backend::Mode(choice));
   });
-  if(saveFailed) Notice("Backend change was not saved. Check write access to the game folder.");
-  if(selected==backend::Kind::Invalid) Notice("The saved backend preference is not valid; NVIDIA DLSS-G is used. Select a method to save a valid one.");
-  if(backend::Effective(selected)!=backend::active || mode!=startup) Notice("Saved. Restart the game to switch frame generation.");
+  if(saveFailed) Notice(T(Str::kBackendChangeWasNotSaved_1275));
+  if(selected==backend::Kind::Invalid) Notice(T(Str::kTheSavedBackendPreferenceIs_f36b));
+  if(backend::Effective(selected)!=backend::active || mode!=startup) Notice(T(Str::kSavedRestartTheGameTo_1fe6));
 #endif
 }
 inline void RepositoryButton() {
   static bool failed{};
-  if(ImGui::SmallButton("GitHub repository")) {
+  if(ImGui::SmallButton(T(Str::kGithubRepository_31c6))) {
     failed=reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr,L"open",
         L"https://github.com/mavismmg/MFGAdaUnlock-RenoDx",nullptr,nullptr,SW_SHOWNORMAL))<=32;
   }
-  Tooltip("Open the maintained MFGAdaUnlock repository in your default browser.");
-  if(failed) Notice("Could not open the browser. Repository: github.com/mavismmg/MFGAdaUnlock-RenoDx");
+  Tooltip(T(Str::kOpenTheMaintainedMfgadaunlockRepository_71c5));
+  if(failed) Notice(T(Str::kCouldNotOpenTheBrowser_1362));
 }
 // 1.8.1: a problem the player should act on, with its evidence one click away.
 class ProblemCard {
@@ -298,7 +297,7 @@ inline std::string& SupportMessage() { static std::string message; return messag
 inline void SaveSupportFiles(const std::string& report) {
   const auto saved=support::Save(backend::Directory(),report);
   auto& message=SupportMessage();
-  if(!saved.ok) { message="Could not save the support files. Check write access to the game folder."; return; }
+  if(!saved.ok) { message=T(Str::kCouldNotSaveTheSupport_c8bc); return; }
   ShellExecuteW(nullptr,L"open",saved.folder.c_str(),nullptr,nullptr,SW_SHOWNORMAL);
   message="Saved in "+saved.folder.filename().string()+" with "+std::to_string(saved.copied)
       +" log and settings file(s). These may include folder names from your PC; check them before posting publicly.";
@@ -317,19 +316,18 @@ template<class Report> void SessionNotice(Report report,bool safeModeApplies=tru
   if(!support::g_previous_unclean.load(std::memory_order_relaxed)) return;
   const uint32_t streak=support::g_unclean_streak.load(std::memory_order_relaxed);
   const bool offerSafe=safeModeApplies && streak>=support::kSafeModeOffer;
-  ProblemCard card("##previous_session",offerSafe?"The game may have closed unexpectedly several times in a row"
-                                                 :"The last session may have closed unexpectedly",Warning);
-  ImGui::TextWrapped("If the game crashed, save the logs now and attach them to your report.");
-  if(offerSafe) ImGui::TextWrapped("%u sessions in a row did not end cleanly. Safe mode starts the game once without "
-      "the DLSS preset, XMX and the forced multiplier, to see whether one of them is the cause.",streak);
+  ProblemCard card("##previous_session",offerSafe?T(Str::kTheGameMayHaveClosed_2f77)
+                                                 :T(Str::kTheLastSessionMayHave_8e69),Warning);
+  ImGui::TextWrapped(T(Str::kIfTheGameCrashedSave_aa60));
+  if(offerSafe) ImGui::TextWrapped(T(Str::kUSessionsInARow_c7e5),streak);
   ButtonRow actions(offerSafe?3:2);
   if(actions("Save support files",kSaveSupportHelp)) SaveSupportFiles(report());
-  if(offerSafe && actions("Safe mode next start","Your settings are kept. Only the next start runs without these options.")) {
+  if(offerSafe && actions(T(Str::kSafeModeNextStart_8548),T(Str::kYourSettingsAreKeptOnly_ee82))) {
     SupportMessage()=support::RequestSafeMode(backend::Directory())
-        ?"Safe mode is set for the next start. Close the game and start it again."
-        :"Could not set safe mode. Check write access to the game folder.";
+        ?T(Str::kSafeModeIsSetFor_72f7)
+        :T(Str::kCouldNotSetSafeMode_85b8);
   }
-  if(actions("Dismiss")) {
+  if(actions(T(Str::kDismiss_15f3))) {
     support::g_previous_unclean.store(false,std::memory_order_relaxed);
     support::ResetStreak(backend::Directory());
     SupportMessage().clear();
@@ -339,40 +337,131 @@ template<class Report> void SessionNotice(Report report,bool safeModeApplies=tru
 // While safe mode is on, every page says so: the options look set but do nothing.
 inline void SafeModeNotice() {
   if(!support::g_safe_mode.load(std::memory_order_relaxed)) return;
-  ProblemCard card("##safe_mode","Safe mode",Warning);
-  ImGui::TextWrapped("This start runs without the DLSS preset, XMX and the forced multiplier. "
-      "Your settings are kept and return on the next start.");
+  ProblemCard card("##safe_mode",T(Str::kSafeMode_691b),Warning);
+  ImGui::TextWrapped(T(Str::kThisStartRunsWithoutThe_d4e2));
 }
 // Version left, repository link right: one footer for both backends.
 // 1.8.1: this PC at a glance, on the General page. `sync` is null where it is not known.
 inline void SystemCard(const char* sync,bool xmxSelected) {
-  Section("System");
+  Section(T(Str::kSystem_84bc));
   Card card("##system_card");
   const auto& machine=system::ReadMachine();
   const auto& display=system::g_display;
   const bool scrgb=display.known && system::OutputIsScrgb(display.format);
-  Readout("##system_output","Display output",display.known?system::OutputName(display.format,display.windowsHdr):"Waiting for the game",
-      "The format the game is presenting in, read with the HDR mode of this monitor in Windows.",display.known?Accent:Muted);
+  Readout("##system_output",T(Str::kDisplayOutput_bcc2),display.known?system::OutputName(display.format,display.windowsHdr):T(Str::kWaitingForTheGame_18de),
+      T(Str::kTheFormatTheGameIs_bb8f),display.known?Accent:Muted);
   if(display.known) {
     const std::string resolution=std::to_string(display.width)+"x"+std::to_string(display.height)
         +(display.refreshHz?" @ "+std::to_string(display.refreshHz)+" Hz":"");
-    Readout("##system_resolution","Resolution",resolution.c_str(),"The game's output and the monitor's refresh rate.",Accent);
+    Readout("##system_resolution",T(Str::kResolution_18af),resolution.c_str(),T(Str::kTheGameSOutputAnd_ec20),Accent);
   }
   Readout("##system_gpu","GPU",machine.gpu.c_str(),nullptr,Accent);
-  Readout("##system_driver","Driver",machine.driver.c_str(),nullptr,Accent);
-  Readout("##system_windows","Windows",machine.windows.c_str(),nullptr,Accent);
-  if(sync) Readout("##system_sync","Sync",sync,nullptr,Accent);
-  if(xmxSelected && scrgb) Notice("XMX has not been tested with scRGB output, and it has no conversion for it like XeMFG does.");
+  Readout("##system_driver",T(Str::kDriver_52ff),machine.driver.c_str(),nullptr,Accent);
+  Readout("##system_windows",T(Str::kWindows_028a),machine.windows.c_str(),nullptr,Accent);
+  if(sync) Readout("##system_sync",T(Str::kSync_1bba),sync,nullptr,Accent);
+  if(xmxSelected && scrgb) Notice(T(Str::kXmxHasNotBeenTested_6f96));
 }
 inline constexpr const char* kVersionLine="MFG Unlock | 1.10.0 by mavismmg also known as monet, ayase or woni";
 // Rests on the bottom of the panel when the page leaves room; otherwise follows the page.
+// 1.10.0 (plan 5.2/5.3): the panel's language. Saved in MFGAdaUnlock.ini under
+// [Panel] Language; auto follows ReShade's language, then Windows'.
+inline std::filesystem::path LanguageIni() { return backend::Directory()/L"MFGAdaUnlock.ini"; }
+inline std::string ReadSavedLanguage() {
+  wchar_t value[32]{};
+  GetPrivateProfileStringW(L"Panel",L"Language",L"auto",value,32,LanguageIni().c_str());
+  char narrow[32]{};
+  WideCharToMultiByte(CP_UTF8,0,value,-1,narrow,sizeof(narrow)-1,nullptr,nullptr);
+  return narrow;
+}
+inline bool SaveLanguage(const char* code) {
+  wchar_t wide[32]{};
+  MultiByteToWideChar(CP_UTF8,0,code,-1,wide,31);
+  return WritePrivateProfileStringW(L"Panel",L"Language",wide,LanguageIni().c_str())!=FALSE;
+}
+inline std::string WindowsLanguage() {
+  wchar_t name[LOCALE_NAME_MAX_LENGTH]{};
+  if(!LCIDToLocaleName(MAKELCID(GetUserDefaultUILanguage(),SORT_DEFAULT),name,LOCALE_NAME_MAX_LENGTH,0)) return {};
+  char narrow[LOCALE_NAME_MAX_LENGTH]{};
+  WideCharToMultiByte(CP_UTF8,0,name,-1,narrow,sizeof(narrow)-1,nullptr,nullptr);
+  return narrow;
+}
+#ifndef MFGUNLOCK_UI_PREVIEW
+inline std::string ReShadeLanguage() {
+  char value[32]=""; size_t size=sizeof(value);
+  return reshade::get_config_value(nullptr,"OVERLAY","Language",value,&size)?std::string(value):std::string();
+}
+// ReShade builds its fonts after add-ons load, so a font set here at start
+// applies in this session; set later, it applies from the next start.
+inline bool g_language_font_changed=false;
+inline void ApplyLanguageFont(i18n::Language language) {
+  char current[MAX_PATH]=""; size_t size=sizeof(current);
+  if(!reshade::get_config_value(nullptr,"STYLE","Font",current,&size)) current[0]='\0';
+  const char* font=i18n::FontToSet(language,current,support::kPanelFontValue,[](const char* path) {
+    return GetFileAttributesA(path)!=INVALID_FILE_ATTRIBUTES;
+  });
+  if(font==nullptr || _stricmp(font,current)==0) return;
+  reshade::set_config_value(nullptr,"STYLE","Font",font);
+  g_language_font_changed=true;
+  reshade::log::message(reshade::log::level::info,(std::string("mfgunlock: panel language needs ")+font+" as ReShade's font; set.").c_str());
+}
+// Once, when the addon starts (both backends).
+inline void InitLanguage() {
+  const auto language=i18n::Resolve(ReadSavedLanguage().c_str(),ReShadeLanguage().c_str(),WindowsLanguage().c_str());
+  i18n::Select(language);
+  ApplyLanguageFont(language);
+}
+#endif
+// Each panel frame, before any text: the chosen language when the font can
+// draw it, otherwise English for this frame (no boxes instead of letters).
+inline bool g_language_glyphs_missing=false;
+inline void BeginLanguageFrame() {
+  const auto selected=i18n::Selected();
+  ImFont* font=ImGui::GetFont();
+  g_language_glyphs_missing=i18n::NeedsCjkFont(selected) && font!=nullptr &&
+      !font->IsGlyphInFont(static_cast<ImWchar>(i18n::ProbeGlyph(selected)));
+  i18n::UseForThisFrame(g_language_glyphs_missing?i18n::Language::kEnglish:selected);
+}
+// The selector, in the footer of both panels.
+inline void LanguageSelector() {
+  const auto selected=i18n::Selected();
+  const auto& current=i18n::kInfo[static_cast<int>(selected)];
+  // The names are each in their own language: only drawable ones are listed
+  // when the font lacks CJK glyphs, so the list never shows boxes.
+  ImFont* font=ImGui::GetFont();
+  const auto drawable=[&](const i18n::Info& info) {
+    return !i18n::NeedsCjkFont(info.language) || font==nullptr ||
+           font->IsGlyphInFont(static_cast<ImWchar>(i18n::ProbeGlyph(info.language)));
+  };
+  ImGui::SetNextItemWidth(ImGui::GetFontSize()*12.f);
+  if(ImGui::BeginCombo("##panel_language",drawable(current)?current.name:current.code)) {
+    for(const auto& info:i18n::kInfo) {
+      std::string label=drawable(info)?info.name:info.code;
+      if(info.machine_translated) label+=" *";
+      if(ImGui::Selectable(label.c_str(),info.language==selected) && info.language!=selected) {
+        i18n::Select(info.language);
+        SaveLanguage(info.code);
+#ifndef MFGUNLOCK_UI_PREVIEW
+        ApplyLanguageFont(info.language);
+#endif
+      }
+    }
+    ImGui::EndCombo();
+  }
+  Tooltip(T(Str::kLanguageOfThisPanel_lang));
+  // Shown in English: this note appears exactly when the font cannot draw the
+  // chosen language, and T() then answers in English anyway.
+  if(g_language_glyphs_missing) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s",T(Str::kRestartTheGameToLoadFont_lang));
+  }
+}
 inline void Footer(const char* note=nullptr) {
   const char* version=kVersionLine;
   const auto& style=ImGui::GetStyle();
-  const float button=ImGui::CalcTextSize("GitHub repository").x+style.FramePadding.x*2.f;
+  const float button=ImGui::CalcTextSize(T(Str::kGithubRepository_31c6)).x+style.FramePadding.x*2.f;
   const bool oneLine=ImGui::GetContentRegionAvail().x>ImGui::CalcTextSize(version).x+button+ImGui::GetFontSize();
   const float line=ImGui::GetTextLineHeightWithSpacing(),buttonRow=ImGui::GetFrameHeightWithSpacing();
-  const float height=style.ItemSpacing.y*3.f+buttonRow+line*((oneLine?1.f:2.f)+(note?1.f:0.f));
+  const float height=style.ItemSpacing.y*4.f+buttonRow*2.f+line*((oneLine?1.f:2.f)+(note?1.f:0.f));
   const float spare=ImGui::GetContentRegionAvail().y-height;
   if(spare>0.f) ImGui::SetCursorPosY(ImGui::GetCursorPosY()+spare);
   ImGui::Spacing(); ImGui::Separator();
@@ -381,7 +470,8 @@ inline void Footer(const char* note=nullptr) {
     ImGui::SameLine(); ImGui::SetCursorPosX(ImGui::GetCursorPosX()+ImGui::GetContentRegionAvail().x-button);
   }
   RepositoryButton();
-  Description("Hover a setting to see what it does.");
+  LanguageSelector();
+  Description(T(Str::kHoverASettingToSee_160a));
   if(note) Description(note);
 }
 }

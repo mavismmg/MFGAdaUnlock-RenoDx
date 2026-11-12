@@ -994,6 +994,9 @@ void OnInitCommandQueue(reshade::api::command_queue* /*queue*/) {
 #endif
 }
 
+// 1.10.0 (plan 5): the panel's text, by key (i18n/strings.hpp).
+using mfgunlock::i18n::Str;
+using mfgunlock::i18n::T;
 #include "./addon_overlay.inl"
 
 void LoadConfig() {
@@ -1487,6 +1490,8 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
         if (mfgunlock::support::ShouldApplyPanelFont(font_offered != 0, has_font, std::filesystem::exists(mfgunlock::support::kPanelFontPath, font_error)))
           reshade::set_config_value(nullptr, "STYLE", "Font", mfgunlock::support::kPanelFontValue);
         if (font_offered == 0) reshade::set_config_value(nullptr, kConfigSection, "PanelFontOffered", 1);
+        // 1.10.0 (plan 5): the panel's language, and a font that can draw it.
+        mfgunlock::ui::InitLanguage();
       }
       const auto saved_backend = mfgunlock::backend::Read();
       mfgunlock::backend::active = mfgunlock::backend::Effective(saved_backend);

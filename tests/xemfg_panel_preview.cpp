@@ -106,7 +106,21 @@ int wmain(int argc,wchar_t** argv) {
     ImGui::CreateContext(); auto& io=ImGui::GetIO(); io.IniFilename=nullptr;
     io.DisplaySize=ImVec2(float(width),float(height)); io.DeltaTime=1.f/60.f;
     if(scenario==L"navigation") io.ConfigFlags|=ImGuiConfigFlags_NavEnableKeyboard;
-    ImFontConfig font; font.SizePixels=argc>=5?std::stof(argv[4]):16.f; io.Fonts->AddFontDefault(&font);
+    ImFontConfig font; font.SizePixels=argc>=5?std::stof(argv[4]):16.f;
+    // 1.10.0 (plan 5): MFG_PREVIEW_LANGUAGE (pt-BR, es, ja, ko, zh-CN) renders the
+    // panel in that language; MFG_PREVIEW_FONT names a font file that has its glyphs.
+    char language[16]{}, font_file[MAX_PATH]{};
+    if(GetEnvironmentVariableA("MFG_PREVIEW_LANGUAGE",language,sizeof(language))) mfgunlock::i18n::Select(mfgunlock::i18n::FromCode(language));
+    if(GetEnvironmentVariableA("MFG_PREVIEW_FONT",font_file,sizeof(font_file))) {
+      const auto lang=mfgunlock::i18n::Selected();
+      const ImWchar* ranges=lang==mfgunlock::i18n::Language::kJapanese?io.Fonts->GetGlyphRangesJapanese():
+          lang==mfgunlock::i18n::Language::kKorean?io.Fonts->GetGlyphRangesKorean():
+          lang==mfgunlock::i18n::Language::kChineseSimplified?io.Fonts->GetGlyphRangesChineseFull():
+          io.Fonts->GetGlyphRangesDefault();
+      io.Fonts->AddFontFromFileTTF(font_file,font.SizePixels,&font,ranges);
+    } else {
+      io.Fonts->AddFontDefault(&font);
+    }
     unsigned char* tex{}; int tw{},th{}; io.Fonts->GetTexDataAsRGBA32(&tex,&tw,&th); io.Fonts->SetTexID(1);
     auto& style=ImGui::GetStyle(); style.WindowRounding=10; style.WindowPadding=ImVec2(16,14);
     style.Colors[ImGuiCol_WindowBg]=ImVec4(.085f,.095f,.12f,1);

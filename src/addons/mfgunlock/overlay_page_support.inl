@@ -5,24 +5,24 @@
 #error "overlay page files are included only by addon_overlay.inl"
 #endif
 
-  if (page == UiPage::Support && mfgunlock::ui::Expander("All settings (advanced)")) {
-    mfgunlock::ui::Description("Applies after a game restart. Change these only to test or to diagnose a problem.");
+  if (page == UiPage::Support && mfgunlock::ui::Expander(T(Str::kAllSettingsAdvanced_cf72))) {
+    mfgunlock::ui::Description(T(Str::kAppliesAfterAGameRestart_e6f3));
     mfgunlock::ui::advanced::Draw(mfgunlock::ui::advanced::kDlssG);
     mfgunlock::ui::advanced::Result();
     bool raise_ceiling=g_raise_ceiling.load(std::memory_order_relaxed);
-    if (ImGui::Checkbox("Raise frame ceiling",&raise_ceiling)) {
+    if (ImGui::Checkbox(T(Str::kRaiseFrameCeiling_a1b5),&raise_ceiling)) {
       g_raise_ceiling.store(raise_ceiling,std::memory_order_relaxed);
       reshade::set_config_value(nullptr, kConfigSection, "RaiseFrameCeiling", raise_ceiling ? 1 : 0);
     }
-    mfgunlock::ui::Tooltip("Lets an old plugin's frame limit be raised. Off by default.");
+    mfgunlock::ui::Tooltip(T(Str::kLetsAnOldPluginS_5686));
     bool rtx50=g_rtx50_quality_fixes.load(std::memory_order_relaxed);
     ImGui::BeginDisabled(xmx_selected);
-    if (ImGui::Checkbox("RTX 50 quality fixes",&rtx50)) {
+    if (ImGui::Checkbox(T(Str::kRtx50QualityFixes_2204),&rtx50)) {
       g_rtx50_quality_fixes.store(rtx50,std::memory_order_relaxed);
       reshade::set_config_value(nullptr, kConfigSection, "Rtx50QualityFixes", rtx50 ? 1 : 0);
     }
     ImGui::EndDisabled();
-    mfgunlock::ui::Tooltip("Applies the validated quality fixes on RTX 50 cards too. Off by default.");
+    mfgunlock::ui::Tooltip(T(Str::kAppliesTheValidatedQualityFixes_7f62));
   }
 
   if (page == UiPage::Support) {
@@ -35,15 +35,13 @@
       const bool requested=mfgunlock::streamlinelog::Requested();
       if(requested || state!=mfgunlock::streamlinelog::State::kOff) {
         const std::string text="Streamline log: "+mfgunlock::streamlinelog::Describe(state)+
-            (state==mfgunlock::streamlinelog::State::kOff?" (applies from the next start)":"")+".";
+            (state==mfgunlock::streamlinelog::State::kOff?T(Str::kAppliesFromTheNextStart_9da2):"")+".";
         mfgunlock::ui::Notice(text.c_str(),state==mfgunlock::streamlinelog::State::kFailed?mfgunlock::ui::Danger:mfgunlock::ui::Muted);
-        mfgunlock::ui::Description("If the chain card says Streamline started before the addon could hook it, the game read the environment too early. "
-            "Then set, in the registry under HKCU\\SOFTWARE\\NVIDIA Corporation\\Global\\Streamline, LogLevel (DWORD) = 2 and LogPath (string) = this game's folder, and restart. "
-            "Save support files copies sl.log from the game folder.");
+        mfgunlock::ui::Description(T(Str::kIfTheChainCardSays_e34d));
       }
     }
     ImGui::Spacing();
-    ImGui::TextDisabled("SUPPORT DIAGNOSTICS");
+    ImGui::TextDisabled(T(Str::kSupportDiagnostics_c7dc));
     ImGui::Separator();
     bool gate_patched = false;
     bool midpoint_patched = false;
@@ -60,7 +58,7 @@
     mfgunlock::blackwell::Result blackwell_active_result{};
     ThinGeometryModulePatch thin_geometry_last;
   if (!TryAcquireSRWLockShared(&g_provider_maintenance_lock)) {
-    ImGui::TextDisabled("Diagnostics updating; retry next frame.");
+    ImGui::TextDisabled(T(Str::kDiagnosticsUpdatingRetryNextFrame_e020));
     return;
   }
     gate_patched = g_gate_patched.load(std::memory_order_relaxed);
@@ -85,40 +83,40 @@
     if (ImGui::BeginTable("##runtime_diagnostics", 2,
                           ImGuiTableFlags_SizingStretchProp |
                               ImGuiTableFlags_RowBg)) {
-      StatusRow("Renderer", RenderApiName(render_api), kUiMuted);
-      StatusRow("Streamline", streamline_text.c_str(), kUiMuted);
+      StatusRow(T(Str::kRenderer_391e), RenderApiName(render_api), kUiMuted);
+      StatusRow(T(Str::kStreamline_1ce7), streamline_text.c_str(), kUiMuted);
       StatusRow("DLSS-G", dlssg_text.c_str(), kUiMuted);
-      StatusRow("DLSS Super Resolution", super_resolution_preset.c_str(),
+      StatusRow(T(Str::kDlssSuperResolution_aa9a), super_resolution_preset.c_str(),
                 kUiMuted);
-      StatusRow("DLSS Frame Generation", frame_generation_preset.c_str(),
+      StatusRow(T(Str::kDlssFrameGeneration_d8a8), frame_generation_preset.c_str(),
                 kUiMuted);
-      StatusRow("DLSS Ray Reconstruction",
+      StatusRow(T(Str::kDlssRayReconstruction_7071),
                 ray_reconstruction_preset.c_str(), kUiMuted);
-      StatusRow("HDR", hdr_seen ? (hdr_active ? "Yes" : "No") : "Unknown",
+      StatusRow("HDR", hdr_seen ? (hdr_active ? T(Str::kYes_3630) : T(Str::kNo_be1a)) : T(Str::kUnknown_0e59),
                 kUiMuted);
       const std::string diagnostic_sync =
           !sleep_status_available
-              ? "Not reported"
+              ? T(Str::kNotReported_055d)
               : (driver_vsync_active && gsync_active
-                     ? "Driver VSync + G-SYNC active"
+                     ? T(Str::kDriverVsyncGSyncActive_1e98)
                      : (driver_vsync_active
-                            ? "Driver VSync active"
-                            : (gsync_active ? "G-SYNC active"
-                                            : "Inactive")));
-      StatusRow("Driver sync", diagnostic_sync.c_str(), kUiMuted);
-      StatusRow("Dynamic MFG VSync API",
+                            ? T(Str::kDriverVsyncActive_d54c)
+                            : (gsync_active ? T(Str::kGSyncActive_351c)
+                                            : T(Str::kInactive_ca78))));
+      StatusRow(T(Str::kDriverSync_0c02), diagnostic_sync.c_str(), kUiMuted);
+      StatusRow(T(Str::kDynamicMfgVsyncApi_1b73),
                 !mfgunlock::framecount::g_vsync_support_seen.load(
                      std::memory_order_acquire)
-                    ? "Not reported"
+                    ? T(Str::kNotReported_055d)
                     : (mfgunlock::framecount::g_vsync_supported.load(
                            std::memory_order_relaxed)
-                           ? "Supported by active runtime"
-                           : "Not supported by active runtime"),
+                           ? T(Str::kSupportedByActiveRuntime_dba0)
+                           : T(Str::kNotSupportedByActiveRuntime_0801)),
                 kUiMuted);
       ImGui::EndTable();
     }
     TextDisabledWrapped(
-        "This reports the Streamline/DLSS-G Dynamic interface, not whether driver VSync is enabled.");
+        T(Str::kThisReportsTheStreamlineDlss_5348));
 
     ImGui::Spacing();
     ImGui::TextDisabled("MFG");
@@ -127,36 +125,36 @@
                               ImGuiTableFlags_RowBg)) {
       const std::string game_request_text =
           game_request_seen ? std::to_string(game_multiplier) + "x"
-                            : "Not observed";
+                            : T(Str::kNotObserved_db92);
       const std::string effective_text =
           effective_seen ? std::to_string(effective_multiplier) + "x"
-                         : "Not observed";
-      StatusRow("Game request", game_request_text.c_str(), kUiMuted);
-      StatusRow("Effective request", effective_text.c_str(), kUiMuted);
+                         : T(Str::kNotObserved_db92);
+      StatusRow(T(Str::kGameRequest_3cf2), game_request_text.c_str(), kUiMuted);
+      StatusRow(T(Str::kEffectiveRequest_2b9b), effective_text.c_str(), kUiMuted);
       const std::string actual_text =
           state_seen
               ? std::to_string(mfgunlock::framecount::g_actual_frames_presented.load(
                     std::memory_order_relaxed))
-              : "No sample";
+              : T(Str::kNoSample_2a1c);
       const std::string live_multiplier =
           driver_multiplier >= 2
               ? std::to_string(driver_multiplier) + "x live"
-              : "Not reported";
-      StatusRow("Driver live multiplier", live_multiplier.c_str(),
+              : T(Str::kNotReported_055d);
+      StatusRow(T(Str::kDriverLiveMultiplier_65b6), live_multiplier.c_str(),
                 driver_multiplier >= 2 ? kUiPositive : kUiMuted);
-      StatusRow("Provider presentations", actual_text.c_str(),
+      StatusRow(T(Str::kProviderPresentations_eddd), actual_text.c_str(),
                 mfg_confirmed ? kUiPositive : kUiMuted);
-      StatusRow("Validation evidence", validation_text.c_str(),
+      StatusRow(T(Str::kValidationEvidence_9bbf), validation_text.c_str(),
                 runtime_error
                     ? kUiError
                     : (request_rejected
                            ? kUiWarning
                            : (mfg_request_accepted ? kUiPositive : kUiMuted)));
-      StatusRow("Dynamic MFG",
+      StatusRow(T(Str::kDynamicMfg_4fba),
                 mfgunlock::framecount::g_dynamic_applied.load(
                     std::memory_order_relaxed)
-                    ? "Active"
-                    : (dynamic_available ? "Available" : "Inactive"),
+                    ? T(Str::kActive_134f)
+                    : (dynamic_available ? T(Str::kAvailable_2638) : T(Str::kInactive_ca78)),
                 kUiMuted);
       const auto source_cap_state =
           mfgunlock::framecount::internal::ResolveUserSourceCapState();
@@ -164,7 +162,7 @@
           std::to_string(source_cap_state.configured_fps) +
           " final/output FPS; " +
           UserSourceCapStatusText(source_cap_state.status);
-      StatusRow("Output FPS cap", source_cap_value.c_str(),
+      StatusRow(T(Str::kOutputFpsCap_dfcf), source_cap_value.c_str(),
                 UserSourceCapColor(source_cap_state.status));
       std::ostringstream source_cap_intervals;
       source_cap_intervals << "requested "
@@ -173,10 +171,10 @@
                            << source_cap_state.native_limit_us
                            << " us; effective "
                            << source_cap_state.effective_limit_us << " us";
-      StatusRow("Reflex cap intervals", source_cap_intervals.str().c_str(),
+      StatusRow(T(Str::kReflexCapIntervals_2215), source_cap_intervals.str().c_str(),
                 kUiMuted);
       StatusRow(
-          "Cap configuration source",
+          T(Str::kCapConfigurationSource_3732),
           SourceCapConfigOriginText(
               static_cast<mfgunlock::pacing::SourceCapConfigOrigin>(
                   g_source_cap_config_origin.load(
@@ -185,26 +183,26 @@
       ImGui::EndTable();
     }
     TextDisabledWrapped(
-        "Evidence is layered: an accepted request, a driver-live multiplier and provider output are separate observations.");
+        T(Str::kEvidenceIsLayeredAnAccepted_8cc1));
     HelpMarker(
-        "ReShade's FPS counter and many overlays can report game/source Presents rather than frames scanned out after DLSS-G. Estimated output FPS is never treated as a measured result here. Use FrameView or PresentMon Displayed FPS for external confirmation.");
+        T(Str::kReshadeSFpsCounterAnd_8b19));
 
     ImGui::Spacing();
     ImGui::TextDisabled("PATCHES");
     if (ImGui::BeginTable("##patch_diagnostics", 2,
                           ImGuiTableFlags_SizingStretchProp |
                               ImGuiTableFlags_RowBg)) {
-      StatusRow("Architecture gates", gate_patched ? "Active" : "Pending",
+      StatusRow(T(Str::kArchitectureGates_b93e), gate_patched ? T(Str::kActive_134f) : T(Str::kPending_afdc),
                 gate_patched ? kUiPositive : kUiWarning);
-      StatusRow("Temporal fix",
+      StatusRow(T(Str::kTemporalFix_af0c),
                 blackwell_patched
-                    ? "Blackwell framework active"
-                    : (midpoint_patched ? "Midpoint fallback active"
-                                        : "Pending"),
+                    ? T(Str::kBlackwellFrameworkActive_a7c6)
+                    : (midpoint_patched ? T(Str::kMidpointFallbackActive_6cf5)
+                                        : T(Str::kPending_afdc)),
                 blackwell_patched || midpoint_patched ? kUiPositive
                                                       : kUiWarning);
-      StatusRow("Thin-geometry patches",
-                thin_geometry_patched ? "At least one active" : "Pending",
+      StatusRow(T(Str::kThinGeometryPatches_01c7),
+                thin_geometry_patched ? T(Str::kAtLeastOneActive_32f5) : T(Str::kPending_afdc),
                 thin_geometry_patched ? kUiPositive : kUiWarning);
       if (g_adaptive_quality.load(std::memory_order_relaxed)) {
         const auto requested_profile =
@@ -256,50 +254,50 @@
             std::string(mfgunlock::adaptivequality::ProfileName(
                 requested_profile)) +
             (adaptive_complete && all_requested_versions
-                 ? "; core components applied"
-                 : "; partial/fallback");
-        StatusRow("Adaptive Quality Suite",
+                 ? T(Str::kCoreComponentsApplied_bc5a)
+                 : T(Str::kPartialFallback_b1ce));
+        StatusRow(T(Str::kAdaptiveQualitySuite_ddc2),
                   profile_status.c_str(),
                   adaptive_complete && all_requested_versions
                       ? kUiPositive
                       : kUiWarning);
         const std::string warp_status = AdaptiveComponentStatus(
             expected_warp, warp_version, adaptive_blend);
-        StatusRow("Warp confidence", warp_status.c_str(),
+        StatusRow(T(Str::kWarpConfidence_f9e9), warp_status.c_str(),
                   AdaptiveComponentColor(expected_warp, warp_version,
                                          adaptive_blend));
         const std::string geometry_status = AdaptiveComponentStatus(
             expected_geometry, geometry_version,
             blackwell_active_result.adaptive_geometry);
-        StatusRow("Geometry confidence", geometry_status.c_str(),
+        StatusRow(T(Str::kGeometryConfidence_8c57), geometry_status.c_str(),
                   AdaptiveComponentColor(
                       expected_geometry, geometry_version,
                       blackwell_active_result.adaptive_geometry));
         if (geometry_version ==
             mfgunlock::adaptivequality::ComponentVersion::kV3) {
           StatusRow(
-              "Geometry V3 install",
+              T(Str::kGeometryV3Install_f8e7),
               blackwell_active_result.adaptive_geometry_redirected
-                  ? "Full ptxas cubin; exact fatbin redirect"
-                  : "In-place cubin",
+                  ? T(Str::kFullPtxasCubinExactFatbin_f0d1)
+                  : T(Str::kInPlaceCubin_dd15),
               blackwell_active_result.adaptive_geometry_redirected
                   ? kUiPositive
                   : kUiMuted);
-          StatusRow("Geometry V3.2 cubin",
+          StatusRow(T(Str::kGeometryV32Cubin_0f21),
                     mfgunlock::blackwell::AdaptiveGeometryVariantName(
                         blackwell_active_result.adaptive_geometry_variant),
                     blackwell_active_result.adaptive_geometry_variant ==
                             mfgunlock::blackwell::AdaptiveGeometryVariant::kTemporal
                         ? kUiPositive
                         : kUiMuted);
-          StatusRow("Geometry V3.2 ptxas",
-                    "40 registers; 0 spills/local; 7,776 B shared",
+          StatusRow(T(Str::kGeometryV32Ptxas_7bb8),
+                    T(Str::k40Registers0SpillsLocal_9780),
                     kUiPositive);
         }
         const std::string inpaint_status = AdaptiveComponentStatus(
             expected_inpaint, inpaint_version,
             blackwell_active_result.adaptive_inpaint_decision);
-        StatusRow("Inpaint decision", inpaint_status.c_str(),
+        StatusRow(T(Str::kInpaintDecision_acac), inpaint_status.c_str(),
                   AdaptiveComponentColor(
                       expected_inpaint, inpaint_version,
                       blackwell_active_result.adaptive_inpaint_decision));
@@ -308,14 +306,14 @@
           const char* requested_inpaint =
               requested_inpaint_mode ==
                       mfgunlock::cudatemporal::InpaintMode::kTemporal
-                  ? "Temporal V3"
+                  ? T(Str::kTemporalV3_ae9a)
                   : requested_inpaint_mode ==
                             mfgunlock::cudatemporal::InpaintMode::kLocal
-                        ? "Local V3"
-                        : "V2 Compatibility";
-          StatusRow("Inpaint V3.4 requested", requested_inpaint, kUiMuted);
+                        ? T(Str::kLocalV3_9cfb)
+                        : T(Str::kV2Compatibility_5ad9);
+          StatusRow(T(Str::kInpaintV34Requested_16df), requested_inpaint, kUiMuted);
           StatusRow(
-              "Inpaint V3.4 cubin",
+              T(Str::kInpaintV34Cubin_0d5a),
               mfgunlock::blackwell::AdaptiveInpaintVariantName(
                   blackwell_active_result.adaptive_inpaint_variant),
               blackwell_active_result.adaptive_inpaint_variant ==
@@ -329,7 +327,7 @@
               mfgunlock::cudatemporal::InpaintDetail();
 #endif
           StatusRow(
-              "Inpaint V3.4 effective", inpaint_temporal_detail.c_str(),
+              T(Str::kInpaintV34Effective_f956), inpaint_temporal_detail.c_str(),
 #if defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
               kUiMuted);
 #else
@@ -345,41 +343,41 @@
         if (requested_profile ==
             mfgunlock::adaptivequality::Profile::kLuminanceDirectionalV3) {
           StatusRow(
-              "V3 photometric A/B",
+              T(Str::kV3PhotometricAB_a8a0),
               g_adaptive_quality_v3_photometric.load(
                       std::memory_order_relaxed)
-                  ? "Relative luma/chroma enabled"
-                  : "Disabled; using V2 absolute RGB",
+                  ? T(Str::kRelativeLumaChromaEnabled_e1e0)
+                  : T(Str::kDisabledUsingV2AbsoluteRgb_d400),
               kUiMuted);
           StatusRow(
-              "V3 border A/B",
+              T(Str::kV3BorderAB_be92),
               g_adaptive_quality_v3_directional_border.load(
                       std::memory_order_relaxed)
-                  ? "Motion-directional taper enabled"
-                  : "Disabled; using V2 symmetric taper",
+                  ? T(Str::kMotionDirectionalTaperEnabled_8511)
+                  : T(Str::kDisabledUsingV2SymmetricTaper_63f7),
               kUiMuted);
           StatusRow(
-              "V3 geometry A/B",
+              T(Str::kV3GeometryAB_b2c8),
               g_adaptive_quality_v3_oriented_geometry.load(
                       std::memory_order_relaxed)
-                  ? "Motion-oriented diagonals enabled"
-                  : "Disabled; requesting geometry V2",
+                  ? T(Str::kMotionOrientedDiagonalsEnabled_675f)
+                  : T(Str::kDisabledRequestingGeometryV2_a701),
               kUiMuted);
         }
-        StatusRow("Directional scatter",
+        StatusRow(T(Str::kDirectionalScatter_3101),
                   blackwell_active_result.adaptive_directional_scatter
-                      ? "Native motion-adaptive coverage retained"
-                      : "Baseline",
+                      ? T(Str::kNativeMotionAdaptiveCoverageRetained_830b)
+                      : T(Str::kBaseline_9a62),
                   kUiMuted);
         const auto stability_mode = mfgunlock::cudatemporal::NormalizeMode(
             g_adaptive_quality_v3_stability_mode.load(
                 std::memory_order_relaxed));
         StatusRow(
-            "V3.2 stability requested",
+            T(Str::kV32StabilityRequested_3d5d),
             stability_mode ==
                     mfgunlock::cudatemporal::StabilityMode::kTemporal
-                ? "Temporal Stable"
-                : "Local Stable",
+                ? T(Str::kTemporalStable_c082)
+                : T(Str::kLocalStable_282b),
             kUiMuted);
         const std::string temporal_detail =
 #if defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
@@ -388,28 +386,28 @@
             mfgunlock::cudatemporal::Detail();
 #endif
         StatusRow(
-            "V3.2 stability effective", temporal_detail.c_str(),
+            T(Str::kV32StabilityEffective_0eec), temporal_detail.c_str(),
 #if defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
             kUiMuted);
 #if defined(MFGUNLOCK_LOCAL_STABILITY)
 #if defined(MFGUNLOCK_RELEASE_1_4_5)
-        StatusRow("Build", "Release 1.4.5 Engineering; gameplay validation pending", kUiWarning);
+        StatusRow(T(Str::kBuild_7543), T(Str::kRelease145Engineering_3ab6), kUiWarning);
 #elif defined(MFGUNLOCK_ENGINEERING_EXPERIMENTAL)
-        StatusRow("Build", "Experimental 1.4.4 Engineering; gameplay validation pending", kUiWarning);
+        StatusRow(T(Str::kBuild_7543), T(Str::kExperimental144Engineering_2668), kUiWarning);
 #elif defined(MFGUNLOCK_RELEASE_1_4_4)
-        StatusRow("Build", "Release 1.4.4; DLSS-G 310.9.16 + Streamline 2.14.16 hotfix", kUiPositive);
+        StatusRow(T(Str::kBuild_7543), T(Str::kRelease144Dlss_4d21), kUiPositive);
 #elif defined(MFGUNLOCK_RELEASE_1_4_3)
-        StatusRow("Build", "Release 1.4.3; continuous border axes + paired diagonals", kUiPositive);
+        StatusRow(T(Str::kBuild_7543), T(Str::kRelease143Continuous_defb), kUiPositive);
 #elif defined(MFGUNLOCK_CONTINUOUS_BORDER_AXES)
-        StatusRow("Build", "1.4.2-base; continuous-axis border candidate; in-game validation pending", kUiMuted);
+        StatusRow(T(Str::kBuild_7543), T(Str::k142BaseContinuous_5eca), kUiMuted);
 #else
-        StatusRow("Build", "Release 1.4.2; continuous borders + paired diagonals", kUiPositive);
+        StatusRow(T(Str::kBuild_7543), T(Str::kRelease142Continuous_52aa), kUiPositive);
 #endif
 #else
-        StatusRow("Build", "Local low-overhead; no V3 inpaint or confidence history", kUiPositive);
+        StatusRow(T(Str::kBuild_7543), T(Str::kLocalLowOverheadNoV3_d0ee), kUiPositive);
 #endif
-        StatusRow("Temporal backend", "Disabled by build; 0 B history; no self-test or barriers", kUiMuted);
-        StatusRow("CUDA hook fast path", "Not installed; no CUDA/NVAPI launch interception", kUiMuted);
+        StatusRow(T(Str::kTemporalBackend_0243), T(Str::kDisabledByBuild0B_77f3), kUiMuted);
+        StatusRow(T(Str::kCudaHookFastPath_b6e4), T(Str::kNotInstalledNoCudaNvapi_a795), kUiMuted);
 #else
             mfgunlock::cudatemporal::g_temporal_active.load(
                     std::memory_order_acquire)
@@ -419,13 +417,13 @@
                        ? kUiWarning
                        : kUiMuted));
         StatusRow(
-            "CUDA hook fast path",
+            T(Str::kCudaHookFastPath_b6e4),
             mfgunlock::cudatemporal::FastPathReady()
-                ? "Active; atomic CUfunction compare only for non-target kernels"
+                ? T(Str::kActiveAtomicCufunctionCompareOnly_81ae)
                 : (mfgunlock::cudatemporal::g_hooked.load(
                            std::memory_order_acquire)
-                       ? "Hook installed; target association pending"
-                       : "Inactive"),
+                       ? T(Str::kHookInstalledTargetAssociationPending_b312)
+                       : T(Str::kInactive_ca78)),
             mfgunlock::cudatemporal::FastPathReady() ? kUiPositive
                                                      : kUiMuted);
 #endif
@@ -445,7 +443,7 @@
                          << mfgunlock::cudatemporal::g_history_multiplier.load(
                                 std::memory_order_relaxed)
                          << 'x';
-          StatusRow("V3.2 confidence history",
+          StatusRow(T(Str::kV32ConfidenceHistory_baf6),
                     history_status.str().c_str(), kUiMuted);
         }
         if (mfgunlock::cudatemporal::g_inpaint_history_bytes.load(
@@ -464,38 +462,38 @@
               << " / 96 MiB; resets "
               << mfgunlock::cudatemporal::g_history_resets.load(
                      std::memory_order_relaxed);
-          StatusRow("V3.4 inpaint history",
+          StatusRow(T(Str::kV34InpaintHistory_95bd),
                     inpaint_history.str().c_str(), kUiMuted);
         }
       }
       if (!g_adaptive_quality.load(std::memory_order_relaxed)) {
-        StatusRow("Geometry confidence V2",
+        StatusRow(T(Str::kGeometryConfidenceV2_ddd1),
                   !g_geometry_confidence_v2.load(std::memory_order_relaxed)
-                      ? "Off"
+                      ? T(Str::kOff_b4aa)
                       : (!g_quality_refinement.load(std::memory_order_relaxed)
-                             ? "Requires Quality Refinement"
+                             ? T(Str::kRequiresQualityRefinement_3cad)
                              : (g_silhouette_guard_mode.load(std::memory_order_relaxed) !=
                                         static_cast<unsigned int>(mfgunlock::blackwell::SilhouetteGuardMode::Balanced)
-                                    ? "Requires Balanced boundary mode"
+                                    ? T(Str::kRequiresBalancedBoundaryMode_75a6)
                                     : (thin_geometry_last.geometry_confidence_v2_applied
-                                           ? "Patch applied; visual test pending"
-                                           : "Requested; V1/fallback or no patch"))),
+                                           ? T(Str::kPatchAppliedVisualTestPending_48da)
+                                           : T(Str::kRequestedV1FallbackOrNo_28fa)))),
                   kUiMuted);
-        StatusRow("Border confidence trial",
+        StatusRow(T(Str::kBorderConfidenceTrial_9239),
                   !g_border_confidence.load(std::memory_order_relaxed)
-                      ? "Off"
+                      ? T(Str::kOff_b4aa)
                       : (!g_quality_refinement.load(std::memory_order_relaxed)
-                             ? "Requires Quality Refinement"
+                             ? T(Str::kRequiresQualityRefinement_3cad)
                              : (!thin_geometry_last.result.validated_warp_blend.applied
-                                    ? "Requested; blend not applied"
-                                    : "Patch applied; visual test pending")),
+                                    ? T(Str::kRequestedBlendNotApplied_8323)
+                                    : T(Str::kPatchAppliedVisualTestPending_48da))),
                   kUiMuted);
       }
       if (!g_adaptive_quality.load(std::memory_order_relaxed) &&
           thin_geometry_provider_count != 0) {
         const auto mechanism_state = [](const auto& result) {
-          return !result.requested ? "Not requested"
-                                   : (result.applied ? "Active" : "Not applied");
+          return !result.requested ? T(Str::kNotRequested_77b2)
+                                   : (result.applied ? T(Str::kActive_134f) : T(Str::kNotApplied_8bd7));
         };
         const bool intermediate_superseded =
             g_thin_geometry_intermediate_scatter.load(
@@ -504,37 +502,37 @@
              g_silhouette_guard_mode.load(std::memory_order_relaxed) !=
                 static_cast<unsigned int>(
                     mfgunlock::blackwell::SilhouetteGuardMode::Off));
-        StatusRow("Intermediate retention",
+        StatusRow(T(Str::kIntermediateRetention_d23e),
                   intermediate_superseded
-                      ? "Superseded by Boundary mitigation"
+                      ? T(Str::kSupersededByBoundaryMitigation_383f)
                       : mechanism_state(
                             thin_geometry_last.intermediate_scatter),
                   thin_geometry_last.intermediate_scatter.applied
                       ? kUiPositive
                       : kUiMuted);
-        StatusRow("Boundary mitigation",
+        StatusRow(T(Str::kBoundaryMitigation_c312),
                   mechanism_state(
                       thin_geometry_last.silhouette_boundary_guard),
                   thin_geometry_last.silhouette_boundary_guard.applied
                       ? kUiPositive
                       : kUiMuted);
-        StatusRow("Validated warp blend",
+        StatusRow(T(Str::kValidatedWarpBlend_ea4a),
                   mechanism_state(
                       thin_geometry_last.result.validated_warp_blend),
                   thin_geometry_last.result.validated_warp_blend.applied
                       ? kUiPositive
                       : kUiMuted);
-        StatusRow("Previous scatter",
+        StatusRow(T(Str::kPreviousScatter_c6f6),
                   mechanism_state(thin_geometry_last.result.previous_scatter),
                   thin_geometry_last.result.previous_scatter.applied
                       ? kUiPositive
                       : kUiMuted);
       }
-      StatusRow("Input Quality Guard",
+      StatusRow(T(Str::kInputQualityGuard_57cf),
                 mfgunlock::framecount::g_hud_inputs_suppressed.load(
                     std::memory_order_relaxed)
-                    ? "Filtered incompatible input"
-                    : "No filtering reported",
+                    ? T(Str::kFilteredIncompatibleInput_edb7)
+                    : T(Str::kNoFilteringReported_d5cb),
                 kUiMuted);
       const unsigned int tracked_viewports =
           mfgunlock::framecount::g_quality_viewport_count.load(
@@ -545,8 +543,8 @@
       const std::string viewport_text =
           std::to_string(tracked_viewports) + " / " +
           std::to_string(mfgunlock::framecount::kMaxQualityViewports) +
-          (viewport_capacity_exhausted ? "; capacity exhausted" : " tracked");
-      StatusRow("Quality Guard viewports", viewport_text.c_str(),
+          (viewport_capacity_exhausted ? T(Str::kCapacityExhausted_00b1) : T(Str::kTracked_bdcf));
+      StatusRow(T(Str::kQualityGuardViewports_348c), viewport_text.c_str(),
                 viewport_capacity_exhausted ? kUiWarning : kUiMuted);
       const auto tag_lock_contentions =
           mfgunlock::framecount::g_quality_tag_lock_contentions.load(
@@ -554,24 +552,24 @@
       const std::string contention_text =
           std::to_string(tag_lock_contentions) +
           " non-blocking fallback(s)";
-      StatusRow("Quality Guard contention", contention_text.c_str(),
+      StatusRow(T(Str::kQualityGuardContention_cb88), contention_text.c_str(),
                 tag_lock_contentions == 0 ? kUiMuted : kUiWarning);
       ImGui::EndTable();
     }
 
-    std::string intermediate_report = "Disabled";
+    std::string intermediate_report = T(Str::kDisabled_9925);
     if (g_adaptive_quality.load(std::memory_order_relaxed)) {
-      intermediate_report = "Managed by Adaptive Quality Suite";
+      intermediate_report = T(Str::kManagedByAdaptiveQualitySuite_31fe);
     } else if (g_thin_geometry_intermediate_scatter.load(
             std::memory_order_relaxed)) {
       if (g_silhouette_guard_mode.load(std::memory_order_relaxed) !=
           static_cast<unsigned int>(
               mfgunlock::blackwell::SilhouetteGuardMode::Off)) {
-        intermediate_report = "Superseded by Boundary mitigation";
+        intermediate_report = T(Str::kSupersededByBoundaryMitigation_383f);
       } else if (thin_geometry_last.intermediate_scatter.applied) {
-        intermediate_report = "Active";
+        intermediate_report = T(Str::kActive_134f);
       } else {
-        intermediate_report = "Requested; not applied";
+        intermediate_report = T(Str::kRequestedNotApplied_0b94);
       }
     }
     const auto adaptive_profile =
@@ -628,30 +626,30 @@
            << "DLSS Frame Generation: " << frame_generation_preset << '\n'
            << "DLSS Ray Reconstruction: " << ray_reconstruction_preset
            << '\n'
-           << "HDR: " << (hdr_seen ? (hdr_active ? "Yes" : "No") : "Unknown")
+           << "HDR: " << (hdr_seen ? (hdr_active ? T(Str::kYes_3630) : T(Str::kNo_be1a)) : T(Str::kUnknown_0e59))
            << '\n'
            << "Game request: "
            << (game_request_seen ? std::to_string(game_multiplier) + "x"
-                                 : "Not observed")
+                                 : T(Str::kNotObserved_db92))
            << '\n'
            << "Effective request: "
            << (effective_seen ? std::to_string(effective_multiplier) + "x"
-                              : "Not observed")
+                              : T(Str::kNotObserved_db92))
            << '\n'
            << "Driver live multiplier: "
            << (driver_multiplier >= 2
                    ? std::to_string(driver_multiplier) + "x"
-                   : "Not reported")
+                   : T(Str::kNotReported_055d))
            << '\n'
            << "Provider presentations: "
            << (state_seen ? std::to_string(observed_presentations)
-                          : "Not sampled")
+                          : T(Str::kNotSampled_9fb8))
            << '\n'
            << "Dynamic MFG: "
            << (mfgunlock::framecount::g_dynamic_applied.load(
                    std::memory_order_relaxed)
-                   ? "Active"
-                   : (dynamic_available ? "Available" : "Unavailable/Pending"))
+                   ? T(Str::kActive_134f)
+                   : (dynamic_available ? T(Str::kAvailable_2638) : "Unavailable/Pending"))
            << '\n'
            << "Dynamic target FPS: "
            << mfgunlock::framecount::g_dynamic_target_fps.load(
@@ -679,16 +677,16 @@
            << "Adaptive Quality Suite: "
            << (g_adaptive_quality.load(std::memory_order_relaxed)
                    ? mfgunlock::adaptivequality::ProfileName(adaptive_profile)
-                   : "Off") << '\n'
+                   : T(Str::kOff_b4aa)) << '\n'
            << "V3 photometric A/B: "
            << (g_adaptive_quality.load(std::memory_order_relaxed) &&
                        adaptive_profile == mfgunlock::adaptivequality::Profile::
                                                kLuminanceDirectionalV3
                    ? (g_adaptive_quality_v3_photometric.load(
                           std::memory_order_relaxed)
-                          ? "relative luma/chroma"
-                          : "disabled; V2 absolute RGB")
-                   : "inactive outside V3") << '\n'
+                          ? T(Str::kRelativeLumaChroma_b639)
+                          : T(Str::kDisabledV2AbsoluteRgb_39c0))
+                   : T(Str::kInactiveOutsideV3_eece)) << '\n'
            << "V3 border A/B: "
            << (g_adaptive_quality.load(std::memory_order_relaxed) &&
                        adaptive_profile == mfgunlock::adaptivequality::Profile::
@@ -696,31 +694,31 @@
                    ? (g_adaptive_quality_v3_directional_border.load(
                           std::memory_order_relaxed)
                           ? "motion-directional"
-                          : "disabled; V2 symmetric")
-                   : "inactive outside V3") << '\n'
+                          : T(Str::kDisabledV2Symmetric_8fe5))
+                   : T(Str::kInactiveOutsideV3_eece)) << '\n'
            << "V3 geometry A/B: "
            << (g_adaptive_quality.load(std::memory_order_relaxed) &&
                        adaptive_profile == mfgunlock::adaptivequality::Profile::
                                                kLuminanceDirectionalV3
                    ? (g_adaptive_quality_v3_oriented_geometry.load(
                           std::memory_order_relaxed)
-                          ? "motion-oriented diagonals"
-                          : "disabled; V2 geometry")
-                   : "inactive outside V3") << '\n'
+                          ? T(Str::kMotionOrientedDiagonals_4e66)
+                          : T(Str::kDisabledV2Geometry_cdce))
+                   : T(Str::kInactiveOutsideV3_eece)) << '\n'
            << "Adaptive warp confidence: "
            << adaptive_warp_report << '\n'
            << "Adaptive geometry confidence: "
            << adaptive_geometry_report << '\n'
            << "Geometry V3 install: "
            << (blackwell_active_result.adaptive_geometry_redirected
-                   ? "Full ptxas cubin; exact fatbin descriptor redirect"
-                   : "No oversized redirect active") << '\n'
+                   ? T(Str::kFullPtxasCubinExactFatbin_d108)
+                   : T(Str::kNoOversizedRedirectActive_2429)) << '\n'
            << "Geometry V3.2 cubin: "
            << mfgunlock::blackwell::AdaptiveGeometryVariantName(
                   blackwell_active_result.adaptive_geometry_variant)
            << (blackwell_active_result.adaptive_geometry_variant ==
                        mfgunlock::blackwell::AdaptiveGeometryVariant::kTemporal
-                   ? "; 40 registers; 7,776 B shared; zero stack/spill/local; .text=41,216 B; 8 global loads (2 u8) + 2 u8 stores"
+                   ? T(Str::k40Registers7776B_478b)
                    : blackwell_active_result.adaptive_geometry_variant ==
                              mfgunlock::blackwell::AdaptiveGeometryVariant::kLocal
                          ? "; 40 registers; 7,776 B shared; zero stack/spill/local; .text="
@@ -729,29 +727,29 @@
 #else
                            "39,552 B; zero global loads/stores"
 #endif
-                         : "; resource audit unavailable for fallback/native")
+                         : T(Str::kResourceAuditUnavailableForFallback_0e54))
            << '\n'
            << "Adaptive inpaint decision: "
            << adaptive_inpaint_report << '\n'
            << "Inpaint V3.4 requested: "
            << (requested_inpaint_mode ==
                        mfgunlock::cudatemporal::InpaintMode::kTemporal
-                   ? "Temporal V3"
+                   ? T(Str::kTemporalV3_ae9a)
                    : requested_inpaint_mode ==
                              mfgunlock::cudatemporal::InpaintMode::kLocal
-                         ? "Local V3"
-                         : "V2 Compatibility")
+                         ? T(Str::kLocalV3_9cfb)
+                         : T(Str::kV2Compatibility_5ad9))
            << '\n'
            << "Inpaint V3.4 cubin: "
            << mfgunlock::blackwell::AdaptiveInpaintVariantName(
                   blackwell_active_result.adaptive_inpaint_variant)
            << (blackwell_active_result.adaptive_inpaint_variant ==
                        mfgunlock::blackwell::AdaptiveInpaintVariant::kTemporal
-                   ? "; ABI 152 bytes; 48 registers; 784 B shared; zero stack/spill/local; .text=10,368 B; one u8 history load + one u8 store"
+                   ? T(Str::kAbi152Bytes48Registers_e3cf)
                    : blackwell_active_result.adaptive_inpaint_variant ==
                              mfgunlock::blackwell::AdaptiveInpaintVariant::kLocal
-                         ? "; 48 registers; 784 B shared; zero stack/spill/local; .text=9,344 B; zero global history access"
-                         : "; compatibility/fallback resources")
+                         ? T(Str::k48Registers784BShared_db2a)
+                         : T(Str::kCompatibilityFallbackResources_b94c))
            << '\n'
            << "Inpaint V3.4 effective: "
 #if defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
@@ -775,15 +773,15 @@
 #endif
            << "Directional scatter: "
            << (blackwell_active_result.adaptive_directional_scatter
-                   ? "Provider-native signed coverage retained"
-                   : "Baseline") << '\n'
+                   ? T(Str::kProviderNativeSignedCoverageRetained_f0ea)
+                   : T(Str::kBaseline_9a62)) << '\n'
            << "V3.2 Stability requested: "
            << (mfgunlock::cudatemporal::NormalizeMode(
                        g_adaptive_quality_v3_stability_mode.load(
                            std::memory_order_relaxed)) ==
                        mfgunlock::cudatemporal::StabilityMode::kTemporal
-                   ? "Temporal Stable"
-                   : "Local Stable") << '\n'
+                   ? T(Str::kTemporalStable_c082)
+                   : T(Str::kLocalStable_282b)) << '\n'
            << "V3.2 Stability effective: "
 #if defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
            << "History disabled; dedicated Local cubin requested (see installed variant above)" << '\n'
@@ -807,7 +805,7 @@
 #else
            << (g_adaptive_quality.load(std::memory_order_relaxed)
                    ? mfgunlock::cudatemporal::Detail()
-                   : "Off") << '\n'
+                   : T(Str::kOff_b4aa)) << '\n'
            << "V3.2 CUDA probe: launches="
            << mfgunlock::cudatemporal::g_probe_launches.load(
                   std::memory_order_relaxed)
@@ -819,36 +817,36 @@
                   std::memory_order_relaxed) << '\n'
            << "V3.2 CUDA hook fast path: "
            << (mfgunlock::cudatemporal::FastPathReady()
-                   ? "active; one immutable dispatch-table atomic load for non-target kernels"
-                   : "inactive/target association pending")
+                   ? T(Str::kActiveOneImmutableDispatchTable_3b58)
+                   : T(Str::kInactiveTargetAssociationPending_c1cc))
            << '\n'
 #endif
            << "Quality refinement requested this session: "
            << (g_adaptive_quality.load(std::memory_order_relaxed)
-                   ? "Legacy setting ignored; managed by Adaptive Quality"
+                   ? T(Str::kLegacySettingIgnoredManagedBy_d0b8)
                    : (g_quality_refinement.load(std::memory_order_relaxed)
-                          ? "Yes (check patch details)"
-                          : "No")) << '\n'
+                          ? T(Str::kYesCheckPatchDetails_6743)
+                          : T(Str::kNo_be1a))) << '\n'
            << "Geometry confidence V2: "
            << (g_adaptive_quality.load(std::memory_order_relaxed)
-                   ? "Integrated asymmetric successor managed by Adaptive Quality"
+                   ? T(Str::kIntegratedAsymmetricSuccessorManagedBy_6b45)
                    : (g_geometry_confidence_v2.load(std::memory_order_relaxed)
                    ? (thin_geometry_last.geometry_confidence_v2_applied
-                          ? "Patch applied; execution unverified"
-                          : "Requested; V1/fallback or no patch")
-                   : "Off")) << '\n'
+                          ? T(Str::kPatchAppliedExecutionUnverified_d57a)
+                          : T(Str::kRequestedV1FallbackOrNo_28fa))
+                   : T(Str::kOff_b4aa))) << '\n'
            << "Geometry patch detail: "
            << thin_geometry_last.silhouette_boundary_guard.detail << '\n'
            << "Border confidence trial: "
            << (g_adaptive_quality.load(std::memory_order_relaxed)
-                   ? "Integrated and managed by Adaptive Quality"
+                   ? T(Str::kIntegratedAndManagedByAdaptive_fc4c)
                    : (g_border_confidence.load(std::memory_order_relaxed)
                    ? (!g_quality_refinement.load(std::memory_order_relaxed)
-                          ? "Requires Quality Refinement"
+                          ? T(Str::kRequiresQualityRefinement_3cad)
                           : (thin_geometry_last.result.validated_warp_blend.applied
-                                 ? "Patch applied; execution unverified"
-                                 : "Requested; blend not applied"))
-                   : "Off")) << '\n'
+                                 ? T(Str::kPatchAppliedExecutionUnverified_d57a)
+                                 : T(Str::kRequestedBlendNotApplied_8323)))
+                   : T(Str::kOff_b4aa))) << '\n'
            << "Reflex marker health: "
            << MarkerHealthText(static_cast<mfgunlock::pacing::MarkerHealth>(
                   latency_view.marker_health))
@@ -892,9 +890,9 @@
            << '\n'
            << "Independent flip: "
            << (!latency_view.iflip_known
-                   ? "Not reported"
+                   ? T(Str::kNotReported_055d)
                    : (latency_view.iflip_active
-                          ? "Active" : "Inactive"))
+                          ? T(Str::kActive_134f) : T(Str::kInactive_ca78)))
            << '\n'
            << "Latency monitor sample cost (us): "
            << latency_view.sample_cost_us
@@ -945,17 +943,17 @@
            << '\n'
            << "DXGI frame-latency policy: "
            << (render_api == DetectedRenderApi::kVulkan
-                   ? "unavailable on Vulkan"
+                   ? T(Str::kUnavailableOnVulkan_345d)
                    : (g_latency_guard_dxgi_observed.load(std::memory_order_acquire)
                    ? (g_latency_guard_waitable_swapchain.load(
                               std::memory_order_relaxed)
                           ? "waitable"
-                          : "No waitable object observed")
-                   : "not observed"))
+                          : T(Str::kNoWaitableObjectObserved_3c0a))
+                   : T(Str::kNotObserved_a072)))
            << '\n'
            << "Process local VRAM usage/budget: "
            << (render_api == DetectedRenderApi::kVulkan
-                   ? std::string("DXGI budget unavailable on Vulkan")
+                   ? std::string(T(Str::kDxgiBudgetUnavailableOnVulkan_87a0))
                    : std::to_string(
                          g_vram_local_usage.load(std::memory_order_relaxed)) +
                          "/" +
@@ -989,7 +987,7 @@
            << '/' << mfgunlock::framecount::kMaxQualityViewports
            << (mfgunlock::framecount::g_quality_viewport_capacity_exhausted.load(
                        std::memory_order_acquire)
-                   ? " (capacity exhausted)" : "")
+                   ? T(Str::kCapacityExhausted_b949) : "")
            << '\n'
            << "Quality Guard tag-lock contention fallbacks: "
            << mfgunlock::framecount::g_quality_tag_lock_contentions.load(
@@ -997,10 +995,10 @@
            << '\n'
            << "Validation evidence: " << ValidationStageName(validation_stage)
            << " -- " << validation_text << '\n'
-           << "Architecture gates: " << (gate_patched ? "Active" : "Pending")
+           << "Architecture gates: " << (gate_patched ? T(Str::kActive_134f) : T(Str::kPending_afdc))
            << " (providers " << gate_provider_count << ", sites "
            << gate_site_count << ")\n"
-           << "Blackwell kernels: " << (blackwell_patched ? "Active" : "Inactive")
+           << "Blackwell kernels: " << (blackwell_patched ? T(Str::kActive_134f) : T(Str::kInactive_ca78))
            << "\nBlackwell targeted roles: motion-vector "
            << (blackwell_active_result.motion_vector ? "yes" : "no")
            << ", inpaint "
@@ -1008,14 +1006,14 @@
            << ", decision "
            << (blackwell_active_result.inpaint_decision ? "yes" : "no")
            << "; patched slots " << blackwell_active_result.kernels
-           << "\nTemporal fallback: " << (midpoint_patched ? "Active" : "Inactive")
+           << "\nTemporal fallback: " << (midpoint_patched ? T(Str::kActive_134f) : T(Str::kInactive_ca78))
            << "\nThin-geometry patches: "
-           << (thin_geometry_patched ? "Active" : "Inactive/Pending") << '\n'
+           << (thin_geometry_patched ? T(Str::kActive_134f) : "Inactive/Pending") << '\n'
            << "Intermediate retention: " << intermediate_report
            << '\n'
            << "Boundary mitigation: "
            << (g_adaptive_quality.load(std::memory_order_relaxed)
-                   ? "balanced (selected by Adaptive Quality Suite)"
+                   ? T(Str::kBalancedSelectedByAdaptiveQuality_18b3)
                    : mfgunlock::blackwell::SilhouetteGuardName(
                          static_cast<mfgunlock::blackwell::SilhouetteGuardMode>(
                              g_silhouette_guard_mode.load(
@@ -1025,24 +1023,24 @@
            << ((g_adaptive_quality.load(std::memory_order_relaxed) ||
                 g_thin_geometry_validated_warp_blend.load(
                     std::memory_order_relaxed))
-                   ? "Enabled"
-                   : "Disabled")
+                   ? T(Str::kEnabled_e43e)
+                   : T(Str::kDisabled_9925))
            << " (" << thin_geometry_last.result.validated_warp_blend.detail
            << ")"
            << '\n'
            << "Previous scatter retention: "
            << (g_adaptive_quality.load(std::memory_order_relaxed)
-                   ? "Disabled by Adaptive Quality Suite; saved preference preserved"
+                   ? T(Str::kDisabledByAdaptiveQualitySuite_725e)
                    : (g_thin_geometry_previous_scatter.load(
                           std::memory_order_relaxed)
-                          ? "Enabled"
-                          : "Disabled"))
+                          ? T(Str::kEnabled_e43e)
+                          : T(Str::kDisabled_9925)))
            << '\n';
-    if (ImGui::Button("Copy diagnostics")) {
+    if (ImGui::Button(T(Str::kCopyDiagnostics_ef00))) {
       ImGui::SetClipboardText(report.str().c_str());
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("No local paths or credentials are included.");
+    ImGui::TextDisabled(T(Str::kNoLocalPathsOrCredentials_be08));
 
 
     if (blackwell_patched) {
@@ -1072,19 +1070,19 @@
         TextDisabledWrapped(rejected.c_str());
       }
     } else if (!blackwell_detail.empty()) {
-      ImGui::TextWrapped("Blackwell: %s", blackwell_detail.c_str());
+      ImGui::TextWrapped(T(Str::kBlackwellS_338e), blackwell_detail.c_str());
     }
     if (!midpoint_detail.empty())
-      ImGui::TextWrapped("Temporal: %s", midpoint_detail.c_str());
+      ImGui::TextWrapped(T(Str::kTemporalS_65dd), midpoint_detail.c_str());
     ImGui::TextDisabled(
-        "Providers: gates %zu, Blackwell %zu, temporal %zu, quality %zu.",
+        T(Str::kProvidersGatesZuBlackwellZu_81e3),
         gate_provider_count, blackwell_provider_count,
         midpoint_provider_count, thin_geometry_provider_count);
-    ImGui::TextDisabled("Load trigger: %s; caught %u provider load(s).",
+    ImGui::TextDisabled(T(Str::kLoadTriggerSCaughtU_d8bf),
                         mfgunlock::loadhook::g_hooked.load(
                             std::memory_order_acquire)
                             ? "armed"
-                            : "not installed",
+                            : T(Str::kNotInstalled_200c),
                         mfgunlock::loadhook::g_catches.load(
                             std::memory_order_relaxed));
 

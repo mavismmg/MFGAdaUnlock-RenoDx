@@ -24,21 +24,21 @@ std::string Utf8(const std::wstring& w) {
 }
 std::string Resource(unsigned id) {
   const auto resource=FindResourceW(self,MAKEINTRESOURCEW(id),RT_RCDATA);
-  if(!resource) throw std::runtime_error("Repair resources are unavailable. Use the local candidate package's helper.");
+  if(!resource) throw std::runtime_error(T(Str::kRepairResourcesAreUnavailableUse_0cd3));
   const auto size=SizeofResource(self,resource); const auto bytes=LockResource(LoadResource(self,resource));
-  if(!bytes || !size) throw std::runtime_error("Repair resource could not be read.");
+  if(!bytes || !size) throw std::runtime_error(T(Str::kRepairResourceCouldNotBe_162b));
   return std::string(static_cast<const char*>(bytes),size);
 }
 std::string Hash(const std::filesystem::path& path) {
   std::ifstream input(path,std::ios::binary); if(!input) throw std::runtime_error("Cannot read the dependency file.");
   sha256_util::Hasher hash; std::array<char,65536> buffer{};
-  while(input) { input.read(buffer.data(),buffer.size()); if(input.gcount() && !hash.Update(buffer.data(),size_t(input.gcount()))) throw std::runtime_error("Hash failed."); }
-  sha256_util::Digest digest{}; if(input.bad() || !hash.Finish(digest)) throw std::runtime_error("Hash failed.");
+  while(input) { input.read(buffer.data(),buffer.size()); if(input.gcount() && !hash.Update(buffer.data(),size_t(input.gcount()))) throw std::runtime_error(T(Str::kHashFailed_2050)); }
+  sha256_util::Digest digest{}; if(input.bad() || !hash.Finish(digest)) throw std::runtime_error(T(Str::kHashFailed_2050));
   return sha256_util::LowerHex(digest);
 }
 std::wstring ModulePath(HMODULE module) {
   std::wstring path(32768,0); const auto n=GetModuleFileNameW(module,path.data(),DWORD(path.size()));
-  if(!n || n>=path.size()) throw std::runtime_error("Cannot identify a mapped module."); path.resize(n); return path;
+  if(!n || n>=path.size()) throw std::runtime_error(T(Str::kCannotIdentifyAMappedModule_5ce6)); path.resize(n); return path;
 }
 std::string Version(const std::filesystem::path& path) {
   DWORD unused{}; const auto size=GetFileVersionInfoSizeW(path.c_str(),&unused); if(!size) return "unavailable";
@@ -103,7 +103,7 @@ void Run(bool repair) noexcept {
   try {
     Status next; next.checked=true;
     const auto catalog=nlohmann::json::parse(Resource(9010));
-    const auto exeDirectory=backend::Directory(); if(exeDirectory.empty()) throw std::runtime_error("Game directory is unavailable.");
+    const auto exeDirectory=backend::Directory(); if(exeDirectory.empty()) throw std::runtime_error(T(Str::kGameDirectoryIsUnavailable_657c));
     const auto root=FinalPath(exeDirectory),installRoot=InstallRoot(root);
     next.installRoot=Utf8(installRoot.wstring());
     const auto shipped=ShippedCopies(installRoot,next.scanComplete);
@@ -116,14 +116,14 @@ void Run(bool repair) noexcept {
         try { mapped=FinalPath(ModulePath(module)); } catch(...) { FreeLibrary(module); throw; }
         FreeLibrary(module);
       }
-      std::vector<std::pair<std::filesystem::path,const char*>> paths{{root/wide,"Game folder"}};
+      std::vector<std::pair<std::filesystem::path,const char*>> paths{{root/wide,T(Str::kGameFolder_551d)}};
       const auto add=[&](const std::filesystem::path& path,const char* role) {
         for(const auto& p:paths) if(_wcsicmp(p.first.c_str(),path.c_str())==0) return;
         paths.emplace_back(path,role);
       };
       if(std::filesystem::exists(root/L"_storage_"/wide)) add(root/L"_storage_"/wide,"Mod loader copy");
-      if(!mapped.empty()) add(mapped,"Loaded by the game");
-      for(const auto& copy:shipped) if(Named(copy,wide.c_str())) add(copy,"Shipped with the game");
+      if(!mapped.empty()) add(mapped,T(Str::kLoadedByTheGame_1e3c));
+      for(const auto& copy:shipped) if(Named(copy,wide.c_str())) add(copy,T(Str::kShippedWithTheGame_7a3f));
       for(const auto& [path,role]:paths) {
         File file; file.name=name; file.path=Utf8(path.wstring()); file.required=true; file.role=role;
         file.mapped=!mapped.empty() && _wcsicmp(path.c_str(),mapped.c_str())==0;
@@ -138,23 +138,23 @@ void Run(bool repair) noexcept {
         next.files.push_back(std::move(file));
       }
     }
-    next.message=next.scanComplete?"Exact hashes checked. XeSS upscaling (libxess.dll) is not required by this bridge.":
-        "Exact hashes checked. This installation is large; copies deep inside it were not listed.";
+    next.message=next.scanComplete?T(Str::kExactHashesCheckedXessUpscaling_9a83):
+        T(Str::kExactHashesCheckedThisInstallation_c602);
     if(repair) {
       const auto helper=Resource(9011);
-      wchar_t temp[MAX_PATH]{}; if(!GetTempPathW(MAX_PATH,temp)) throw std::runtime_error("Cannot locate helper staging directory.");
+      wchar_t temp[MAX_PATH]{}; if(!GetTempPathW(MAX_PATH,temp)) throw std::runtime_error(T(Str::kCannotLocateHelperStagingDirectory_94b4));
       const auto folder=std::filesystem::path(temp)/(L"MFG-XeHelper-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));
-      if(!std::filesystem::create_directory(folder)) throw std::runtime_error("Cannot create private helper staging directory.");
+      if(!std::filesystem::create_directory(folder)) throw std::runtime_error(T(Str::kCannotCreatePrivateHelperStaging_66f9));
       const auto write=[&](const wchar_t* name,const std::string& bytes) {
         std::ofstream output(folder/name,std::ios::binary); output.write(bytes.data(),bytes.size()); output.close();
         std::ifstream verify(folder/name,std::ios::binary); const std::string actual((std::istreambuf_iterator<char>(verify)),{});
-        if(!verify || actual!=bytes) throw std::runtime_error("Helper staging failed verification.");
+        if(!verify || actual!=bytes) throw std::runtime_error(T(Str::kHelperStagingFailedVerification_bf26));
       };
       write(L"catalog.json",Resource(9010)); write(L"Repair-XeDependencies.ps1",helper);
       FILETIME created{},exited{},kernel{},user{};
-      if(!GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernel,&user)) throw std::runtime_error("Cannot identify the game process.");
+      if(!GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernel,&user)) throw std::runtime_error(T(Str::kCannotIdentifyTheGameProcess_9656));
       ULARGE_INTEGER ticks{}; ticks.LowPart=created.dwLowDateTime; ticks.HighPart=created.dwHighDateTime;
-      wchar_t system[MAX_PATH]{}; if(!GetSystemDirectoryW(system,MAX_PATH)) throw std::runtime_error("Cannot locate PowerShell.");
+      wchar_t system[MAX_PATH]{}; if(!GetSystemDirectoryW(system,MAX_PATH)) throw std::runtime_error(T(Str::kCannotLocatePowershell_13d9));
       const auto exe=std::filesystem::path(system)/L"WindowsPowerShell/v1.0/powershell.exe";
       const auto arguments=L"-NoProfile -ExecutionPolicy Bypass -File "+Quote((folder/L"Repair-XeDependencies.ps1").wstring())
           +L" -GameDirectory "+Quote(root.wstring())+L" -GameProcessId "+std::to_wstring(GetCurrentProcessId())
@@ -162,12 +162,12 @@ void Run(bool repair) noexcept {
           +L" -CatalogPath "+Quote((folder/L"catalog.json").wstring());
       SHELLEXECUTEINFOW launch{sizeof(launch)}; launch.fMask=SEE_MASK_NOCLOSEPROCESS|SEE_MASK_FLAG_NO_UI;
       launch.lpFile=exe.c_str(); launch.lpParameters=arguments.c_str(); launch.nShow=SW_SHOWNORMAL;
-      if(!ShellExecuteExW(&launch) || !launch.hProcess) throw std::runtime_error("Could not start the external repair helper. Run the packaged helper manually.");
-      next.helperRunning=true; next.busy=false; next.message="External helper opened. Review its file list; changes apply only after confirmation and game exit.";
+      if(!ShellExecuteExW(&launch) || !launch.hProcess) throw std::runtime_error(T(Str::kCouldNotStartTheExternal_fb89));
+      next.helperRunning=true; next.busy=false; next.message=T(Str::kExternalHelperOpenedReviewIts_b6f1);
       { std::lock_guard guard(mutex); status=next; }
       WaitForSingleObject(launch.hProcess,INFINITE); DWORD code{}; GetExitCodeProcess(launch.hProcess,&code); CloseHandle(launch.hProcess);
-      next.helperRunning=false; next.message=code==3?"Continuing in the administrator helper window. Restart the game after it finishes.":
-          code?"Repair stopped. Review the helper's error; no restart success is assumed.":"Helper finished. Restart after a repair, then check dependencies again.";
+      next.helperRunning=false; next.message=code==3?T(Str::kContinuingInTheAdministratorHelper_e2b4):
+          code?T(Str::kRepairStoppedReviewTheHelper_5290):T(Str::kHelperFinishedRestartAfterA_4be2);
     }
     { std::lock_guard guard(mutex); status=std::move(next); }
   } catch(const std::exception& e) { std::lock_guard guard(mutex); status.checked=true; status.busy=false; status.message=e.what(); }
@@ -179,7 +179,7 @@ void Queue(bool repair) {
   // also never return into an unloaded addon. No file work runs in Draw().
   if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,reinterpret_cast<LPCWSTR>(&Queue),&self)) { busy=false; return; }
   { std::lock_guard guard(mutex); status.busy=true; }
-  try { std::thread(Run,repair).detach(); } catch(...) { busy=false; std::lock_guard guard(mutex); status.busy=false;status.message="Could not start the dependency worker."; }
+  try { std::thread(Run,repair).detach(); } catch(...) { busy=false; std::lock_guard guard(mutex); status.busy=false;status.message=T(Str::kCouldNotStartTheDependency_a679); }
 }
 }
 void Inspect() { initial=true; Queue(false); }
@@ -187,25 +187,25 @@ void Repair() { initial=true; Queue(true); }
 Status Snapshot() { std::lock_guard guard(mutex); return status; }
 void Draw() {
 #if defined(MFGUNLOCK_UI_PREVIEW)
-  Status value{true,false,false,"Synthetic dependency status; no files were checked.",
-      {{"libxess_fg.dll","game/libxess_fg.dll","1.3.1.78","fixture",Health::Valid,true,true,"Game folder"},
-       {"libxess_fg.dll","game/Engine/Plugins/libxess_fg.dll","1.1.0.0","fixture",Health::Unknown,false,true,"Shipped with the game"},
-       {"libxell.dll","game/libxell.dll","1.3.2.10","fixture",Health::Valid,true,true,"Game folder"}},"game"};
+  Status value{true,false,false,T(Str::kSyntheticDependencyStatusNoFiles_787c),
+      {{"libxess_fg.dll","game/libxess_fg.dll","1.3.1.78","fixture",Health::Valid,true,true,T(Str::kGameFolder_551d)},
+       {"libxess_fg.dll","game/Engine/Plugins/libxess_fg.dll","1.1.0.0","fixture",Health::Unknown,false,true,T(Str::kShippedWithTheGame_7a3f)},
+       {"libxell.dll","game/libxell.dll","1.3.2.10","fixture",Health::Valid,true,true,T(Str::kGameFolder_551d)}},"game"};
 #else
   if(!initial.exchange(true)) Queue(false);
   const auto value=Snapshot();
 #endif
-  ui::Section("Intel runtime files","XeMFG needs Intel's frame-generation and latency libraries beside the game.");
+  ui::Section(T(Str::kIntelRuntimeFiles_6adc),T(Str::kXemfgNeedsIntelSFrame_8832));
   ui::Card card("##intel_dependencies");
-  if(value.busy) ui::Description("Checking this game's installation...");
+  if(value.busy) ui::Description(T(Str::kCheckingThisGameSInstallation_c5c3));
   bool needsInstall{};
   for(size_t i=0;i<value.files.size();++i) {
     const auto& f=value.files[i];
     const bool usable=f.health==Health::Valid || f.health==Health::UpdateOptional;
     needsInstall=needsInstall || !usable;
-    const char* health=f.health==Health::Valid?"Compatible":f.health==Health::UpdateOptional?"Compatible (update available)":
-        f.health==Health::Missing?"Missing - install needed":f.health==Health::Unknown?"Different version - update needed":"Cannot read file";
-    const auto label=f.name+"  \xC2\xB7  "+(f.role.empty()?std::string(f.mapped?"Loaded":"On disk"):f.role);
+    const char* health=f.health==Health::Valid?T(Str::kCompatible_a653):f.health==Health::UpdateOptional?T(Str::kCompatibleUpdateAvailable_58ac):
+        f.health==Health::Missing?T(Str::kMissingInstallNeeded_8000):f.health==Health::Unknown?T(Str::kDifferentVersionUpdateNeeded_192f):T(Str::kCannotReadFile_4e64);
+    const auto label=f.name+"  \xC2\xB7  "+(f.role.empty()?std::string(f.mapped?T(Str::kLoaded_a720):T(Str::kOnDisk_1a8d)):f.role);
     const auto detail=f.path+"\nVersion: "+(f.version.empty()?"-":f.version)+"\nSHA-256: "+(f.sha256.empty()?"-":f.sha256)
         +"\nFile presence does not prove selection. Loaded identifies a mapped module, not a live feature.";
     ui::Readout(("##dep_"+std::to_string(i)).c_str(),label.c_str(),health,detail.c_str(),usable?ui::Accent:ui::Warning);
@@ -213,21 +213,20 @@ void Draw() {
   if(const auto folder=backend::Directory(); !folder.empty()) {
     ImGui::Separator();
     const auto text=Utf8(FinalPath(folder).wstring());
-    ui::Readout("##dep_target","Intel files folder",text.c_str(),
-        "XeMFG loads libxess_fg.dll and libxell.dll from the running executable's folder (or a mod loader's _storage_ folder), "
-        "not from the installation root. Unreal Engine games keep it in <Game>\\Binaries\\Win64. Install / update files writes here.");
+    ui::Readout("##dep_target",T(Str::kIntelFilesFolder_b144),text.c_str(),
+        T(Str::kXemfgLoadsLibxessFgDll_78f3));
   }
   if(!value.installRoot.empty()) {
     ImGui::Separator();
-    ui::Readout("##dep_root","Game installation",value.installRoot.c_str(),
-        "Detected from the running executable. Store and Game Pass links are resolved to the real folder. Intel copies shipped elsewhere in this folder are updated together so the game cannot load a different pair.");
+    ui::Readout("##dep_root",T(Str::kGameInstallation_e96d),value.installRoot.c_str(),
+        T(Str::kDetectedFromTheRunningExecutable_7c25));
   }
   if(!value.message.empty()) ui::Description(value.message.c_str());
   ImGui::Spacing();
   ImGui::BeginDisabled(busy.load());
   ui::ButtonRow actions(2);
-  if(actions("Check again","Reads exact file hashes off the rendering thread. Does not load or replace DLLs.")) Inspect();
-  if(actions(needsInstall?"Install / update files":"Review files","Opens an external helper that lists every file it will change. Original Intel files come from a pinned official commit. Nothing changes until you confirm; the helper then waits for the game to exit, creates backups and provides rollback.")) Repair();
+  if(actions(T(Str::kCheckAgain_fccf),T(Str::kReadsExactFileHashesOff_197d))) Inspect();
+  if(actions(needsInstall?T(Str::kInstallUpdateFiles_73d5):T(Str::kReviewFiles_b9fa),T(Str::kOpensAnExternalHelperThat_0dbd))) Repair();
   ImGui::EndDisabled();
 }
 }

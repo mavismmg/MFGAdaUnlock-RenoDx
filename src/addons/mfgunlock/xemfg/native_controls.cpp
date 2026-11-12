@@ -196,141 +196,140 @@ void DrawControls(PanelPage page) {
 #else
   const bool vulkanHost=false;
 #endif
-  const char* flip=vulkanHost?"XeFG pacing (Vulkan)":status.sdkDeadlinesActive?"Intel SDK timing (experimental)":status.flipBusy?"Checking...":!status.flipAvailable?"XeFG pacing (driver unavailable)":
-      !status.flipRegistered || !status.flipQueue?"Waiting for frame generation":
-      status.flipRefused?"XeFG pacing (driver declined)":metering?"NVIDIA driver - active":
-      status.flipConfigured?"XeFG pacing (current display mode)":!status.flipEnabled?"XeFG pacing (driver metering off)":"Waiting for a stable frame rate";
+  const char* flip=vulkanHost?T(Str::kXefgPacingVulkan_fc5f):status.sdkDeadlinesActive?T(Str::kIntelSdkTimingExperimental_c84c):status.flipBusy?"Checking...":!status.flipAvailable?T(Str::kXefgPacingDriverUnavailable_bc92):
+      !status.flipRegistered || !status.flipQueue?T(Str::kWaitingForFrameGeneration_08ec):
+      status.flipRefused?T(Str::kXefgPacingDriverDeclined_67cc):metering?T(Str::kNvidiaDriverActive_f98b):
+      status.flipConfigured?T(Str::kXefgPacingCurrentDisplayMode_155c):!status.flipEnabled?T(Str::kXefgPacingDriverMeteringOff_e37c):T(Str::kWaitingForAStableFrame_9fe8);
   const auto& w=status.window;
-  const char* window=!w.available?"Window not available":w.mode==DisplayMode::Unknown?"Unknown - no mode change":
-      w.mode==DisplayMode::Exclusive?"Exclusive fullscreen":w.mode==DisplayMode::NativeBorderless?"Borderless (game controlled)":
-      w.mode==DisplayMode::ManagedBorderless?"Borderless (addon controlled)":"Windowed";
-  const char* acceleration=status.modelUpdating || status.cudaUpdating?"Checking...":!status.modelInitialized?"Waiting for the model":!status.modelPort?"Native XeFG model":
-      status.cudaState==1 && status.cudaLaunches?"NVIDIA Tensor Cores (CUDA)":
-      status.cudaState==1?"NVIDIA acceleration ready":"Compatibility shaders";
+  const char* window=!w.available?T(Str::kWindowNotAvailable_2ec3):w.mode==DisplayMode::Unknown?T(Str::kUnknownNoModeChange_0ff0):
+      w.mode==DisplayMode::Exclusive?T(Str::kExclusiveFullscreen_cabc):w.mode==DisplayMode::NativeBorderless?T(Str::kBorderlessGameControlled_5839):
+      w.mode==DisplayMode::ManagedBorderless?T(Str::kBorderlessAddonControlled_b5cd):T(Str::kWindowed_9b44);
+  const char* acceleration=status.modelUpdating || status.cudaUpdating?"Checking...":!status.modelInitialized?T(Str::kWaitingForTheModel_75a1):!status.modelPort?T(Str::kNativeXefgModel_918b):
+      status.cudaState==1 && status.cudaLaunches?T(Str::kNvidiaTensorCoresCuda_73cb):
+      status.cudaState==1?T(Str::kNvidiaAccelerationReady_376d):T(Str::kCompatibilityShaders_2d95);
   constexpr const char* flipHelp="Uses the NVIDIA driver to space generated frames evenly. Leave enabled for driver pacing when available; otherwise XeFG uses its own pacing. Changes apply at the next frame group. Active reports driver acceptance, not a monitor scanout measurement.";
   constexpr const char* compositionHelp="Off by default: XeFG interpolates the HUD with the image. Enable only if HUD interpolation causes artifacts. Composition needs HUD-less color from the game and updates the HUD at the real frame rate, so moving HUD elements may look less smooth. Changes apply at the next source frame.";
   constexpr const char* stabilizationHelp="Experimental, off by default. For games that do not provide HUD-less color: pixels that stay unchanged for a few real frames (static HUD text, icons and the minimap frame) are composed from the newest real frame over every generated frame instead of being interpolated, which removes their flicker. Moving or semi-transparent HUD elements are still interpolated. Costs one copy and one small compute pass per real frame. Also works in games that provide HUD-less color, as an alternative to UI Composition: UI Composition updates the whole HUD at the real frame rate, while this keeps moving HUD interpolated at the output rate. When on, it replaces UI Composition.";
-  const char* composition=!status.uiCompositionKnown?"Waiting for frame status":status.uiStabilized?"HUD stabilization (static HUD composed)":status.uiCompositionApplied?"UI composition":
-      value.uiComposition && !status.uiCompositionAvailable?"Waiting for HUD-less input":
-      value.uiComposition?"Change pending":value.uiStabilization && !status.uiCompositionAvailable?"Waiting for HUD stabilization":"UI interpolation (default)";
+  const char* composition=!status.uiCompositionKnown?T(Str::kWaitingForFrameStatus_d01c):status.uiStabilized?T(Str::kHudStabilizationStaticHudComposed_5805):status.uiCompositionApplied?T(Str::kUiComposition_76ad):
+      value.uiComposition && !status.uiCompositionAvailable?T(Str::kWaitingForHudLessInput_46f0):
+      value.uiComposition?T(Str::kChangePending_d126):value.uiStabilization && !status.uiCompositionAvailable?T(Str::kWaitingForHudStabilization_8a25):T(Str::kUiInterpolationDefault_22e1);
   if(page==PanelPage::General) {
-    ui::Section("Smoothness and display");
+    ui::Section(T(Str::kSmoothnessAndDisplay_cf1b));
     ui::Card card("##xe_presentation");
-    ui::Setting("##xe_flip_row","Driver flip metering",flipHelp,[&] {
+    ui::Setting("##xe_flip_row",T(Str::kDriverFlipMetering_944d),flipHelp,[&] {
       ImGui::BeginDisabled(value.sdkDeadlines);
       if(ImGui::Checkbox("##xe_flip",&value.flipMetering)) ConfigureControls(value);
       ImGui::EndDisabled();
     });
-    ui::Readout("##xe_flip_state","Pacing status",flip,flipHelp,metering?ui::Accent:ui::Muted);
-    if(!value.sdkDeadlines && status.flipRequested!=status.flipEnabled) ui::Description("Change pending - applies with the next group of generated frames.");
+    ui::Readout("##xe_flip_state",T(Str::kPacingStatus_8f41),flip,flipHelp,metering?ui::Accent:ui::Muted);
+    if(!value.sdkDeadlines && status.flipRequested!=status.flipEnabled) ui::Description(T(Str::kChangePendingAppliesWithThe_3d02));
     constexpr const char* vsyncHelp="Presents the game's frames with sync interval 0, as with VSync off in the game. Use it for games whose VSync cannot be turned off in their settings, such as Elden Ring: game VSync keeps driver flip metering and generated-frame pacing from applying. Tearing is not enabled. Applies at the next frame.";
-    ui::Setting("##xe_vsync_row","Force game VSync off",vsyncHelp,[&] {
+    ui::Setting("##xe_vsync_row",T(Str::kForceGameVsyncOff_c2e2),vsyncHelp,[&] {
       if(ImGui::Checkbox("##xe_force_vsync_off",&value.forceVSyncOff)) ConfigureControls(value);
     });
     const auto sync=status.gameSyncInterval;
-    const std::string gameVSync=sync==UINT32_MAX?"Not observed yet":sync==0?"Off":value.forceVSyncOff?"On (forced off)":"On";
-    ui::Readout("##xe_vsync_state","Game VSync",gameVSync.c_str(),vsyncHelp,sync && sync!=UINT32_MAX && !value.forceVSyncOff?ui::Warning:ui::Muted);
+    const std::string gameVSync=sync==UINT32_MAX?T(Str::kNotObservedYet_87d4):sync==0?T(Str::kOff_b4aa):value.forceVSyncOff?T(Str::kOnForcedOff_9657):T(Str::kOn_7df0);
+    ui::Readout("##xe_vsync_state",T(Str::kGameVsync_2a26),gameVSync.c_str(),vsyncHelp,sync && sync!=UINT32_MAX && !value.forceVSyncOff?ui::Warning:ui::Muted);
     // 1.5.5: warn instead of changing it; the user decides (no profile does).
     if(sync && sync!=UINT32_MAX && !value.forceVSyncOff && State().requested.load())
-      ui::Notice("The game presents with VSync, so frame pacing does not apply to generated frames. "
-          "Turn off VSync in the game's settings. If the game has no VSync setting, turn on Force game VSync off.");
+      ui::Notice(T(Str::kTheGamePresentsWithVsync_7019));
     // 1.5.7: optional cap to the display refresh (XeLL output only).
     constexpr const char* capHelp="Limits the game's frame rate so that, with the multiplier, frames are presented slightly below the display refresh (3% margin, for variable-refresh displays). Without a limit, a high game frame rate presents generated frames faster than the display shows them, and motion becomes uneven. The game's own frame limit still applies when it is lower. Available with the XeLL latency output. Applies at the next frame.";
     const bool xellOutput=status.activeLatencyOutput==LatencyOutput::XeLL;
-    ui::Setting("##xe_display_cap_row","Limit to display refresh",capHelp,[&] {
+    ui::Setting("##xe_display_cap_row",T(Str::kLimitToDisplayRefresh_0704),capHelp,[&] {
       ImGui::BeginDisabled(!xellOutput);
       if(ImGui::Checkbox("##xe_display_cap",&value.displayCap)) ConfigureControls(value);
       ImGui::EndDisabled();
     });
     const auto refreshHz=status.displayRefreshMilliHz/1000;
-    const std::string capState=!xellOutput?"Not available with the Reflex output":!value.displayCap?"Off":
-        !status.displayCapIntervalUs?"Waiting for the display refresh":
+    const std::string capState=!xellOutput?T(Str::kNotAvailableWithTheReflex_9fdf):!value.displayCap?T(Str::kOff_b4aa):
+        !status.displayCapIntervalUs?T(Str::kWaitingForTheDisplayRefresh_cf55):
         "Up to "+std::to_string(1000000/status.displayCapIntervalUs)+" FPS shown, game up to "
         +std::to_string(1000000/status.displayCapIntervalUs/(std::max)(State().multiplier.load(),1u))+" FPS ("+std::to_string(refreshHz)+" Hz display)";
-    ui::Readout("##xe_display_cap_state","Frame rate limit",capState.c_str(),capHelp,value.displayCap && status.displayCapIntervalUs?ui::Accent:ui::Muted);
+    ui::Readout("##xe_display_cap_state",T(Str::kFrameRateLimit_6563),capState.c_str(),capHelp,value.displayCap && status.displayCapIntervalUs?ui::Accent:ui::Muted);
     // Warn, never enable it automatically (the user decides).
     if(xellOutput && !value.displayCap && State().requested.load() && (!sync || sync==UINT32_MAX)
         && ExceedsDisplay(status.sourceIntervalUs,status.displayRefreshMilliHz,State().multiplier.load()))
       ui::Notice(("The game's frame rate times the multiplier is above the display refresh ("+std::to_string(refreshHz)
           +" Hz), so some generated frames are not shown and motion can look uneven. Turn on Limit to display refresh, or cap the game's frame rate.").c_str());
-    if(ui::Expander("Advanced pacing comparison")) {
-      ui::Setting("##xe_queue_row","Queue metered frames early","Lets the driver space a verified group of frames while the SDK prepares its next work. GPU fences and resource waits remain owned by Intel. Applies only when the driver accepts flip metering and Present uses sync interval 0. Turn off to compare with the previous CPU timing.",[&] {
+    if(ui::Expander(T(Str::kAdvancedPacingComparison_ad6a))) {
+      ui::Setting("##xe_queue_row",T(Str::kQueueMeteredFramesEarly_e775),T(Str::kLetsTheDriverSpaceA_121a),[&] {
         ImGui::BeginDisabled(value.sdkDeadlines || !value.flipMetering);
         if(ImGui::Checkbox("##xe_queue_ahead",&value.queueAhead)) ConfigureControls(value);
         ImGui::EndDisabled();
       });
-      ui::Setting("##xe_deadline_row","Use Intel SDK timing (test)","Off keeps the current driver/adaptive path. On keeps Intel's original deadlines and disables driver metering at the next generated group. This experimental comparison does not add a pacer, wait or FPS cap. Keep the same scene and compare displayed intervals and mouse response; turn off to restore the usual path.",[&] {
+      ui::Setting("##xe_deadline_row",T(Str::kUseIntelSdkTimingTest_7e71),T(Str::kOffKeepsTheCurrentDriver_53ac),[&] {
         if(ImGui::Checkbox("##xe_sdk_deadlines",&value.sdkDeadlines)) ConfigureControls(value);
       });
-      ui::Description(status.sdkDeadlinesActive?"Intel SDK timing active (experimental)":"Driver / adaptive timing active");
-      if(status.sdkDeadlinesRequested!=status.sdkDeadlinesActive) ui::Description("Waiting for the next generated group.");
+      ui::Description(status.sdkDeadlinesActive?T(Str::kIntelSdkTimingActiveExperimental_df84):T(Str::kDriverAdaptiveTimingActive_cc9c));
+      if(status.sdkDeadlinesRequested!=status.sdkDeadlinesActive) ui::Description(T(Str::kWaitingForTheNextGenerated_5b2b));
     }
     ImGui::Separator();
     // 1.5.8: exclusive fullscreen served as borderless (off by default).
     constexpr const char* exclusiveHelp="Intel frame generation does not support exclusive fullscreen. When the game asks for it, XeMFG keeps the game windowed instead: the window covers the monitor without borders, and the game is told it is in fullscreen. The monitor resolution and refresh rate are not changed; a lower game resolution is scaled to the screen. Alt+Enter is held back so the game cannot switch to exclusive fullscreen. Applies at the game's next display mode change, or after a restart if the game is already in exclusive fullscreen.";
-    ui::Setting("##xe_exclusive_row","Exclusive fullscreen as borderless",exclusiveHelp,[&] {
+    ui::Setting("##xe_exclusive_row",T(Str::kExclusiveFullscreenAsBorderless_9f2b),exclusiveHelp,[&] {
       if(ImGui::Checkbox("##xe_exclusive_borderless",&value.exclusiveAsBorderless)) ConfigureControls(value);
     });
-    ui::Readout("##xe_window_state","Display mode",w.pending?"Change pending":status.exclusiveServed?"Borderless (game asked for exclusive fullscreen)":window,
-        "The game controls its display mode. Exclusive fullscreen is not supported by the Intel frame-generation SDK; with Exclusive fullscreen as borderless on, XeMFG serves it as borderless.",
+    ui::Readout("##xe_window_state",T(Str::kDisplayMode_2e08),w.pending?T(Str::kChangePending_d126):status.exclusiveServed?T(Str::kBorderlessGameAskedForExclusive_23cf):window,
+        T(Str::kTheGameControlsItsDisplay_0e50),
         status.exclusiveServed?ui::Accent:w.mode==DisplayMode::Exclusive?ui::Warning:ui::Muted);
     // Suggest it, never enable it automatically (the user decides).
     if(w.mode==DisplayMode::Exclusive && State().requested.load())
       ui::Notice(value.exclusiveAsBorderless?
-          "The game is in exclusive fullscreen, so frame generation is off. Switch the game's display mode once (or restart the game) to apply Exclusive fullscreen as borderless.":
-          "The game is in exclusive fullscreen, which Intel frame generation does not support. Set the game to Borderless, or turn on Exclusive fullscreen as borderless.");
+          T(Str::kTheGameIsInExclusive_3a50):
+          T(Str::kTheGameIsInExclusive_6d7f));
   }
   if(page==PanelPage::Quality) {
-    ui::Section("Image quality");
+    ui::Section(T(Str::kImageQuality_d36b));
     ui::Card card("##xe_quality");
-    ui::Readout("##xe_model_quality","Model",status.modelUpdating?"Checking...":!status.modelInitialized?"Waiting for the model":status.modelPort?"Intel XeMFG (automatic)":"Intel XeFG (compatibility)",
-        "The multi-frame model is selected automatically. DLSS-G quality profiles only affect the NVIDIA backend.");
-    ui::Readout("##xe_acceleration_quality","Acceleration",acceleration,
-        "CUDA runs the supported model layers on NVIDIA Tensor Cores. Compatibility shaders handle other dispatches. This is the execution route, not a different quality preset.",ui::Accent);
+    ui::Readout("##xe_model_quality",T(Str::kModel_e8fa),status.modelUpdating?"Checking...":!status.modelInitialized?T(Str::kWaitingForTheModel_75a1):status.modelPort?T(Str::kIntelXemfgAutomatic_8218):T(Str::kIntelXefgCompatibility_7f66),
+        T(Str::kTheMultiFrameModelIs_1a0a));
+    ui::Readout("##xe_acceleration_quality",T(Str::kAcceleration_a3bd),acceleration,
+        T(Str::kCudaRunsTheSupportedModel_6cb8),ui::Accent);
     ImGui::Separator();
-    ui::Setting("##xe_composition_row","UI Composition",compositionHelp,[&] {
+    ui::Setting("##xe_composition_row",T(Str::kUiComposition_8a4d),compositionHelp,[&] {
       ImGui::BeginDisabled(!status.uiCompositionAvailable && !value.uiComposition);
       if(ImGui::Checkbox("##xe_ui_composition",&value.uiComposition)) ConfigureControls(value);
       ImGui::EndDisabled();
     });
-    ui::Setting("##xe_stabilization_row","HUD stabilization (experimental)",stabilizationHelp,[&] {
+    ui::Setting("##xe_stabilization_row",T(Str::kHudStabilizationExperimental_1bb2),stabilizationHelp,[&] {
       if(ImGui::Checkbox("##xe_ui_stabilization",&value.uiStabilization)) ConfigureControls(value);
     });
-    ui::Readout("##xe_composition_state","HUD handling",composition,compositionHelp);
+    ui::Readout("##xe_composition_state",T(Str::kHudHandling_ff3f),composition,compositionHelp);
     // 1.5.7: what the game provides, per kind: received, converted, filtered or absent.
     const auto hudKind=[&](unsigned type,const char* name) {
       const uint32_t bit=1u<<type;
-      return std::string(name)+(status.hudInputs&bit?(status.hudCopied&bit?": received (converted)":": received")
-          :status.hudFiltered&bit?": filtered":": not provided");
+      return std::string(name)+(status.hudInputs&bit?(status.hudCopied&bit?T(Str::kReceivedConverted_b525):T(Str::kReceived_bef8))
+          :status.hudFiltered&bit?T(Str::kFiltered_a0e8):T(Str::kNotProvided_6683));
     };
     const std::string hudInputs=hudKind(XEFG_SWAPCHAIN_RES_HUDLESS_COLOR,"HUD-less")+" | "+hudKind(XEFG_SWAPCHAIN_RES_UI,"UI");
-    ui::Readout("##xe_hud_safety","Game HUD inputs",hudInputs.c_str(),
-        "The game's optional HUD textures: HUD-less color (the image without HUD) and UI (the HUD alone). Converted means the texture used another type of the output's format and is copied into the output format. Filtered textures do not match the output (format, size or shader input) and are not used; frame generation then interpolates the HUD with the image. This does not prove matching HDR encoding or remove every model artifact.");
+    ui::Readout("##xe_hud_safety",T(Str::kGameHudInputs_d5bf),hudInputs.c_str(),
+        T(Str::kTheGameSOptionalHud_493a));
     // Suggest, never enable it automatically (the user decides).
     if(status.uiCompositionAvailable && !value.uiComposition)
-      ui::Description("This game provides HUD-less color. If HUD elements show artifacts in generated frames, turn on UI Composition.");
-    if(status.uiCompositionResult<0) ui::Notice("UI composition could not be applied. Copy Diagnostics for details.");
-    ui::Description("For best results, keep the game's rendered frame rate stable.");
-    ui::Tooltip("A higher base frame rate supplies more recent motion information. Generated frames improve smoothness but do not add new input samples.");
+      ui::Description(T(Str::kThisGameProvidesHudLess_57aa));
+    if(status.uiCompositionResult<0) ui::Notice(T(Str::kUiCompositionCouldNotBe_dc19));
+    ui::Description(T(Str::kForBestResultsKeepThe_51a7));
+    ui::Tooltip(T(Str::kAHigherBaseFrameRate_0cc7));
   }
   if(page==PanelPage::Latency) {
-    ui::Section("Mouse and input response");
+    ui::Section(T(Str::kMouseAndInputResponse_701c));
     ui::Card card("##xe_latency");
-    ui::Readout("##xe_latency_state","Low latency",status.xellObserved?"XeLL - active":status.reflexOutputObserved?"Reflex - active":"Waiting for game timing",
-        "The selected output controls latency: native Reflex or XeLL. The other latency limiter is disabled. Active means recent successful calls, not a physical latency measurement.",(status.xellObserved || status.reflexOutputObserved)?ui::Accent:ui::Warning);
-    ui::Readout("##xe_latency_source","Timing source",status.reflexObserved?"Reflex / Streamline":"Not observed yet",
-        "Uses the game's Reflex timing and markers for the selected latency output. Keep the game's low-latency option enabled when available.");
-    ui::Description("Keep the game's low-latency option enabled.");
-    ui::Tooltip("Avoid stacking external FPS limiters while comparing responsiveness. Generated FPS and physical input latency measure different things.");
-    if(status.activeLatencyOutput==LatencyOutput::Reflex && status.reflexOptionsReady && !status.gameReflexMode) ui::Notice("Enable NVIDIA Reflex in the game to use this latency output.");
-    if(status.latencyRestartPending) ui::Notice("Latency output saved. Restart the game to apply it.");
-    if(ui::Expander("Advanced latency routing")) {
+    ui::Readout("##xe_latency_state",T(Str::kLowLatency_036b),status.xellObserved?T(Str::kXellActive_1039):status.reflexOutputObserved?T(Str::kReflexActive_29aa):T(Str::kWaitingForGameTiming_bab7),
+        T(Str::kTheSelectedOutputControlsLatency_566d),(status.xellObserved || status.reflexOutputObserved)?ui::Accent:ui::Warning);
+    ui::Readout("##xe_latency_source",T(Str::kTimingSource_a3c8),status.reflexObserved?T(Str::kReflexStreamline_ef68):T(Str::kNotObservedYet_87d4),
+        T(Str::kUsesTheGameSReflex_9ca0));
+    ui::Description(T(Str::kKeepTheGameSLow_8dde));
+    ui::Tooltip(T(Str::kAvoidStackingExternalFpsLimiters_56e3));
+    if(status.activeLatencyOutput==LatencyOutput::Reflex && status.reflexOptionsReady && !status.gameReflexMode) ui::Notice(T(Str::kEnableNvidiaReflexInThe_e3f6));
+    if(status.latencyRestartPending) ui::Notice(T(Str::kLatencyOutputSavedRestartThe_c3d7));
+    if(ui::Expander(T(Str::kAdvancedLatencyRouting_6d9f))) {
       int input=int(value.input),output=int(value.output);
-      ui::Setting("##xe_input_row","Timing input","Auto uses Reflex / Streamline timing. This bridge currently supports that input route.",[&] {
-        if(ImGui::Combo("##xe_timing_input",&input,"Auto (recommended)\0Reflex / Streamline\0")) { value.input=LatencyInput(input); ConfigureControls(value); }
+      ui::Setting("##xe_input_row",T(Str::kTimingInput_e70b),T(Str::kAutoUsesReflexStreamlineTiming_4464),[&] {
+        if(ImGui::Combo("##xe_timing_input",&input,T(Str::kAutoRecommendedReflexStreamline_5561))) { value.input=LatencyInput(input); ConfigureControls(value); }
       });
-      ui::Setting("##xe_output_row","Latency output","Auto keeps XeLL. Reflex uses the game's native Reflex sleep and options, with the XeLL latency limiter disabled. Keep Reflex enabled in the game's settings. Restart the game after changing this selection.",[&] {
-        if(ImGui::Combo("##xe_latency_output",&output,"Auto (XeLL)\0XeLL\0Reflex\0")) { value.output=LatencyOutput(output); ConfigureControls(value); }
+      ui::Setting("##xe_output_row",T(Str::kLatencyOutput_7886),T(Str::kAutoKeepsXellReflexUses_9a9b),[&] {
+        if(ImGui::Combo("##xe_latency_output",&output,T(Str::kAutoXellXellReflex_7591))) { value.output=LatencyOutput(output); ConfigureControls(value); }
       });
     }
   }
@@ -339,30 +338,30 @@ void DrawControls(PanelPage page) {
     const auto overlay=OverlaySnapshot();
     const auto overlayInput=OverlayInputSnapshot();
     const auto ref=reframework::Snapshot();
-    ui::Section("System status","Use Copy compatibility report when reporting a problem.");
+    ui::Section(T(Str::kSystemStatus_be3e),T(Str::kUseCopyCompatibilityReportWhen_cf8d));
     ui::Card card("##xe_model_details");
-    ui::Readout("##xe_diag_bridge","Game connection",bridge.streamline && bridge.output?"Connected":"Waiting for the game",
-        "Checks the Streamline input hooks and DirectX 12 output. Load a scene and enable Frame Generation in the game.");
-    ui::Readout("##xe_diag_overlay","ReShade output",overlay.created>overlay.destroyed?"Final output linked":"Automatic hook / waiting",
-        "Links ReShade effects and keyboard input to Intel's final output when its private queue is not automatically hooked. Recreated on resize and released before output destruction.");
-    ui::Readout("##xe_diag_model","Model",status.modelUpdating?"Checking...":!status.modelInitialized?"Waiting for the model":status.modelPort?"Intel XeMFG - ready":"Intel XeFG (compatibility)");
-    ui::Readout("##xe_diag_cuda","Acceleration",acceleration,
-        "NVIDIA Tensor Core execution is observed through the CUDA route. Raw counters are included in the copied report.");
-    ui::Readout("##xe_diag_flip","Flip metering",flip,flipHelp,metering?ui::Accent:ui::Muted);
-    ui::Readout("##xe_diag_latency","Latency output",status.xellObserved?"XeLL - active":status.reflexOutputObserved?"Reflex - active":"Waiting for game timing");
-    ui::Readout("##xe_diag_ui","HUD handling",composition,compositionHelp);
-    ui::Readout("##xe_diag_window","Display mode",window);
+    ui::Readout("##xe_diag_bridge",T(Str::kGameConnection_e319),bridge.streamline && bridge.output?T(Str::kConnected_9370):T(Str::kWaitingForTheGame_18de),
+        T(Str::kChecksTheStreamlineInputHooks_2e5b));
+    ui::Readout("##xe_diag_overlay",T(Str::kReshadeOutput_bcc6),overlay.created>overlay.destroyed?T(Str::kFinalOutputLinked_f33d):T(Str::kAutomaticHookWaiting_e855),
+        T(Str::kLinksReshadeEffectsAndKeyboard_5e78));
+    ui::Readout("##xe_diag_model",T(Str::kModel_e8fa),status.modelUpdating?"Checking...":!status.modelInitialized?T(Str::kWaitingForTheModel_75a1):status.modelPort?T(Str::kIntelXemfgReady_1526):T(Str::kIntelXefgCompatibility_7f66));
+    ui::Readout("##xe_diag_cuda",T(Str::kAcceleration_a3bd),acceleration,
+        T(Str::kNvidiaTensorCoreExecutionIs_f0d5));
+    ui::Readout("##xe_diag_flip",T(Str::kFlipMetering_a6c5),flip,flipHelp,metering?ui::Accent:ui::Muted);
+    ui::Readout("##xe_diag_latency",T(Str::kLatencyOutput_7886),status.xellObserved?T(Str::kXellActive_1039):status.reflexOutputObserved?T(Str::kReflexActive_29aa):T(Str::kWaitingForGameTiming_bab7));
+    ui::Readout("##xe_diag_ui",T(Str::kHudHandling_ff3f),composition,compositionHelp);
+    ui::Readout("##xe_diag_window",T(Str::kDisplayMode_2e08),window);
     ui::Readout("##xe_diag_ref","REFramework",reframework::Description(ref),
-        "Optional cooperation before replacing the XeMFG swapchain. Older builds continue through the legacy path. This does not repair REFramework's internal hook monitor or certify an unknown version.");
-    if(ref.knownMonitorIssue) ui::Notice("This REFramework build was observed repeatedly reinstalling its XeFG hooks. Update to a version with the XeFG monitor fix.");
-    if(State().retirementFailed || !reframework::Safe(ref.result)) ui::Notice("Output retirement could not be coordinated safely. Restart the game before creating another XeMFG output.");
-    if(w.error) ui::Notice("Window mode could not be applied. Copy the report for details.");
-    if(bridge.sdkResult<0) ui::Notice("Frame generation reported an error. Copy the report for details.");
+        T(Str::kOptionalCooperationBeforeReplacingThe_ab06));
+    if(ref.knownMonitorIssue) ui::Notice(T(Str::kThisReframeworkBuildWasObserved_590b));
+    if(State().retirementFailed || !reframework::Safe(ref.result)) ui::Notice(T(Str::kOutputRetirementCouldNotBe_b429));
+    if(w.error) ui::Notice(T(Str::kWindowModeCouldNotBe_a3af));
+    if(bridge.sdkResult<0) ui::Notice(T(Str::kFrameGenerationReportedAnError_ea17));
     ImGui::Spacing();
     ui::ButtonRow reports(2);
-    if(reports("Copy compatibility report","Copies structured metadata: module hashes, the first unmet frame requirement, input validation and DirectX errors. No resource contents, personal paths or GPU addresses."))
+    if(reports(T(Str::kCopyCompatibilityReport_b1c6),T(Str::kCopiesStructuredMetadataModuleHashes_9706)))
       ImGui::SetClipboardText(CompatibilityReport().c_str());
-    if(reports("Copy detailed counters","Copies technical status, error codes and accumulated counters for support. These counters are not displayed FPS or physical input latency.")) {
+    if(reports(T(Str::kCopyDetailedCounters_50f9),T(Str::kCopiesTechnicalStatusErrorCodes_2238))) {
       mfgunlock::xemfg::Status model;
       const bool modelAvailable=TryModelStatus(model);
       std::ostringstream report; report<<"MFG Unlock 1.10.0\nstartup_failed="<<ModelStartupFailed()
@@ -393,23 +392,23 @@ void DrawControls(PanelPage page) {
       report<<"\n\nCompatibility metadata (JSON v1):\n"<<CompatibilityReport();
       ImGui::SetClipboardText(report.str().c_str());
     }
-    if(ui::Expander("Performance capture (advanced)")) {
+    if(ui::Expander(T(Str::kPerformanceCaptureAdvanced_3050))) {
       bool enabled=TimingEnabled();
-      ui::Setting("##xe_cpu_capture","Collect CPU timings","Off by default. Records a bounded window of source Present timing, SDK-call duration and XeLL sleep. Adds profiling overhead; does not measure displayed frames or GPU execution.",[&] {
+      ui::Setting("##xe_cpu_capture",T(Str::kCollectCpuTimings_26c4),T(Str::kOffByDefaultRecordsA_ad06),[&] {
         if(ImGui::Checkbox("##xe_cpu_enabled",&enabled)) {
           SetTimingEnabled(enabled);
           WritePrivateProfileStringW(L"Diagnostics",L"CpuTiming",enabled?L"1":L"0",Ini().c_str());
         }
       });
       ui::ButtonRow timing(2);
-      if(timing("Copy timing summary","Includes CPU p95/p99/p99.9 and reports unavailable display/GPU/physical measurements explicitly. Use PresentMon for displayed intervals."))
+      if(timing(T(Str::kCopyTimingSummary_3a1e),T(Str::kIncludesCpuP95P99P99_7402)))
         ImGui::SetClipboardText(TimingReport().c_str());
-      if(timing("Clear timing window")) ClearTiming();
+      if(timing(T(Str::kClearTimingWindow_dac4))) ClearTiming();
     }
   }
-  if(status.latencyRestartPending) ui::Notice("Latency output saved. Restart the game to apply it.");
-  if(!status.settingsSaved) ui::Notice("Change was not applied: settings could not be saved. Check write access to the game folder.");
-  if(status.invalidConfiguration) ui::Notice("Some saved settings are invalid. Safe defaults are active; save valid choices to replace them.");
+  if(status.latencyRestartPending) ui::Notice(T(Str::kLatencyOutputSavedRestartThe_c3d7));
+  if(!status.settingsSaved) ui::Notice(T(Str::kChangeWasNotAppliedSettings_c358));
+  if(status.invalidConfiguration) ui::Notice(T(Str::kSomeSavedSettingsAreInvalid_8064));
 }
 }
 extern "C" __declspec(dllexport) bool MFGAXeControlsStatus(mfgunlock::xemfg::native::ControlStatus* out,uint32_t size) {

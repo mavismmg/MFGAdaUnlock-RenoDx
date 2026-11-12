@@ -7,16 +7,16 @@
 
   if (page == UiPage::Latency) {
     ImGui::Spacing();
-    mfgunlock::ui::Section("Responsiveness","NVIDIA Reflex controls the timing of real frames. Generated FPS does not replace a healthy base frame rate.");
+    mfgunlock::ui::Section(T(Str::kResponsiveness_0b7c),T(Str::kNvidiaReflexControlsTheTiming_759e));
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
     mfgunlock::dlssglatency::Draw();
 #endif
-    if(ImGui::CollapsingHeader("Advanced pacing (testing)")) DrawReflexPacingLabControl(runtime);
+    if(ImGui::CollapsingHeader(T(Str::kAdvancedPacingTesting_96a2))) DrawReflexPacingLabControl(runtime);
     ImGui::Spacing();
-    ImGui::TextDisabled("LATENCY GUARD");
+    ImGui::TextDisabled(T(Str::kLatencyGuard_e498));
     ImGui::Separator();
     DrawLatencyGuardControl();
-    if(ImGui::CollapsingHeader("Latency details")) {
+    if(ImGui::CollapsingHeader(T(Str::kLatencyDetails_14bb))) {
     const auto latency_view = mfgunlock::framecount::LatencyGuardSnapshot();
     const auto latency_guard_mode =
         static_cast<mfgunlock::pacing::LatencyGuardMode>(
@@ -26,30 +26,30 @@
         mfgunlock::pacing::LatencyGuardMode::kAutomatic) {
       ImGui::TextColored(
           kUiWarning,
-          "Changing the DLSS-G multiplier may cause a brief hitch during trials and periodic rechecks.");
+          T(Str::kChangingTheDlssGMultiplier_b297));
     }
     if (latency_guard_mode == mfgunlock::pacing::LatencyGuardMode::kOff) {
       ImGui::TextDisabled(
-          "Latency monitoring is off. Select Monitor Only for read-only information.");
+          T(Str::kLatencyMonitoringIsOffSelect_2a2e));
     } else {
     ImGui::Spacing();
-    ImGui::TextDisabled("CURRENT LATENCY STATUS");
+    ImGui::TextDisabled(T(Str::kCurrentLatencyStatus_3f96));
     const bool guard_sample_seen =
         latency_view.sample_seen;
     if (!guard_sample_seen) {
-      ImGui::TextDisabled("Waiting for the first bounded NVAPI sample.");
+      ImGui::TextDisabled(T(Str::kWaitingForTheFirstBounded_73db));
     } else if (ImGui::BeginTable("##latency_guard_status", 2,
                                  ImGuiTableFlags_SizingStretchProp |
                                      ImGuiTableFlags_RowBg)) {
-      ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthStretch,
+      ImGui::TableSetupColumn(T(Str::kMetric_1321), ImGuiTableColumnFlags_WidthStretch,
                               0.48f);
-      ImGui::TableSetupColumn("Observation",
+      ImGui::TableSetupColumn(T(Str::kObservation_118d),
                               ImGuiTableColumnFlags_WidthStretch, 0.52f);
       StatusSectionRow("INTEGRATION");
       const auto marker_health =
           static_cast<mfgunlock::pacing::MarkerHealth>(
               latency_view.marker_health);
-      StatusRow("Reflex integration", MarkerHealthText(marker_health),
+      StatusRow(T(Str::kReflexIntegration_b2f5), MarkerHealthText(marker_health),
                 marker_health == mfgunlock::pacing::MarkerHealth::kHealthy
                     ? kUiPositive
                     : (marker_health ==
@@ -64,15 +64,15 @@
           latency_view.timing_confident;
       const bool queue_timing_confident =
           latency_view.queue_timing_confident;
-      StatusRow("Source timing validation",
+      StatusRow(T(Str::kSourceTimingValidation_c5e5),
                 TimingValidationText(timing_issues),
                 source_timing_confident ? kUiPositive : kUiWarning);
-      StatusRow("Queue timing validation",
+      StatusRow(T(Str::kQueueTimingValidation_b8c5),
                 !source_timing_confident
-                    ? "Waiting for valid source timing"
+                    ? T(Str::kWaitingForValidSourceTiming_0704)
                     : (queue_timing_confident
-                           ? "Verified from at least 48 queue markers"
-                           : "Queue-only actions unavailable; other latency signals remain active"),
+                           ? T(Str::kVerifiedFromAtLeast48_4c5f)
+                           : T(Str::kQueueOnlyActionsUnavailableOther_2d1a)),
                 queue_timing_confident
                     ? kUiPositive
                     : (source_timing_confident ? kUiWarning : kUiMuted));
@@ -103,63 +103,63 @@
       const unsigned int ai_frame_time =
           latency_view.ai_frame_time_us;
       const std::string refresh_text =
-          refresh == 0 ? "Not detected" : std::to_string(refresh) + " Hz";
+          refresh == 0 ? T(Str::kNotDetected_cc90) : std::to_string(refresh) + " Hz";
       const std::string multiplier_text =
-          live_multiplier < 2 ? "Not reported"
+          live_multiplier < 2 ? T(Str::kNotReported_055d)
                               : std::to_string(live_multiplier) + "x live";
       const std::string source_cap_text =
           source_cap == 0
-              ? "No queue trim justified"
+              ? T(Str::kNoQueueTrimJustified_ce72)
               : std::to_string(source_cap) + " source FPS (small trim)";
       const std::string source_text =
-          source_fps == 0 ? "Not available"
+          source_fps == 0 ? T(Str::kNotAvailable_5875)
                           : std::to_string(source_fps) + " real FPS estimated";
       const std::string projected_text =
           projected_output == 0
-              ? "Not available"
+              ? T(Str::kNotAvailable_5875)
               : std::to_string(projected_output) + " FPS estimated";
       const std::string queue_text =
           queue_wait == 0
-              ? "Not reported"
+              ? T(Str::kNotReported_055d)
               : std::to_string(queue_wait / 1000.0f).substr(0, 4) +
                     " ms median / " +
                     std::to_string(queue_p95 / 1000.0f).substr(0, 4) +
                     " ms p95";
       const std::string input_text =
           input_to_gpu == 0
-              ? "Input marker not reported"
+              ? T(Str::kInputMarkerNotReported_b1d1)
               : std::to_string(input_to_gpu / 1000.0f).substr(0, 5) +
                     " ms (input sample to GPU end)";
       const std::string ai_text =
           ai_frame_time == 0
-              ? "Not reported"
+              ? T(Str::kNotReported_055d)
               : std::to_string(ai_frame_time / 1000.0f).substr(0, 5) +
                     " ms";
       const std::string pipeline_text =
           pipeline == 0
-              ? "Not reported"
+              ? T(Str::kNotReported_055d)
               : std::to_string(pipeline / 1000.0f).substr(0, 5) +
                     " ms median / " +
                     std::to_string(pipeline_p95 / 1000.0f).substr(0, 5) +
                     " ms p95";
       const std::string gpu_active_text =
           gpu_active == 0
-              ? "Not reported"
+              ? T(Str::kNotReported_055d)
               : std::to_string(gpu_active / 1000.0f).substr(0, 5) +
                     " ms active GPU";
       StatusSectionRow("PERFORMANCE");
-      StatusRow("Display refresh", refresh_text.c_str(), kUiMuted);
-      StatusRow("Active FG multiplier", multiplier_text.c_str(), kUiMuted);
+      StatusRow(T(Str::kDisplayRefresh_b512), refresh_text.c_str(), kUiMuted);
+      StatusRow(T(Str::kActiveFgMultiplier_7ea9), multiplier_text.c_str(), kUiMuted);
       const bool iflip_known =
           latency_view.iflip_known;
       const bool iflip_active =
           latency_view.iflip_active;
-      StatusRow("Independent flip",
-                !iflip_known ? "Not reported"
-                             : (iflip_active ? "Active" : "Inactive"),
+      StatusRow(T(Str::kIndependentFlip_89dc),
+                !iflip_known ? T(Str::kNotReported_055d)
+                             : (iflip_active ? T(Str::kActive_134f) : T(Str::kInactive_ca78)),
                 !iflip_known || iflip_active ? kUiMuted : kUiWarning);
-      StatusRow("Rendered/source FPS", source_text.c_str(), kUiMuted);
-      StatusRow("Estimated displayed FPS", projected_text.c_str(),
+      StatusRow(T(Str::kRenderedSourceFps_6a73), source_text.c_str(), kUiMuted);
+      StatusRow(T(Str::kEstimatedDisplayedFps_dbb1), projected_text.c_str(),
                 latency_view.oversubscribed
                     ? kUiWarning
                     : kUiMuted);
@@ -171,18 +171,18 @@
           observed_source_interval != 0 &&
           static_cast<uint64_t>(queue_wait) * 4ull >=
               observed_source_interval;
-      StatusRow("Median render-queue wait", queue_text.c_str(),
+      StatusRow(T(Str::kMedianRenderQueueWait_1f38), queue_text.c_str(),
                 meaningful_queue ? kUiWarning : kUiMuted);
-      StatusRow("Estimated pipeline latency", pipeline_text.c_str(), kUiMuted);
+      StatusRow(T(Str::kEstimatedPipelineLatency_e45f), pipeline_text.c_str(), kUiMuted);
       HelpMarker(
-          "This is a marker-to-GPU estimate from game/Reflex timestamps, not NVIDIA overlay end-to-end system latency.");
-      StatusRow("GPU active work", gpu_active_text.c_str(), kUiMuted);
-      StatusRow("Input-to-GPU latency", input_text.c_str(), kUiMuted);
-      StatusRow("DLSS-G workload", ai_text.c_str(), kUiMuted);
+          T(Str::kThisIsAMarkerTo_3919));
+      StatusRow(T(Str::kGpuActiveWork_af9e), gpu_active_text.c_str(), kUiMuted);
+      StatusRow(T(Str::kInputToGpuLatency_1ffe), input_text.c_str(), kUiMuted);
+      StatusRow(T(Str::kDlssGWorkload_6e54), ai_text.c_str(), kUiMuted);
       const auto bottleneck =
           static_cast<mfgunlock::pacing::LatencyBottleneck>(
               latency_view.bottleneck);
-      StatusRow("Dominant observed stage",
+      StatusRow(T(Str::kDominantObservedStage_0761),
                 LatencyBottleneckText(bottleneck),
                 bottleneck == mfgunlock::pacing::LatencyBottleneck::kBalanced
                     ? kUiPositive
@@ -192,9 +192,9 @@
       const unsigned int sample_cost =
           latency_view.sample_cost_us;
       const std::string sample_cost_text =
-          sample_cost == 0 ? "Below timer resolution"
+          sample_cost == 0 ? T(Str::kBelowTimerResolution_6f4f)
                            : std::to_string(sample_cost) + " us every 500 ms";
-      StatusRow("Monitoring overhead", sample_cost_text.c_str(), kUiMuted);
+      StatusRow(T(Str::kMonitoringOverhead_fd35), sample_cost_text.c_str(), kUiMuted);
       const unsigned int limit_source =
           mfgunlock::framecount::g_reflex_limit_source.load(
               std::memory_order_relaxed);
@@ -221,20 +221,20 @@
           latency_view.multiplier_approved;
       const unsigned int candidate_multiplier =
           latency_view.multiplier_candidate;
-      StatusSectionRow("GUARD DECISION");
+      StatusSectionRow(T(Str::kGuardDecision_54d0));
       const char* action =
           explicit_source_cap
-              ? "Explicit Reflex output cap has priority"
+              ? T(Str::kExplicitReflexOutputCapHas_0f42)
               : (multiplier_phase !=
                          mfgunlock::latency::MultiplierTrialPhase::kIdle
                      ? MultiplierTrialPhaseText(multiplier_phase)
                      : (limit_source == 2
-                     ? "Queue trim active"
+                     ? T(Str::kQueueTrimActive_4ebe)
                      : (latency_guard_mode ==
                                 mfgunlock::pacing::LatencyGuardMode::kAutomatic
-                            ? "Monitoring; no safe cap change"
-                            : "Read-only monitoring")));
-      StatusRow("Guard action", action,
+                            ? T(Str::kMonitoringNoSafeCapChange_b314)
+                            : T(Str::kReadOnlyMonitoring_4448))));
+      StatusRow(T(Str::kGuardAction_1848), action,
                 limit_source == 2 || explicit_source_cap ||
                         multiplier_override != 0
                     ? kUiPositive : kUiMuted);
@@ -242,7 +242,7 @@
         const std::string cap_text =
             UserSourceCapSummary(user_source_cap) + "; " +
             UserSourceCapStatusText(user_source_cap.status);
-        StatusRow("Output FPS cap", cap_text.c_str(),
+        StatusRow(T(Str::kOutputFpsCap_dfcf), cap_text.c_str(),
                   UserSourceCapColor(user_source_cap.status));
       }
       if (latency_guard_mode ==
@@ -252,7 +252,7 @@
         const auto blocker =
             static_cast<mfgunlock::latency::ResponsiveTrialBlocker>(
                 latency_view.trial_blocker);
-        StatusRow("Responsive eligibility",
+        StatusRow(T(Str::kResponsiveEligibility_550a),
                   ResponsiveTrialBlockerText(blocker),
                   blocker ==
                           mfgunlock::latency::ResponsiveTrialBlocker::kNone
@@ -262,20 +262,20 @@
       if (saved_multiplier >= 2) {
         const std::string saved_text =
             std::to_string(saved_multiplier) + "x (never overwritten)";
-        StatusRow("Saved multiplier", saved_text.c_str(), kUiMuted);
+        StatusRow(T(Str::kSavedMultiplier_d9f3), saved_text.c_str(), kUiMuted);
       }
       if (multiplier_phase !=
           mfgunlock::latency::MultiplierTrialPhase::kIdle) {
-        StatusRow("Responsive trial", MultiplierTrialPhaseText(multiplier_phase),
+        StatusRow(T(Str::kResponsiveTrial_24b7), MultiplierTrialPhaseText(multiplier_phase),
                   multiplier_accepted ? kUiPositive : kUiWarning);
-        StatusRow("Trial reason", ResponsiveTrialReasonText(multiplier_reason),
+        StatusRow(T(Str::kTrialReason_fc15), ResponsiveTrialReasonText(multiplier_reason),
                   kUiMuted);
         if (approved_multiplier >= 3 &&
             approved_multiplier < saved_multiplier) {
           const std::string approved_text =
               std::to_string(approved_multiplier) +
               "x is the last measured-beneficial step";
-          StatusRow("Last approved multiplier", approved_text.c_str(),
+          StatusRow(T(Str::kLastApprovedMultiplier_f1fb), approved_text.c_str(),
                     kUiPositive);
         }
         if (candidate_multiplier >= 3 &&
@@ -283,7 +283,7 @@
           const std::string candidate_text =
               std::to_string(approved_multiplier) + "x -> " +
               std::to_string(candidate_multiplier) + "x";
-          StatusRow("Current trial step", candidate_text.c_str(),
+          StatusRow(T(Str::kCurrentTrialStep_8c5c), candidate_text.c_str(),
                     kUiWarning);
         }
         const unsigned int baseline_samples =
@@ -293,7 +293,7 @@
         const std::string window_text =
             "baseline " + std::to_string(baseline_samples) +
             "/8; current " + std::to_string(trial_samples) + "/8";
-        StatusRow("Measurement windows", window_text.c_str(), kUiMuted);
+        StatusRow(T(Str::kMeasurementWindows_09ce), window_text.c_str(), kUiMuted);
         const unsigned int baseline_pipeline =
             latency_view.multiplier_baseline_pipeline_us;
         const unsigned int baseline_p95 =
@@ -310,32 +310,26 @@
               std::to_string(trial_pipeline / 1000.0f).substr(0, 5) +
               "/" + std::to_string(trial_p95 / 1000.0f).substr(0, 5) +
               " ms measured (median/p95)";
-          StatusRow("Pipeline comparison", comparison.c_str(), kUiMuted);
+          StatusRow(T(Str::kPipelineComparison_d7b8), comparison.c_str(), kUiMuted);
         }
       }
       if (source_cap != 0 && limit_source != 2 &&
           !user_source_cap.requested)
-        StatusRow("Potential automatic trim", source_cap_text.c_str(),
+        StatusRow(T(Str::kPotentialAutomaticTrim_458e), source_cap_text.c_str(),
                   kUiWarning);
       if (active_source_cap != 0) {
         const std::string active_text =
             std::to_string(active_source_cap) + " source FPS";
-        StatusRow("Active queue-trim cap", active_text.c_str(), kUiPositive);
+        StatusRow(T(Str::kActiveQueueTrimCap_b233), active_text.c_str(), kUiPositive);
       }
       ImGui::EndTable();
     }
     ImGui::TextDisabled(
-        "Automatic tests fixed multipliers one step at a time (6x -> 5x -> 4x -> 3x)\n"
-        "when input/pipeline latency, a GPU-bound latency proxy, queueing, output saturation or DLSS-G workload justifies a trial.\n"
-        "Each step uses two eight-sample windows and is kept only after lower measured latency.\n"
-        "It periodically restores the saved multiplier for a new baseline and never goes below 3x.\n"
-        "An explicit Reflex output-FPS cap remains unchanged across multiplier tests; queue trim never replaces it.\n"
-        "A small source-rate trim is used only as a verified queue-pressure fallback when no explicit cap is set.\n"
-        "It does not replace Reflex or change Dynamic MFG, VSync or G-SYNC behavior.");
+        T(Str::kAutomaticTestsFixedMultipliersOne_729f));
     ImGui::TextDisabled(
-        "Real/source FPS comes from game markers. Estimated output FPS is source FPS x the driver-reported multiplier; it is not a displayed-frame measurement.");
+        T(Str::kRealSourceFpsComesFrom_df17));
     HelpMarker(
-        "ReShade and NVIDIA overlays may expose rendered/source FPS depending on their selected metric. Confirm actual displayed output with FrameView or PresentMon Displayed FPS.");
+        T(Str::kReshadeAndNvidiaOverlaysMay_3599));
     }
   }
 

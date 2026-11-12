@@ -28,7 +28,7 @@ static bool DlssSrSuggested() {
   mfgunlock::xemfg::Status model;
   return TryModelStatus(model) && !model.contexts;
 }
-static void DlssSrSaveFailed(bool failed) { if(failed) ui::Notice("The DLSS-SR input was not saved: settings could not be written."); }
+static void DlssSrSaveFailed(bool failed) { if(failed) ui::Notice(T(Str::kTheDlssSrInputWas_81e8)); }
 void Draw() {
   ++panelDraws;
   auto& s=State(); const auto status=Snapshot();
@@ -40,18 +40,18 @@ void Draw() {
   // frame keeps the last answer instead of making the label flicker.
   static const char* generator="XeMFG";
   if(const auto controls=ControlsSnapshot();!controls.modelUpdating && !controls.cudaUpdating && controls.modelInitialized)
-    generator=!controls.modelPort?"XeFG 2x (stock)":controls.cudaState==1 && controls.cudaLaunches?"XeMFG (CUDA)":
-        generating?"XeMFG (shaders)":"XeMFG";
+    generator=!controls.modelPort?T(Str::kXefg2xStock_b63c):controls.cudaState==1 && controls.cudaLaunches?T(Str::kXemfgCuda_9d34):
+        generating?T(Str::kXemfgShaders_d7bf):"XeMFG";
   bool vulkanGame=false; // 1.7 (plan F): the DX12 input notices below do not apply
 #ifdef MFGUNLOCK_XEMFG_VULKAN
   // 1.7 (plan F): a Vulkan game runs through the Vulkan host, not the DX12 output.
   if(const auto vk=vulkan::Status();vk.game) {
     vulkanGame=true;
     const bool vkGenerating=vk.active && vk.frames>1;
-    const char* waiting=unavailable?"XeMFG unavailable":vk.active && vk.dynamic?"Dynamic MFG has paused generation":vk.active?"Frame generation is off in the game"
-        :vk.reason=="no_dlss_inputs"?"Waiting for DLSS (turn DLSS on in the game)"
-        :vk.reason=="game_frame_generation"?"Waiting for the game's frame generation switch":"Waiting for the game";
-    ui::Hero(multiplier.c_str(),"XeMFG","Vulkan",vkGenerating?"Generating frames":waiting,vkGenerating);
+    const char* waiting=unavailable?T(Str::kXemfgUnavailable_77cc):vk.active && vk.dynamic?T(Str::kDynamicMfgHasPausedGeneration_5b1e):vk.active?T(Str::kFrameGenerationIsOffIn_1fd3)
+        :vk.reason=="no_dlss_inputs"?T(Str::kWaitingForDlssTurnDlss_0df4)
+        :vk.reason=="game_frame_generation"?T(Str::kWaitingForTheGameS_cdcf):T(Str::kWaitingForTheGame_18de);
+    ui::Hero(multiplier.c_str(),"XeMFG",T(Str::kVulkan_d012),vkGenerating?T(Str::kGeneratingFrames_c5e5):waiting,vkGenerating);
     if(vk.active && vk.baseFpsMilli && vk.outputFpsMilli) {
       char line[96];
       snprintf(line,sizeof(line),"%.0f base fps -> %.0f fps output",vk.baseFpsMilli/1000.0,vk.outputFpsMilli/1000.0);
@@ -73,27 +73,27 @@ void Draw() {
     }
   } else
 #endif
-  ui::Hero(multiplier.c_str(),generator,"DX12",generating?"Generating frames":
-      unavailable?"XeMFG unavailable":paused?"Game has paused frame generation":status.output?"Waiting for compatible frame inputs":"Waiting for the game",generating);
+  ui::Hero(multiplier.c_str(),generator,"DX12",generating?T(Str::kGeneratingFrames_c5e5):
+      unavailable?T(Str::kXemfgUnavailable_77cc):paused?T(Str::kGameHasPausedFrameGeneration_126c):status.output?T(Str::kWaitingForCompatibleFrameInputs_4ad3):T(Str::kWaitingForTheGame_18de),generating);
   const auto ref=reframework::Snapshot();
-  if(ref.knownMonitorIssue) ui::Notice("This REFramework build has an observed XeFG hook-monitor conflict. Update REFramework to a version with the XeFG monitor fix.");
+  if(ref.knownMonitorIssue) ui::Notice(T(Str::kThisReframeworkBuildHasAn_cf1b));
   const auto report=[] { return CompatibilityReport()+"\n"+mfgunlock::system::Report(); };
   if(s.retirementFailed || !reframework::Safe(ref.result)) {
-    ui::ProblemCard problem("##xe_retirement","XeMFG stopped",ui::Danger);
-    ImGui::TextWrapped("Output retirement is blocked. Restart the game before creating another XeMFG output.");
+    ui::ProblemCard problem("##xe_retirement",T(Str::kXemfgStopped_ebff),ui::Danger);
+    ImGui::TextWrapped(T(Str::kOutputRetirementIsBlockedRestart_4fb4));
     ui::SupportActions(report);
   }
   if(unavailable) {
-    ui::ProblemCard problem("##xe_startup","XeMFG could not start",ui::Danger);
+    ui::ProblemCard problem("##xe_startup",T(Str::kXemfgCouldNotStart_0f7a),ui::Danger);
     mfgunlock::xemfg::Status model;
     TryModelStatus(model);
     RuntimeFileReport files[2]{};
     if(RuntimeFilesRejected(files)) {
       // 1.5.5: name each file's problem and offer the install here.
       const auto describe=[](const char* name,const RuntimeFileReport& file,const char* supported) {
-        const std::string version=file.version[0]?file.version:"unknown version";
+        const std::string version=file.version[0]?file.version:T(Str::kUnknownVersion_7e55);
         const auto state=file.state==RuntimeFileState::Missing?std::string("missing"):
-            file.state==RuntimeFileState::Unreadable?std::string("cannot be read"):
+            file.state==RuntimeFileState::Unreadable?std::string(T(Str::kCannotBeRead_b119)):
             file.state==RuntimeFileState::Different?version+", not the supported "+supported:
             file.state==RuntimeFileState::AcceptedOlder?version+" (supported)":std::string("supported");
         return std::string(name)+": "+state;
@@ -104,7 +104,7 @@ void Draw() {
           +"\nInstall the supported files, close the game when the helper asks, then start it again.";
       ui::Notice(text.c_str());
       ui::ButtonRow actions(1);
-      if(actions("Install / update files","Opens the external helper with the list of files it will change. Nothing changes until you confirm; it then waits for the game to exit and keeps backups."))
+      if(actions(T(Str::kInstallUpdateFiles_73d5),T(Str::kOpensTheExternalHelperWith_d3e3)))
         dependencies::Repair();
       const auto repair=dependencies::Snapshot();
       if(repair.helperRunning || !repair.message.empty()) ui::Description(repair.message.c_str());
@@ -116,55 +116,53 @@ void Draw() {
       ui::Notice(text.c_str());
     }
     else if(strstr(model.detail,"unreviewed_Intel_runtime_pair"))
-      ui::Notice("This game's Intel runtime pair is unsupported. Update XeFG and XeLL together, including the mod loader's active copies, then restart.");
+      ui::Notice(T(Str::kThisGameSIntelRuntime_283d));
     else if(strstr(model.detail,"remove_OptiScaler") || strstr(model.detail,"other_mfg_plugin") || strstr(model.detail,"remove_companion"))
-      ui::Notice("Another frame-generation loader is active. Use this addon with ReShade directly, then restart the game.");
-    else ui::Notice("XeMFG could not initialize. Save the support files to see the reason.");
+      ui::Notice(T(Str::kAnotherFrameGenerationLoaderIs_1e91));
+    else ui::Notice(T(Str::kXemfgCouldNotInitializeSave_b8d3));
     ui::SupportActions(report);
   }
   else if(vulkanGame) {}
-  else if(!status.output && ngx::Saved()==1) ui::Notice("DLSS-SR input saved. Restart the game to apply it.",ui::Accent);
+  else if(!status.output && ngx::Saved()==1) ui::Notice(T(Str::kDlssSrInputSavedRestart_73c0),ui::Accent);
   else if(!status.output && DlssSrSuggested()) {
-    ui::Notice("This game has no frame generation XeMFG can use, but it runs DLSS Super Resolution. "
-        "The experimental DLSS-SR input can feed XeMFG from it. Applies after a restart.");
+    ui::Notice(T(Str::kThisGameHasNoFrame_9117));
     static bool failed{};
     ui::ButtonRow actions(1);
-    if(actions("Enable DLSS-SR input (experimental)","Saves [Adapters] DlssSr=1 in MFGAdaUnlock.ini. The camera is assumed and the HUD is interpolated with the scene."))
+    if(actions(T(Str::kEnableDlssSrInputExperimental_6293),T(Str::kSavesAdaptersDlsssr1In_bc18)))
       failed=!ngx::Save(true);
     DlssSrSaveFailed(failed);
   }
   // Only meaningful when Streamline is in the process: without it (a game with
   // no frame generation) nothing was loaded too late (1.5.1, KCD2).
   else if(!status.output && strstr(status.detail,"needs early Streamline") && GetModuleHandleW(L"sl.interposer.dll"))
-    ui::Notice("XeMFG was loaded too late to take over presentation safely. Restart the game with ReShade and this addon loaded at startup.");
-  else if(!status.output && strstr(status.detail,"no DLSS-G plugin")) ui::Notice(status.detail);
+    ui::Notice(T(Str::kXemfgWasLoadedTooLate_3588));
+  else if(!status.output && strstr(status.detail,T(Str::kNoDlssGPlugin_3dff))) ui::Notice(status.detail);
   else if(!status.output && !GetModuleHandleW(L"sl.interposer.dll") && !ngx::Configured())
-    ui::Notice("No frame-generation inputs from this game yet. If it has no frame generation of its own, select DLSS as the upscaler: "
-        "the panel then offers the experimental DLSS-SR input.");
-  else if(!status.output) ui::Notice("Load a scene with Frame Generation enabled. XeMFG currently uses Streamline inputs in DirectX 12.");
-  else if(paused) ui::Notice("The game's latest request has frame generation disabled. If it is enabled in the game, copy Diagnostics so the connection can be checked.");
-  else if(status.enabled && status.sdkResult<0) ui::Notice("Frame generation is recovering. If this persists, switch FG off and on in the game.");
+    ui::Notice(T(Str::kNoFrameGenerationInputsFrom_70b6));
+  else if(!status.output) ui::Notice(T(Str::kLoadASceneWithFrame_62dd));
+  else if(paused) ui::Notice(T(Str::kTheGameSLatestRequest_6e82));
+  else if(status.enabled && status.sdkResult<0) ui::Notice(T(Str::kFrameGenerationIsRecoveringIf_7684));
   else if(status.output && !status.enabled) ui::Description(status.detail);
   ui::SessionNotice(report,false);
   static PanelPage page=PanelPage::General;
   if(ImGui::GetContentRegionAvail().x<ImGui::GetFontSize()*26.f) {
     int selected=int(page); ImGui::SetNextItemWidth(-1);
-    if(ImGui::Combo("##xe_page",&selected,"General\0Quality\0Latency\0Diagnostics\0")) page=PanelPage(selected);
+    if(ImGui::Combo("##xe_page",&selected,T(Str::kGeneralQualityLatencyDiagnostics_b9c8))) page=PanelPage(selected);
   } else if(const float tab=ui::TabWidth(4); ui::BeginTabs("##xemfg_pages")) {
-    if(ui::TabItem("General",tab)) { page=PanelPage::General; ImGui::EndTabItem(); }
-    if(ui::TabItem("Quality",tab)) { page=PanelPage::Quality; ImGui::EndTabItem(); }
-    if(ui::TabItem("Latency",tab)) { page=PanelPage::Latency; ImGui::EndTabItem(); }
-    if(ui::TabItem("Diagnostics",tab)) { page=PanelPage::Diagnostics; ImGui::EndTabItem(); }
+    if(ui::TabItem(T(Str::kGeneral_fd0b),tab)) { page=PanelPage::General; ImGui::EndTabItem(); }
+    if(ui::TabItem(T(Str::kQuality_bec6),tab)) { page=PanelPage::Quality; ImGui::EndTabItem(); }
+    if(ui::TabItem(T(Str::kLatency_5ef9),tab)) { page=PanelPage::Latency; ImGui::EndTabItem(); }
+    if(ui::TabItem(T(Str::kDiagnostics_1397),tab)) { page=PanelPage::Diagnostics; ImGui::EndTabItem(); }
     ui::EndTabs();
   }
   if(page==PanelPage::General) {
-    ui::Section("Frame generation","Keep Frame Generation enabled in the game.");
+    ui::Section(T(Str::kFrameGeneration_83ac),T(Str::kKeepFrameGenerationEnabledIn_1cbc));
     ui::Card card("##xemfg_generation");
     ui::BackendSelector();
     int choice=int(s.multiplier.load())-2;
     static bool multiplierSaveFailed{};
-    ui::Setting("##xe_multiplier_row","Frame multiplier","Applies while playing. 2x adds up to one generated frame per rendered frame; 4x adds up to three. Higher values use more GPU time.",[&] {
-      constexpr const char* kMultipliers[]={"2x","3x","4x","5x","6x"};
+    ui::Setting("##xe_multiplier_row",T(Str::kFrameMultiplier_dfe5),T(Str::kAppliesWhilePlaying2xAdds_6962),[&] {
+      const char* kMultipliers[] = {"2x","3x","4x","5x","6x"};
       if(ui::Segmented("##xe_multiplier",choice,kMultipliers,5)) {
         const auto ini=backend::Directory()/L"MFGAdaUnlock.ini";
         const auto text=std::to_wstring(choice+2);
@@ -172,32 +170,31 @@ void Draw() {
         if(!multiplierSaveFailed) { s.multiplier=uint32_t(choice+2); SetGameMultiplier(s.multiplier); }
       }
     });
-    if(multiplierSaveFailed) ui::Notice("Multiplier was not applied: settings could not be saved.");
+    if(multiplierSaveFailed) ui::Notice(T(Str::kMultiplierWasNotAppliedSettings_9d14));
     // Shown only where it can matter: opted in, or a game that runs DLSS-SR alone.
     if(ngx::Configured() || ngx::Saved()>=0 || DlssSrSuggested()) {
       bool enabled=ngx::Saved()>=0?ngx::Saved()==1:ngx::Configured();
       static bool failed{};
-      ui::Setting("##xe_dlss_sr_row","DLSS-SR input (experimental)","For games without frame generation that use DLSS Super Resolution. "
-          "The camera is assumed and the HUD is interpolated with the scene. Requires a game restart.",[&] {
+      ui::Setting("##xe_dlss_sr_row",T(Str::kDlssSrInputExperimental_e488),T(Str::kForGamesWithoutFrameGeneration_b2e8),[&] {
         if(ImGui::Checkbox("##xe_dlss_sr",&enabled)) failed=!ngx::Save(enabled);
       });
       DlssSrSaveFailed(failed);
-      if(ngx::Saved()>=0 && (ngx::Saved()==1)!=ngx::Configured()) ui::Description("Restart the game to apply this change.");
+      if(ngx::Saved()>=0 && (ngx::Saved()==1)!=ngx::Configured()) ui::Description(T(Str::kRestartTheGameToApply_2696));
     }
   }
   DrawControls(page);
-  if(page==PanelPage::Diagnostics && ui::Expander("All settings (advanced)")) {
-    ui::Description("Applies after a game restart. Change these only to test or to diagnose a problem.");
+  if(page==PanelPage::Diagnostics && ui::Expander(T(Str::kAllSettingsAdvanced_cf72))) {
+    ui::Description(T(Str::kAppliesAfterAGameRestart_e6f3));
     ui::advanced::Draw(ui::advanced::kXeMfg);
     bool dlssSr=ngx::Saved()>=0?ngx::Saved()==1:ngx::Configured();
     static bool dlssSrFailed{};
-    ui::Setting("##xe_all_dlss_sr","DLSS-SR input (experimental)","For games without frame generation that use DLSS Super Resolution. The camera is assumed and the HUD is interpolated with the scene.",[&] {
+    ui::Setting("##xe_all_dlss_sr",T(Str::kDlssSrInputExperimental_e488),T(Str::kForGamesWithoutFrameGeneration_a97e),[&] {
       if(ImGui::Checkbox("##xe_all_dlss_sr_value",&dlssSr)) dlssSrFailed=!ngx::Save(dlssSr);
     });
     DlssSrSaveFailed(dlssSrFailed);
-    ImGui::Separator(); ui::Description("Vulkan");
+    ImGui::Separator(); ui::Description(T(Str::kVulkan_d012));
     ui::advanced::Draw(ui::advanced::kVulkan);
-    ImGui::Separator(); ui::Description("Diagnostics");
+    ImGui::Separator(); ui::Description(T(Str::kDiagnostics_1397));
     ui::advanced::Draw(ui::advanced::kDiagnostics);
     ui::advanced::Result();
   }

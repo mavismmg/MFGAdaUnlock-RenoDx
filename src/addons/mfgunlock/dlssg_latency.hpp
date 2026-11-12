@@ -15,21 +15,21 @@ inline void Draw() {
   }();
   static bool saveFailed{};
   ui::Card card("##dlssg_latency_route");
-  ui::Readout("##dlssg_latency_current","Active latency output","NVIDIA Reflex",
-      "Preserves the game's native Reflex options, markers and sleep. XeMFG's own XeLL route does not take over the DLSS-G swapchain.",ui::Accent);
-  ui::Setting("##dlssg_latency_requested","Latency output",
-      "Experimental XeLL is unavailable in this candidate. Its marker policy is tested, but switching its SDK mode requires verified GPU quiescence and native DLSS-G runtime validation.",[&] {
-    if(ImGui::BeginCombo("##dlssg_latency_choice","NVIDIA Reflex (recommended)")) {
-      if(ImGui::Selectable("NVIDIA Reflex",true)) {
+  ui::Readout("##dlssg_latency_current",T(Str::kActiveLatencyOutput_3ade),T(Str::kNvidiaReflex_dea0),
+      T(Str::kPreservesTheGameSNative_8402),ui::Accent);
+  ui::Setting("##dlssg_latency_requested",T(Str::kLatencyOutput_7886),
+      T(Str::kExperimentalXellIsUnavailableIn_52ad),[&] {
+    if(ImGui::BeginCombo("##dlssg_latency_choice",T(Str::kNvidiaReflexRecommended_f8be))) {
+      if(ImGui::Selectable(T(Str::kNvidiaReflex_dea0),true)) {
         saveFailed=!config::Save(backend::Directory()/L"MFGAdaUnlock.ini",{{L"DLSSG.Latency",L"Output",L"Reflex"}});
         if(!saveFailed) preference=L"Reflex";
       }
-      ImGui::BeginDisabled(); ImGui::Selectable("XeLL (unavailable)",false); ImGui::EndDisabled();
-      ui::Tooltip("No safe mode-switch/quiescence contract has been demonstrated for the NVIDIA-owned queues. Native Reflex remains active.");
+      ImGui::BeginDisabled(); ImGui::Selectable(T(Str::kXellUnavailable_922b),false); ImGui::EndDisabled();
+      ui::Tooltip(T(Str::kNoSafeModeSwitchQuiescence_5f62));
       ImGui::EndCombo();
     }
   });
   if(_wcsicmp(preference.c_str(),L"Reflex")) ui::Notice("The requested latency route is unavailable. Native Reflex remains active.");
-  if(saveFailed) ui::Notice("The latency preference could not be saved. Native Reflex remains active.");
+  if(saveFailed) ui::Notice(T(Str::kTheLatencyPreferenceCouldNot_92c5));
 }
 }

@@ -16,45 +16,45 @@
     }
     QueueProviderVramEstimateFromCapture();
     ImGui::Spacing();
-    ImGui::TextDisabled("DLSS RUNTIME INFORMATION");
+    ImGui::TextDisabled(T(Str::kDlssRuntimeInformation_eb65));
     ImGui::Separator();
     if (ImGui::BeginTable("##dlss_information", 2,
                           ImGuiTableFlags_SizingStretchProp |
                               ImGuiTableFlags_RowBg)) {
-      ImGui::TableSetupColumn("Feature", ImGuiTableColumnFlags_WidthStretch,
+      ImGui::TableSetupColumn(T(Str::kFeature_02dd), ImGuiTableColumnFlags_WidthStretch,
                               0.42f);
-      ImGui::TableSetupColumn("Active mode", ImGuiTableColumnFlags_WidthStretch,
+      ImGui::TableSetupColumn(T(Str::kActiveMode_ef2a), ImGuiTableColumnFlags_WidthStretch,
                               0.58f);
-      StatusRow("Super Resolution", super_resolution_preset.c_str(),
+      StatusRow(T(Str::kSuperResolution_3fe6), super_resolution_preset.c_str(),
                 super_resolution_active
                     ? kUiPositive
                     : (super_resolution_configured ? kUiWarning : kUiMuted));
-      StatusRow("Frame Generation", frame_generation_preset.c_str(),
+      StatusRow(T(Str::kFrameGeneration_0acc), frame_generation_preset.c_str(),
                 dlssg_seen ? kUiPositive : kUiMuted);
-      StatusRow("Ray Reconstruction", ray_reconstruction_preset.c_str(),
+      StatusRow(T(Str::kRayReconstruction_5b85), ray_reconstruction_preset.c_str(),
                 ray_reconstruction_active
                     ? kUiPositive
                     : (ray_reconstruction_configured ? kUiWarning : kUiMuted));
-      StatusRow("DLSS-G runtime", dlssg_text.c_str(),
+      StatusRow(T(Str::kDlssGRuntime_e183), dlssg_text.c_str(),
                 dlssg_seen ? kUiPositive : kUiMuted);
-      StatusRow("Streamline runtime", streamline_text.c_str(),
+      StatusRow(T(Str::kStreamlineRuntime_4bab), streamline_text.c_str(),
                 streamline_seen ? kUiPositive : kUiMuted);
       ImGui::EndTable();
     }
     ImGui::TextDisabled(
-        "Read-only information reported by NVIDIA. Game-controlled modes may not expose a preset name.");
+        T(Str::kReadOnlyInformationReportedBy_f045));
     HelpMarker(
-        "NVIDIA exposes one shared preset/mode field for Super Resolution and Ray Reconstruction. The addon displays it only when the corresponding feature reports active or configured feedback, and never changes the selected model or render resolution.");
+        T(Str::kNvidiaExposesOneSharedPreset_928e));
 
     ImGui::Spacing();
-    ImGui::TextDisabled("VRAM / RESOURCE HEALTH");
+    ImGui::TextDisabled(T(Str::kVramResourceHealth_9614));
     ImGui::Separator();
     if (ImGui::BeginTable("##vram_information", 2,
                           ImGuiTableFlags_SizingStretchProp |
                               ImGuiTableFlags_RowBg)) {
-      ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthStretch,
+      ImGui::TableSetupColumn(T(Str::kMetric_1321), ImGuiTableColumnFlags_WidthStretch,
                               0.42f);
-      ImGui::TableSetupColumn("Observation",
+      ImGui::TableSetupColumn(T(Str::kObservation_118d),
                               ImGuiTableColumnFlags_WidthStretch, 0.58f);
       if (g_vram_dxgi_seen.load(std::memory_order_acquire)) {
         const uint64_t usage =
@@ -65,15 +65,15 @@
             FormatMemoryBytes(usage) + " / " + FormatMemoryBytes(budget);
         const uint64_t headroom = budget > usage ? budget - usage : 0;
         const std::string headroom_text = FormatMemoryBytes(headroom);
-        StatusRow("Process local VRAM", usage_text.c_str(),
+        StatusRow(T(Str::kProcessLocalVram_2d89), usage_text.c_str(),
                   budget != 0 && usage * 100ull >= budget * 90ull
                       ? kUiWarning : kUiMuted);
-        StatusRow("Budget headroom", headroom_text.c_str(),
+        StatusRow(T(Str::kBudgetHeadroom_2669), headroom_text.c_str(),
                   budget != 0 && usage * 100ull >= budget * 90ull
                       ? kUiWarning : kUiMuted);
         const std::string reservation_text = FormatMemoryBytes(
             g_vram_local_available.load(std::memory_order_relaxed));
-        StatusRow("Available for reservation", reservation_text.c_str(),
+        StatusRow(T(Str::kAvailableForReservation_74c9), reservation_text.c_str(),
                   kUiMuted);
         const uint64_t shared_usage =
             g_vram_nonlocal_usage.load(std::memory_order_relaxed);
@@ -82,16 +82,16 @@
               FormatMemoryBytes(shared_usage) + " / " +
               FormatMemoryBytes(
                   g_vram_nonlocal_budget.load(std::memory_order_relaxed));
-          StatusRow("Process shared GPU memory", shared_text.c_str(),
+          StatusRow(T(Str::kProcessSharedGpuMemory_039c), shared_text.c_str(),
                     kUiMuted);
         }
       } else {
         StatusRow(
-            "Process local VRAM",
+            T(Str::kProcessLocalVram_2d89),
             g_render_api.load(std::memory_order_relaxed) ==
                     DetectedRenderApi::kVulkan
-                ? "DXGI budget unavailable on Vulkan"
-                : "Waiting for DXGI budget",
+                ? T(Str::kDxgiBudgetUnavailableOnVulkan_87a0)
+                : T(Str::kWaitingForDxgiBudget_836e),
             kUiMuted);
       }
 
@@ -108,13 +108,13 @@
                   std::memory_order_relaxed));
           break;
         case mfgunlock::framecount::VramEstimateStatus::kPending:
-          estimate_text = "Waiting for next DLSS-G state query";
+          estimate_text = T(Str::kWaitingForNextDlssG_c147);
           break;
         case mfgunlock::framecount::VramEstimateStatus::kUnsupported:
-          estimate_text = "Unavailable on this runtime/game";
+          estimate_text = T(Str::kUnavailableOnThisRuntimeGame_31a1);
           break;
         case mfgunlock::framecount::VramEstimateStatus::kFailed:
-          estimate_text = "Provider did not return an estimate";
+          estimate_text = T(Str::kProviderDidNotReturnAn_0e8d);
           estimate_color = kUiWarning;
           break;
         default:
@@ -124,7 +124,7 @@
                       std::memory_order_relaxed)));
           break;
       }
-      StatusRow("DLSS-G estimated VRAM", estimate_text.c_str(),
+      StatusRow(T(Str::kDlssGEstimatedVram_42cd), estimate_text.c_str(),
                 estimate_color);
 
       const bool native_ready =
@@ -146,9 +146,9 @@
             static_cast<uint64_t>(delta >= 0 ? delta : -delta);
         const std::string delta_text =
             std::string(delta >= 0 ? "+" : "-") +
-            (delta_bytes == 0 ? "0 MiB" : FormatMemoryBytes(delta_bytes)) +
+            (delta_bytes == 0 ? T(Str::k0Mib_18db) : FormatMemoryBytes(delta_bytes)) +
             " with UI composition";
-        StatusRow("Measured UI-composition delta", delta_text.c_str(),
+        StatusRow(T(Str::kMeasuredUiCompositionDelta_072c), delta_text.c_str(),
                   kUiMuted);
       }
 
@@ -156,10 +156,10 @@
           mfgunlock::framecount::g_vram_volatile_input_count.load(
               std::memory_order_relaxed);
       const std::string lifecycle_text = volatile_inputs == 0
-          ? "Optimized: relevant inputs valid until Present"
+          ? T(Str::kOptimizedRelevantInputsValidUntil_edf3)
           : std::to_string(volatile_inputs) +
                 " input(s) may require transient copies";
-      StatusRow("Input lifetimes", lifecycle_text.c_str(),
+      StatusRow(T(Str::kInputLifetimes_656b), lifecycle_text.c_str(),
                 volatile_inputs == 0 ? kUiPositive : kUiWarning);
       const unsigned int flags =
           mfgunlock::framecount::g_vram_estimate_flags.load(
@@ -167,14 +167,14 @@
       const bool retained_while_off =
           (flags & static_cast<unsigned int>(
                        sl::DLSSGFlags::eRetainResourcesWhenOff)) != 0;
-      StatusRow("Resources while FG is off",
-                retained_while_off ? "Retained by game request"
-                                   : "Not retained by game request",
+      StatusRow(T(Str::kResourcesWhileFgIsOff_9b7f),
+                retained_while_off ? T(Str::kRetainedByGameRequest_7afd)
+                                   : T(Str::kNotRetainedByGameRequest_3b1a),
                 retained_while_off ? kUiWarning : kUiMuted);
       ImGui::EndTable();
     }
     ImGui::TextDisabled(
-        "Read-only diagnostics. Process usage includes the whole game; the provider estimate is approximate.");
+        T(Str::kReadOnlyDiagnosticsProcessUsage_e98a));
     HelpMarker(
-        "This page temporarily captures resource dimensions, formats and lifetimes only; it never reads pixels or stores resource addresses. The addon does not reserve VRAM, rewrite resource lifetimes, or disable the game's retain-resources flag. Close this page to stop metadata capture.");
+        T(Str::kThisPageTemporarilyCapturesResource_7047));
   }

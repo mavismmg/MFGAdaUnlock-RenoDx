@@ -7,6 +7,9 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 # binary. Debug retains _DEBUG, assertions and /Od; iterator wrappers would
 # change those wire layouts. Do not silence the layout assertions with NDEBUG.
 add_compile_definitions($<$<CONFIG:Debug>:_ITERATOR_DEBUG_LEVEL=0>)
+# 1.10.0 (plan 5): the panel's language tables are UTF-8 (Japanese, Korean,
+# Chinese); every target that compiles the panel must read them as UTF-8.
+add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 set(RENODX_SOURCE_DIR "" CACHE PATH "Existing RenoDX checkout with dependencies")
 if(NOT EXISTS "${RENODX_SOURCE_DIR}/external/Streamline/include/sl.h")
   message(FATAL_ERROR "Set RENODX_SOURCE_DIR to the existing RenoDX build tree")
@@ -24,6 +27,10 @@ add_executable(support_files_tests support_files_tests.cpp)
 target_compile_definitions(support_files_tests PRIVATE NOMINMAX)
 target_compile_features(support_files_tests PRIVATE cxx_std_20)
 add_test(NAME support_files COMMAND support_files_tests)
+# 1.10.0 (plan 5): the panel's six languages.
+add_executable(i18n_tests i18n_tests.cpp)
+target_compile_definitions(i18n_tests PRIVATE NOMINMAX)
+add_test(NAME i18n COMMAND i18n_tests)
 add_executable(streamline_log_tests streamline_log_tests.cpp)
 target_compile_definitions(streamline_log_tests PRIVATE NOMINMAX)
 target_compile_features(streamline_log_tests PRIVATE cxx_std_20)
@@ -353,6 +360,9 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 if(Python3_Interpreter_FOUND)
   add_test(NAME research_workflow COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/research_workflow_tests.py")
   add_test(NAME ini_panel_parity COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ini_panel_parity_tests.py")
+  # 1.10.0 (plan 5): no panel text outside the language tables; tables in step.
+  add_test(NAME panel_strings COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/extract_panel_strings.py" --check)
+  add_test(NAME panel_tables COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/sync_panel_tables.py" --check)
   add_test(NAME xemfg_replay_corpus COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/xemfg_replay_tests.py")
   add_test(NAME quality_refinement
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/quality_refinement_tests.py")
