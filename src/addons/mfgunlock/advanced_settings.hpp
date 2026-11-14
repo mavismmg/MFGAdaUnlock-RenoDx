@@ -70,6 +70,8 @@ inline constexpr Option kDlssG[]{
   {L"DLSSG",L"PreAdaAdmission",Str::kRtx2030FrameGeneration_6d86,Str::kRtx2030OnlyAdmits_076f,L"1",MFGUNLOCK_CHOICES(kOnOff)},
   // 1.10.0 (dashdogy A1, ngx_requirements.hpp).
   {L"DLSSG",L"PreAdaRequirementsAnswer",Str::kRtx2030StreamlineStartAnswer_a1r1,Str::kRtx2030OnlyWhenNgxs_a1r2,L"1",MFGUNLOCK_CHOICES(kOnOff)},
+  // 1.10.0 (plan XMX/Vulkan/VRAM, item 4, force_fg.hpp).
+  {L"DLSSG",L"ForceFrameGeneration",Str::kForceDlssFrameGeneration_f4g1,Str::kForStreamlineGamesWith_f4g2,L"0",MFGUNLOCK_CHOICES(kOnOff)},
   {L"DLSSG",L"AutoEarlyLoad",Str::kRtx2030AutomaticEarly_ece5,Str::kRtx2030OnlyThe_996e,L"1",MFGUNLOCK_CHOICES(kOnOff)},
   {L"DLSSG",L"XmxJitter",Str::kXmxMultiFrameWithJittered_cab2,Str::kXmxGamesWithJitteredMotion_3256,L"1",MFGUNLOCK_CHOICES(kOnOff)},
   // 1.10.0: Streamline's own log, for support (streamline_log.hpp).

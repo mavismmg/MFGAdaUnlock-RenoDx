@@ -926,3 +926,5 @@
 /* kNvidiaSSetting_d4m0 */ "NVIDIA 설정",
 /* kVerbose_d4m1 */ "상세",
 /* kStandardLevel_d4m2 */ "표준",
+/* kForceDlssFrameGeneration_f4g1 */ "프레임 생성이 없는 게임의 DLSS 프레임 생성",
+/* kForStreamlineGamesWith_f4g2 */ "실험적. DLSS Super Resolution에 Streamline을 쓰지만 프레임 생성이 없는 게임용: 애드온이 Streamline에 DLSS 프레임 생성을 요청하고 패널의 배수로 켭니다(선택한 경우 XMX도). 게임의 Reflex와 애드온 조기 로드가 필요하며, 자체 프레임 생성이 있는 게임은 변경하지 않습니다. 게임이 HUD 없는 이미지를 주지 않으면 HUD는 보간됩니다. 적용하려면 재시작하세요.",

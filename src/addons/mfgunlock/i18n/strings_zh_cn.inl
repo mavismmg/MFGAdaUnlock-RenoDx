@@ -926,3 +926,5 @@
 /* kNvidiaSSetting_d4m0 */ "NVIDIA 的设置",
 /* kVerbose_d4m1 */ "详细",
 /* kStandardLevel_d4m2 */ "标准",
+/* kForceDlssFrameGeneration_f4g1 */ "在没有帧生成的游戏中使用 DLSS 帧生成",
+/* kForStreamlineGamesWith_f4g2 */ "实验性。适用于使用 Streamline 进行 DLSS 超分辨率但没有帧生成的游戏：插件向 Streamline 请求 DLSS 帧生成，并以面板的倍数开启（选择 XMX 时也适用）。需要游戏的 Reflex 和插件提前加载；自带帧生成的游戏不会被更改。游戏未提供无 HUD 图像时，HUD 会被插值。重启后生效。",

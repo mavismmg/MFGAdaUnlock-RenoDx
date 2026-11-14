@@ -926,3 +926,5 @@
 /* kNvidiaSSetting_d4m0 */ "Configuração da NVIDIA",
 /* kVerbose_d4m1 */ "Detalhado",
 /* kStandardLevel_d4m2 */ "Padrão",
+/* kForceDlssFrameGeneration_f4g1 */ "Geração de quadros DLSS em jogos sem ela",
+/* kForStreamlineGamesWith_f4g2 */ "Experimental. Para jogos que usam o Streamline para o DLSS Super Resolution mas não têm geração de quadros: o addon pede ao Streamline a geração de quadros DLSS e a liga no multiplicador do painel (também com XMX, se selecionado). Precisa do Reflex do jogo e do addon carregado cedo; jogos com geração de quadros própria nunca são alterados. Sem uma imagem sem HUD do jogo, o HUD é interpolado. Reinicie para aplicar.",

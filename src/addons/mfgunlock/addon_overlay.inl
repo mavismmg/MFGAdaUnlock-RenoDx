@@ -518,7 +518,19 @@ std::string FrameGenChainReport() {
          [] {  // 1.10.0 (dashdogy A1): only when NGX's requirements query failed
            const std::string failure = mfgunlock::xmx::preada::RequirementsReport();
            return failure.empty() ? std::string() : "\nchain_ngx_requirements=" + failure;
-         }() + "\nchain_vram=" + FrameGenerationVramReport() + "\nchain_generator=" +
+         }() + "\nchain_vram=" + FrameGenerationVramReport() +
+         [] {  // 1.10.0 (force_fg.hpp): only when [DLSSG] ForceFrameGeneration=1
+           if (!mfgunlock::framecount::g_force_fg_enabled.load(std::memory_order_relaxed)) return std::string();
+           const auto decision = static_cast<mfgunlock::forcefg::Decision>(
+               mfgunlock::framecount::g_force_fg_decision.load(std::memory_order_acquire));
+           std::string text = mfgunlock::framecount::internal::g_init_seen.load(std::memory_order_acquire)
+                                  ? mfgunlock::forcefg::DecisionText(decision)
+                                  : "slInit not seen by the addon (it needs to load early)";
+           if (mfgunlock::forcefg::Added(decision))
+             text += std::string("; ") + mfgunlock::forcefg::ApplyText(static_cast<mfgunlock::forcefg::Apply>(
+                         mfgunlock::framecount::g_force_fg_apply.load(std::memory_order_acquire)));
+           return "\nchain_force_fg=" + text;
+         }() + "\nchain_generator=" +
          FrameGenChainGenerator() + "\n";
 }
 // 1.10.0 (plan 1.4): what a support report needs to say about this PC and

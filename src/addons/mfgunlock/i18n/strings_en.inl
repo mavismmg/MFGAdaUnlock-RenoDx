@@ -924,3 +924,5 @@
 /* kNvidiaSSetting_d4m0 */ "NVIDIA's setting",
 /* kVerbose_d4m1 */ "Verbose",
 /* kStandardLevel_d4m2 */ "Standard",
+/* kForceDlssFrameGeneration_f4g1 */ "DLSS frame generation in games without it",
+/* kForStreamlineGamesWith_f4g2 */ "Experimental. For games that use Streamline for DLSS Super Resolution but have no frame generation: the addon asks Streamline for DLSS frame generation and turns it on at the panel's multiplier (XMX too, when selected). Needs the game's Reflex and the addon loaded early; games with their own frame generation are never touched. Without a HUD-less image from the game the HUD is interpolated. Restart to apply.",

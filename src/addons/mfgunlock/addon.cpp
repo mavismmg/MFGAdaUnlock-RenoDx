@@ -1470,6 +1470,11 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       g_self_module = h_module;
       if (!reshade::register_addon(h_module)) return FALSE;
       mfgunlock::support::BeginSession(mfgunlock::backend::Directory());
+      // 1.10.0 (plan XMX/Vulkan/VRAM, item 4): before the game can call slInit (force_fg.hpp).
+      mfgunlock::framecount::g_force_fg_enabled.store(
+          GetPrivateProfileIntW(L"DLSSG", L"ForceFrameGeneration", 0,
+                                (mfgunlock::backend::Directory() / L"MFGAdaUnlock.ini").c_str()) != 0,
+          std::memory_order_relaxed);
       // 1.10.0 (dashdogy B1): opt-in crash record and dump (crash_record.hpp).
       if (mfgunlock::crash::Enabled(mfgunlock::backend::Directory() / L"MFGAdaUnlock.ini"))
         mfgunlock::crash::Install(mfgunlock::backend::Directory());
@@ -1603,7 +1608,9 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       mfgunlock::framecount::internal::g_init_wanted.store(
           []() {
             return mfgunlock::xmx::preada::InitHookWanted() ||
-                   mfgunlock::drsoverride::g_max_multiplier.load(std::memory_order_relaxed) != 0;
+                   mfgunlock::drsoverride::g_max_multiplier.load(std::memory_order_relaxed) != 0 ||
+                   // 1.10.0 (force_fg.hpp): DLSS-G is added inside slInit.
+                   mfgunlock::framecount::g_force_fg_enabled.load(std::memory_order_relaxed);
           },
           std::memory_order_release);
       if (mfgunlock::drsoverride::g_max_multiplier.load(std::memory_order_relaxed) != 0)

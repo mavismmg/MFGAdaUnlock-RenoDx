@@ -929,6 +929,8 @@ enum class Str : unsigned {
   kNvidiaSSetting_d4m0,
   kVerbose_d4m1,
   kStandardLevel_d4m2,
+  kForceDlssFrameGeneration_f4g1,
+  kForStreamlineGamesWith_f4g2,
   kCount
 };
 }  // namespace mfgunlock::i18n

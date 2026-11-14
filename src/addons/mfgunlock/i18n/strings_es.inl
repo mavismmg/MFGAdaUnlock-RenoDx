@@ -926,3 +926,5 @@
 /* kNvidiaSSetting_d4m0 */ "Ajuste de NVIDIA",
 /* kVerbose_d4m1 */ "Detallado",
 /* kStandardLevel_d4m2 */ "Estándar",
+/* kForceDlssFrameGeneration_f4g1 */ "Generación de fotogramas DLSS en juegos sin ella",
+/* kForStreamlineGamesWith_f4g2 */ "Experimental. Para juegos que usan Streamline para DLSS Super Resolution pero no tienen generación de fotogramas: el addon pide a Streamline la generación de fotogramas DLSS y la activa con el multiplicador del panel (también con XMX, si está seleccionado). Requiere el Reflex del juego y el addon cargado temprano; los juegos con generación de fotogramas propia nunca se modifican. Sin una imagen sin HUD del juego, el HUD se interpola. Reinicia para aplicar.",

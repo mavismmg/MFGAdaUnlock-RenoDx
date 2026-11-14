@@ -926,3 +926,5 @@
 /* kNvidiaSSetting_d4m0 */ "NVIDIA の設定",
 /* kVerbose_d4m1 */ "詳細",
 /* kStandardLevel_d4m2 */ "標準",
+/* kForceDlssFrameGeneration_f4g1 */ "フレーム生成のないゲームでの DLSS フレーム生成",
+/* kForStreamlineGamesWith_f4g2 */ "実験的。DLSS Super Resolution に Streamline を使っているがフレーム生成がないゲーム向け: アドオンが Streamline に DLSS フレーム生成を要求し、パネルの倍率で有効にします (選択時は XMX も)。ゲームの Reflex と、アドオンの早期読み込みが必要です。独自のフレーム生成を持つゲームは変更しません。ゲームが HUD なし画像を提供しない場合、HUD は補間されます。適用するには再起動してください。",

@@ -1175,6 +1175,36 @@ See the current
 [RenoDX installation notes](https://github.com/clshortfuse/renodx/wiki/Mods)
 for its addon-specific loading requirements.
 
+## DLSS frame generation in games without it
+
+Experimental, off by default (1.10.0). Some games integrate NVIDIA Streamline for
+DLSS Super Resolution but not for frame generation. Such a game already gives
+Streamline what DLSS frame generation reads: depth, motion vectors and the camera
+constants of every frame. With `[DLSSG] ForceFrameGeneration=1` in
+`MFGAdaUnlock.ini` (also in the panel's advanced settings):
+
+1. When the game starts Streamline asking for DLSS Super Resolution and not for
+   frame generation, the addon adds DLSS frame generation (and Reflex and PCL if
+   missing) to what Streamline loads.
+2. Once the game sends its camera constants, the addon turns frame generation on
+   at the panel's multiplier. With **XMX** selected, XMX generates the frames.
+
+Requirements and limits:
+
+- The addon must load before the game starts Streamline (ReShade's
+  `LoadFromDllMain`, which the addon adds itself; the panel says when it did not).
+- The game must use Reflex: DLSS frame generation presents and paces through it.
+  Without it the addon does not turn it on, and the support report says why.
+- Without a HUD-less image from the game, the HUD is interpolated with the scene.
+- A game that asks for frame generation itself is never changed, nor a game that
+  loads every Streamline feature (it may have its own frame generation turned off
+  in its menu). Games that use NGX without Streamline are not supported.
+- The support report's `chain_force_fg` line says what happened.
+
+Tested with NVIDIA's Streamline Sample made into an SR-only game: DLSS frame
+generation ran at 4x with the same video memory cost as the sample's own (about
+580 MiB at 1440p), and XMX generated every frame in it. No game has been tested yet.
+
 ## Selecting the Streamline Runtime
 
 The **Streamline runtime selection** control changes only NVIDIA's documented

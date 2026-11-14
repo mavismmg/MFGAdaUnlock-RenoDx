@@ -54,6 +54,7 @@
 #include <include/reshade.hpp>
 
 #include "./dlss_preset.hpp"
+#include "./force_fg.hpp"
 #include "./force_policy.hpp"
 #include "./hdr_compat.hpp"
 #include "./input_diagnostics.hpp"
@@ -71,6 +72,10 @@ namespace mfgunlock::framecount {
 
 // 0 = leave the game's request alone. 2..6 = force that exact multiplier.
 inline std::atomic<unsigned int> g_force_multiplier{0};
+// 1.10.0 (plan XMX/Vulkan/VRAM, item 4): [DLSSG] ForceFrameGeneration, set by addon.cpp in DllMain (force_fg.hpp).
+inline std::atomic_bool g_force_fg_enabled{false};
+inline std::atomic<int> g_force_fg_decision{0};  // forcefg::Decision
+inline std::atomic<int> g_force_fg_apply{0};     // forcefg::Apply
 inline std::atomic_bool g_hooked{false};
 inline std::atomic_bool g_intercepted{false};
 inline std::atomic_bool g_game_request_seen{false};
@@ -638,6 +643,11 @@ using ReflexSetOptionsFn = PFun_slReflexSetOptions*;
 using ReflexSleepFn = PFun_slReflexSleep*;
 
 inline std::atomic<SetOptionsFn> g_real_set_options{nullptr};
+// 1.10.0 (force_fg.hpp): the game called slDLSSGSetOptions itself; the addon's forced calls are not the game's.
+inline std::atomic_bool g_game_set_options{false};
+inline thread_local bool g_force_fg_calling = false;
+inline std::atomic<unsigned int> g_force_fg_applied_multiplier{0};
+inline std::vector<sl::Feature> g_force_fg_features;  // kept for the process: Streamline may keep the pointer
 inline std::atomic<GetStateFn> g_real_get_state{nullptr};
 inline thread_local bool g_get_state_call_active = false;
 inline std::atomic_bool g_get_state_reentry_seen{false};
@@ -1917,10 +1927,54 @@ inline sl::Result HookedSetTagForFrame(const sl::FrameToken& frame,
   }, &frame);
 }
 
+inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport, const sl::DLSSGOptions& options);
+// 1.10.0 (force_fg.hpp, item 4): turns DLSS-G on for this viewport while the
+// game never did, at the panel's multiplier (2x when it follows the game).
+inline void TryForceFrameGeneration(const sl::ViewportHandle& viewport) {
+  const auto decision = static_cast<forcefg::Decision>(g_force_fg_decision.load(std::memory_order_acquire));
+  if (!forcefg::Added(decision)) return;
+  const unsigned int multiplier = (std::max)(g_force_multiplier.load(std::memory_order_relaxed), 2u);
+  if (g_real_set_options.load(std::memory_order_acquire) == nullptr && g_real_get_feature_function != nullptr &&
+      !g_game_set_options.load(std::memory_order_acquire)) {
+    void* function = nullptr;
+    if (g_real_get_feature_function(sl::kFeatureDLSS_G, "slDLSSGSetOptions", function) == sl::Result::eOk &&
+        function != nullptr && function != reinterpret_cast<void*>(&HookedSetOptions))
+      g_real_set_options.store(reinterpret_cast<SetOptionsFn>(function), std::memory_order_release);
+  }
+  const auto apply = forcefg::DecideApply(
+      true, g_game_set_options.load(std::memory_order_acquire), g_reflex_hooked.load(std::memory_order_acquire),
+      g_real_set_options.load(std::memory_order_acquire) != nullptr,
+      g_force_fg_applied_multiplier.load(std::memory_order_relaxed) == multiplier);
+  if (g_force_fg_apply.exchange(static_cast<int>(apply), std::memory_order_acq_rel) != static_cast<int>(apply) &&
+      apply != forcefg::Apply::kTurnOn && apply != forcefg::Apply::kAlreadyOn)
+    reshade::log::message(reshade::log::level::warning,
+                          (std::string("mfgunlock: forced DLSS frame generation ") + forcefg::ApplyText(apply) + ".").c_str());
+  if (apply != forcefg::Apply::kTurnOn) return;
+  sl::DLSSGOptions options{};
+  options.mode = sl::DLSSGMode::eOn;
+  options.numFramesToGenerate = multiplier - 1;
+  g_force_fg_calling = true;
+  const sl::Result result = HookedSetOptions(viewport, options);
+  g_force_fg_calling = false;
+  if (result == sl::Result::eOk) {
+    g_force_fg_applied_multiplier.store(multiplier, std::memory_order_relaxed);
+    reshade::log::message(reshade::log::level::info,
+                          ("mfgunlock: forced DLSS frame generation turned on at " + std::to_string(multiplier) +
+                           "x for viewport " + std::to_string(static_cast<uint32_t>(viewport)) + ".").c_str());
+  } else {
+    static std::atomic_bool logged{false};
+    if (!logged.exchange(true))
+      reshade::log::message(reshade::log::level::warning,
+                            ("mfgunlock: forced DLSS frame generation: slDLSSGSetOptions returned " +
+                             std::to_string(static_cast<int>(result)) + ".").c_str());
+  }
+}
+
 inline sl::Result HookedSetConstants(const sl::Constants& values,
                                      const sl::FrameToken& frame,
                                      const sl::ViewportHandle& viewport) {
   if (g_real_set_constants == nullptr) return sl::Result::eErrorNotInitialized;
+  if (g_force_fg_enabled.load(std::memory_order_relaxed)) TryForceFrameGeneration(viewport);
   inputdiag::ObserveConstants(static_cast<uint32_t>(viewport), values,
                               static_cast<uint32_t>(frame));
   if (!g_addon_enabled.load(std::memory_order_relaxed))
@@ -2008,8 +2062,27 @@ inline sl::Result HookedInit(const sl::Preferences& pref, uint64_t sdk_version) 
       << (GetModuleHandleW(L"sl.dlss_g.dll") != nullptr ? "yes" : "no") << ".";
     reshade::log::message(reshade::log::level::info, s.str().c_str());
   }
+  // 1.10.0 (force_fg.hpp, item 4): DLSS-G added for a game that asks for DLSS SR only.
+  sl::Preferences forced = pref;
+  const sl::Preferences* use = &pref;
+  {
+    const bool known = pref.structType == sl::Preferences::s_structType && pref.structVersion == sl::kStructVersion1;
+    auto plan = forcefg::PlanFeatures(known ? pref.featuresToLoad : nullptr, known ? pref.numFeaturesToLoad : 0,
+                                      g_force_fg_enabled.load(std::memory_order_relaxed), known);
+    g_force_fg_decision.store(static_cast<int>(plan.decision), std::memory_order_release);
+    if (plan.decision == forcefg::Decision::kAdded) {
+      g_force_fg_features = std::move(plan.features);
+      forced.featuresToLoad = g_force_fg_features.data();
+      forced.numFeaturesToLoad = static_cast<uint32_t>(g_force_fg_features.size());
+      use = &forced;
+    }
+    if (plan.decision != forcefg::Decision::kOff)
+      reshade::log::message(reshade::log::level::info,
+                            (std::string("mfgunlock: forced DLSS frame generation: ") +
+                             forcefg::DecisionText(plan.decision) + ".").c_str());
+  }
   if (scope != nullptr) scope(true);
-  const sl::Result result = InitWithPolicy(pref, sdk_version);
+  const sl::Result result = InitWithPolicy(*use, sdk_version);
   if (scope != nullptr) scope(false);
   {
     std::stringstream s;
@@ -2077,6 +2150,7 @@ inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
   const auto real = g_real_set_options.load(std::memory_order_acquire);
   if (real == nullptr)
     return sl::Result::eErrorNotInitialized;
+  if (!g_force_fg_calling) g_game_set_options.store(true, std::memory_order_release);
   if (options.mode != sl::DLSSGMode::eOff) {
     const auto hold_off = g_hold_off.load(std::memory_order_acquire);
     if (hold_off != nullptr && hold_off()) {

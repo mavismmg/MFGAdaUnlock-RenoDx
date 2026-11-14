@@ -56,9 +56,66 @@ def patch(sample):
     ui.write_text(text, encoding='utf-8')
 
 
+SR_MARK = '// MFGAdaUnlock SR-only patch'
+SR_HELPER = SR_MARK + ': MFG_SAMPLE_SR_ONLY=1 makes the sample a game that integrates Streamline\n' \
+    '// for DLSS Super Resolution only: no DLSS-G in slInit, no DLSS-G calls; Reflex stays on.\n' \
+    'inline bool MfgSampleSrOnly() { char* v=nullptr; size_t n=0; _dupenv_s(&v,&n,"MFG_SAMPLE_SR_ONLY");\n' \
+    '  const bool on=v && v[0]==\'1\'; free(v); return on; }\n'
+
+
+def patch_sr_only(sample):
+    """1.10.0 (plan XMX/Vulkan/VRAM, item 4): the forced DLSS-G test needs a game without DLSS-G."""
+    ui = sample / 'src' / 'UIData.h'
+    text = ui.read_text(encoding='utf-8')
+    if SR_MARK not in text:
+        old = 'MfgSampleAutoFG()?sl::ReflexMode::eLowLatency'
+        if text.count(old) != 1:
+            raise SystemExit('UIData.h: the DLSS-G test patch is not in place')
+        text = text.replace(old, '(MfgSampleAutoFG()||MfgSampleSrOnly())?sl::ReflexMode::eLowLatency')
+        helper_at = text.index(PATCH_MARK)
+        text = text[:helper_at] + SR_HELPER + text[helper_at:]
+        ui.write_text(text, encoding='utf-8')
+    # The sample's own wrapper (src/SLWrapper.cpp) calls slInit; donut's StreamlineIntegration is unused.
+    integration = sample / 'src' / 'SLWrapper.cpp'
+    text = integration.read_text(encoding='utf-8')
+    if SR_MARK in text:
+        return
+    load = 'pref.numFeaturesToLoad = static_cast<uint32_t>(std::size(featuresToLoad));'
+    available = 'm_dlssg_available = slIsFeatureSupported(sl::kFeatureDLSS_G, adapterInfo) == sl::Result::eOk;'
+    if text.count(load) != 1 or text.count(available) != 1:
+        raise SystemExit('SLWrapper.cpp layout not recognized')
+    # Its own helper name: SLWrapper.cpp may also see UIData.h's MfgSampleSrOnly.
+    text = text.replace(load, load + '\n    static std::vector<sl::Feature> mfgSrOnly;\n'
+                        '    if (MfgWrapperSrOnly()) {\n'
+                        '        for (auto f : featuresToLoad) if (f != sl::kFeatureDLSS_G) mfgSrOnly.push_back(f);\n'
+                        '        pref.featuresToLoad = mfgSrOnly.data();\n'
+                        '        pref.numFeaturesToLoad = uint32_t(mfgSrOnly.size());\n'
+                        '    }')
+    # The sample unloads DLSS-G right after slInit and loads it when its UI turns frame
+    # generation on; a game that never integrated DLSS-G makes neither call.
+    unload = '        slSetFeatureLoaded(sl::kFeatureDLSS_G, false);\n'
+    if text.count(unload) != 1:
+        raise SystemExit('SLWrapper.cpp: the DLSS-G unload after slInit was not found')
+    text = text.replace(unload, '        if (!MfgWrapperSrOnly()) slSetFeatureLoaded(sl::kFeatureDLSS_G, false);\n', 1)
+    # No DLSS-G calls in SR-only mode. (Gating m_dlssg_available instead also stopped the
+    # normal mode's DLSS-G from loading on this build, so the calls are gated where they are made.)
+    for head in ('void SLWrapper::SetDLSSGOptions(const sl::DLSSGOptions consts) {\n',
+                 'void SLWrapper::QueryDLSSGState(', 'void SLWrapper::CleanupDLSSG(bool wfi) {\n'):
+        at = text.find(head)
+        if at < 0:
+            raise SystemExit('SLWrapper.cpp: ' + head.strip() + ' not found')
+        body = text.index('{', at) + 1
+        text = text[:body] + '\n    if (MfgWrapperSrOnly()) return;' + text[body:]
+    include = text.index('#include')
+    text = text[:include] + '#include <cstdlib>\n#include <vector>\n' + \
+        SR_HELPER.replace('MfgSampleSrOnly', 'MfgWrapperSrOnly') + text[include:]
+    integration.write_text(text, encoding='utf-8')
+
+
 def build(sample, archive):
     extract(sample, archive)
     patch(sample)
+    patch_sr_only(sample)
     out = sample / '_build'
     subprocess.run(['cmake', '-S', str(sample), '-B', str(out), '-G', 'Visual Studio 17 2022', '-A', 'x64',
                     '-DUSE_SL=ON', '-DDONUT_WITH_VULKAN=OFF', '-DNVRHI_WITH_VULKAN=OFF', '-DDONUT_WITH_DX11=OFF',

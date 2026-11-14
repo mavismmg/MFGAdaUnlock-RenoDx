@@ -35,6 +35,12 @@ add_test(NAME i18n COMMAND i18n_tests)
 add_executable(ngx_requirements_tests ngx_requirements_tests.cpp)
 target_compile_features(ngx_requirements_tests PRIVATE cxx_std_20)
 add_test(NAME ngx_requirements COMMAND ngx_requirements_tests)
+# 1.10.0 (plan XMX/Vulkan/VRAM, item 4): DLSS frame generation in Streamline games without it.
+add_executable(force_fg_tests force_fg_tests.cpp)
+target_compile_definitions(force_fg_tests PRIVATE NOMINMAX)
+target_compile_features(force_fg_tests PRIVATE cxx_std_20)
+target_include_directories(force_fg_tests PRIVATE "${RENODX_SOURCE_DIR}/external/Streamline/include")
+add_test(NAME force_fg COMMAND force_fg_tests)
 # 1.10.0 (plan XMX/VRAM, item 1): the cost of turning frame generation on.
 add_executable(vram_timeline_tests vram_timeline_tests.cpp)
 target_compile_features(vram_timeline_tests PRIVATE cxx_std_20)
@@ -374,6 +380,8 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME research_workflow COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/research_workflow_tests.py")
   add_test(NAME ini_panel_parity COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ini_panel_parity_tests.py")
   # 1.10.0 (plan 5): no panel text outside the language tables; tables in step.
+  # 1.10.0 (plan XMX/Vulkan/VRAM): the D3D12 XMX files are guarded.
+  add_test(NAME xmx_dx12_guard COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/xmx_dx12_guard_tests.py")
   add_test(NAME panel_strings COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/extract_panel_strings.py" --check)
   add_test(NAME panel_tables COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/sync_panel_tables.py" --check)
   add_test(NAME xemfg_replay_corpus COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/xemfg_replay_tests.py")
