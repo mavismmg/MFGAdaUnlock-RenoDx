@@ -283,20 +283,15 @@ FlipQueueChoice ConfigureFlipQueue() noexcept {
           L"OptiScaler.ini";
 #endif
       choice.enabled=GetPrivateProfileIntW(L"XeFG",L"XeFGFlipQueue",0,ini.c_str())!=0;
-      auto percent=GetPrivateProfileIntW(L"XeFG",L"XeFGFlipQueueBufferPct",50,ini.c_str());
-      if(percent>100) percent=50;
-      wchar_t first[32]{};
-      GetPrivateProfileStringW(L"XeFG",L"XeFGFlipQueueFirst",L"ready",first,32,ini.c_str());
-      const bool firstReady=_wcsicmp(first,L"buffer")!=0;
+      // 1.10.0 (dashdogy v1.7.1): the queue's jitter-buffer clock sizes its own buffer and
+      // first frame, so XeFGFlipQueueBufferPct and XeFGFlipQueueFirst are gone.
       auto buffers=GetPrivateProfileIntW(L"XeFG",L"XeFGNativeBuffers",10,ini.c_str());
       if(buffers<2 || buffers>16) buffers=10;
       choice.buffers=choice.enabled?buffers:0;
-      sdk_pacing::SetFlipQueueFirst(firstReady);
-      sdk_pacing::SetFlipQueue(choice.enabled,int(percent));
+      sdk_pacing::SetFlipQueue(choice.enabled);
       xess_mod::WriteLog("flip_queue_config","\"enabled\":"+std::string(choice.enabled?"true":"false")
-          +",\"buffer_percent\":"+std::to_string(percent)+",\"first\":\""+(firstReady?"ready":"buffer")
-          +"\",\"native_buffers\":"+std::to_string(choice.buffers));
-    } catch(...) { sdk_pacing::SetFlipQueue(false,50); choice={}; }
+          +",\"native_buffers\":"+std::to_string(choice.buffers));
+    } catch(...) { sdk_pacing::SetFlipQueue(false); choice={}; }
   });
   return choice;
 }
@@ -371,7 +366,7 @@ template<class Init> Result Initialize(Handle handle, Init call) {
     // 1.7 (plan F): the xvk device has no DXGI queue for NVAPI's flip
     // configuration or the flip queue; XeLL and the CPU pacer space the outputs.
     sdk_pacing::SetFlipMetering(nullptr,false,0);
-    sdk_pacing::SetFlipQueue(false,50);
+    sdk_pacing::SetFlipQueue(false);
     xess_mod::WriteLog("flip_metering_unavailable","\"fallback\":\"SDK_extra_pacing\",\"reason\":\"vulkan_host\"");
   } else {
     ConfigureFlip();
@@ -760,6 +755,10 @@ bool HostRedirectedExport(HMODULE module,const char* name) noexcept {
 void SetVulkanHostDevice(ID3D12Device* device) noexcept { vulkanHostDevice.store(device,std::memory_order_release); }
 bool VulkanHostDevice(const ID3D12Device* device) noexcept {
   return device && device==vulkanHostDevice.load(std::memory_order_acquire);
+}
+// 1.10.0 (dashdogy v1.7.1): the Vulkan host's tensor-core route uses the same verified fatbin.
+std::span<const unsigned char> TensorCoreFatbin() {
+  try { return xess_payload::Read(Self(),xefg_cuda::embedded::fatbin); } catch(...) { return {}; }
 }
 void WriteLog(const char* stage,const std::string& fields) noexcept {
   try { LogQueue().Push(GetTickCount64(),GetCurrentProcessId(),stage,fields); } catch(...) {}

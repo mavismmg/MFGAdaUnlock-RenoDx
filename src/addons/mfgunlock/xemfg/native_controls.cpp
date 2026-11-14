@@ -42,8 +42,9 @@ void LoadControls() {
   if(!ReadChoice(L"Latency",L"Input",L"Auto") && !ReadChoice(L"Latency",L"Input",L"Reflex")) invalidConfiguration=true;
   if(!ReadChoice(L"Latency",L"Output",L"Auto") && !ReadChoice(L"Latency",L"Output",L"Reflex") && !ReadChoice(L"Latency",L"Output",L"XeLL")) invalidConfiguration=true;
   settings.input=ReadChoice(L"Latency",L"Input",L"Reflex")?LatencyInput::StreamlineReflex:LatencyInput::Auto;
-  settings.queueAhead=ReadBool(L"XeFG",L"MeteredQueueAhead",true);
-  sdk_pacing::RequestQueueAhead(settings.queueAhead);
+  // 1.10.0 (dashdogy v1.7.1): the metered queue-ahead and SDK-deadline comparison paths are gone with
+  // upstream's pacer rewrite; their fields stay in the settings ABI, always off.
+  settings.queueAhead=false;
   settings.output=ReadChoice(L"Latency",L"Output",L"Reflex")?LatencyOutput::Reflex:
       ReadChoice(L"Latency",L"Output",L"XeLL")?LatencyOutput::XeLL:LatencyOutput::Auto;
   State().latencyOutput=settings.output==LatencyOutput::Reflex?LatencyOutput::Reflex:LatencyOutput::XeLL;
@@ -53,8 +54,7 @@ void LoadControls() {
   settings.uiStabilization=ReadBool(L"XeFG",L"UIStabilization",false);
   uiStabilization=settings.uiStabilization;
   sdk_pacing::RequestNativeLatency(GetPrivateProfileIntW(L"XeFG",L"XeFGNativeLatency",0,Ini().c_str()));
-  settings.sdkDeadlines=ReadBool(L"XeFG",L"SdkDeadlines",false);
-  sdk_pacing::RequestSdkDeadlines(settings.sdkDeadlines);
+  settings.sdkDeadlines=false;
   settings.forceVSyncOff=ReadBool(L"XeFG",L"ForceVSyncOff",false);
   forceVSyncOff=settings.forceVSyncOff;
   settings.displayCap=ReadBool(L"XeFG",L"DisplayCap",false);
@@ -69,6 +69,8 @@ void LoadControls() {
 bool ConfigureControls(const ControlSettings& incoming) {
   auto value=incoming;
   value.forceBorderless=false;
+  // 1.10.0 (dashdogy v1.7.1): kept in the ABI, inert since upstream removed both paths.
+  value.queueAhead=false; value.sdkDeadlines=false;
   // Reject unknown ABI/enums. The latency output is fixed for this process;
   // changing the preference never replays a game setter on the UI thread.
   if(value.version!=5 || uint32_t(value.input)>1 || uint32_t(value.output)>2) return false;
@@ -78,12 +80,10 @@ bool ConfigureControls(const ControlSettings& incoming) {
   const bool saved=config::Save(ini,{
     {L"Latency",L"Input",value.input==LatencyInput::Auto?L"Auto":L"Reflex"},
     {L"Latency",L"Output",value.output==LatencyOutput::Auto?L"Auto":value.output==LatencyOutput::Reflex?L"Reflex":L"XeLL"},
-    {L"XeFG",L"MeteredQueueAhead",value.queueAhead?L"1":L"0"},
     {L"XeFG",L"XeFGFlipMetering",value.flipMetering?L"on":L"off"},
     {L"XeFG",L"ForceBorderless",value.forceBorderless?L"1":L"0"},
     {L"XeFG",L"UIComposition",value.uiComposition?L"1":L"0"},
     {L"XeFG",L"UIStabilization",value.uiStabilization?L"1":L"0"},
-    {L"XeFG",L"SdkDeadlines",value.sdkDeadlines?L"1":L"0"},
     {L"XeFG",L"ForceVSyncOff",value.forceVSyncOff?L"1":L"0"},
     {L"XeFG",L"DisplayCap",value.displayCap?L"1":L"0"},
     {L"XeFG",L"ExclusiveAsBorderless",value.exclusiveAsBorderless?L"1":L"0"}});
@@ -96,9 +96,7 @@ bool ConfigureControls(const ControlSettings& incoming) {
   uiStabilization=value.uiStabilization;
   if(old.exclusiveAsBorderless!=value.exclusiveAsBorderless)
     if(auto output=Active(); output && output->window) output->window->BlockAltEnter(value.exclusiveAsBorderless);
-  sdk_pacing::RequestQueueAhead(value.queueAhead);
   if(old.flipMetering!=value.flipMetering) sdk_pacing::RequestFlipMetering(value.flipMetering);
-  if(old.sdkDeadlines!=value.sdkDeadlines) sdk_pacing::RequestSdkDeadlines(value.sdkDeadlines);
   xess_mod::WriteLog("native_controls","\"input\":"+std::to_string(uint32_t(value.input))
       +",\"output\":"+std::to_string(uint32_t(value.output))+",\"flip_requested\":"+(value.flipMetering?"true":"false")
       +",\"borderless_requested\":"+(value.forceBorderless?"true":"false")
@@ -182,9 +180,7 @@ ControlStatus ControlsSnapshot() {
   result.flipRegistered=flip.registered; result.flipQueue=flip.queue; result.flipBusy=flip.busy;
   result.flipRequested=flip.requested; result.flipEnabled=flip.enabled;
   result.flipConfigured=flip.configured; result.flipMetered=flip.metered; result.flipRefused=flip.refused;
-  result.queueAheadActive=flip.queueAheadActive; result.queueAheadDeadlines=flip.queueAheadDeadlines;
   result.flipOutputs=flip.outputs; result.flipFeedback=flip.feedback; result.flipResult=flip.status; result.flipCalls=flip.calls;
-  result.sdkDeadlinesRequested=flip.sdkDeadlinesRequested; result.sdkDeadlinesActive=flip.sdkDeadlinesActive;
   return result;
 }
 void DrawControls(PanelPage page) {
@@ -196,7 +192,7 @@ void DrawControls(PanelPage page) {
 #else
   const bool vulkanHost=false;
 #endif
-  const char* flip=vulkanHost?T(Str::kXefgPacingVulkan_fc5f):status.sdkDeadlinesActive?T(Str::kIntelSdkTimingExperimental_c84c):status.flipBusy?"Checking...":!status.flipAvailable?T(Str::kXefgPacingDriverUnavailable_bc92):
+  const char* flip=vulkanHost?T(Str::kXefgPacingVulkan_fc5f):status.flipBusy?"Checking...":!status.flipAvailable?T(Str::kXefgPacingDriverUnavailable_bc92):
       !status.flipRegistered || !status.flipQueue?T(Str::kWaitingForFrameGeneration_08ec):
       status.flipRefused?T(Str::kXefgPacingDriverDeclined_67cc):metering?T(Str::kNvidiaDriverActive_f98b):
       status.flipConfigured?T(Str::kXefgPacingCurrentDisplayMode_155c):!status.flipEnabled?T(Str::kXefgPacingDriverMeteringOff_e37c):T(Str::kWaitingForAStableFrame_9fe8);
@@ -217,12 +213,10 @@ void DrawControls(PanelPage page) {
     ui::Section(T(Str::kSmoothnessAndDisplay_cf1b));
     ui::Card card("##xe_presentation");
     ui::Setting("##xe_flip_row",T(Str::kDriverFlipMetering_944d),flipHelp,[&] {
-      ImGui::BeginDisabled(value.sdkDeadlines);
       if(ImGui::Checkbox("##xe_flip",&value.flipMetering)) ConfigureControls(value);
-      ImGui::EndDisabled();
     });
     ui::Readout("##xe_flip_state",T(Str::kPacingStatus_8f41),flip,flipHelp,metering?ui::Accent:ui::Muted);
-    if(!value.sdkDeadlines && status.flipRequested!=status.flipEnabled) ui::Description(T(Str::kChangePendingAppliesWithThe_3d02));
+    if(status.flipRequested!=status.flipEnabled) ui::Description(T(Str::kChangePendingAppliesWithThe_3d02));
     constexpr const char* vsyncHelp="Presents the game's frames with sync interval 0, as with VSync off in the game. Use it for games whose VSync cannot be turned off in their settings, such as Elden Ring: game VSync keeps driver flip metering and generated-frame pacing from applying. Tearing is not enabled. Applies at the next frame.";
     ui::Setting("##xe_vsync_row",T(Str::kForceGameVsyncOff_c2e2),vsyncHelp,[&] {
       if(ImGui::Checkbox("##xe_force_vsync_off",&value.forceVSyncOff)) ConfigureControls(value);
@@ -252,18 +246,6 @@ void DrawControls(PanelPage page) {
         && ExceedsDisplay(status.sourceIntervalUs,status.displayRefreshMilliHz,State().multiplier.load()))
       ui::Notice(("The game's frame rate times the multiplier is above the display refresh ("+std::to_string(refreshHz)
           +" Hz), so some generated frames are not shown and motion can look uneven. Turn on Limit to display refresh, or cap the game's frame rate.").c_str());
-    if(ui::Expander(T(Str::kAdvancedPacingComparison_ad6a))) {
-      ui::Setting("##xe_queue_row",T(Str::kQueueMeteredFramesEarly_e775),T(Str::kLetsTheDriverSpaceA_121a),[&] {
-        ImGui::BeginDisabled(value.sdkDeadlines || !value.flipMetering);
-        if(ImGui::Checkbox("##xe_queue_ahead",&value.queueAhead)) ConfigureControls(value);
-        ImGui::EndDisabled();
-      });
-      ui::Setting("##xe_deadline_row",T(Str::kUseIntelSdkTimingTest_7e71),T(Str::kOffKeepsTheCurrentDriver_53ac),[&] {
-        if(ImGui::Checkbox("##xe_sdk_deadlines",&value.sdkDeadlines)) ConfigureControls(value);
-      });
-      ui::Description(status.sdkDeadlinesActive?T(Str::kIntelSdkTimingActiveExperimental_df84):T(Str::kDriverAdaptiveTimingActive_cc9c));
-      if(status.sdkDeadlinesRequested!=status.sdkDeadlinesActive) ui::Description(T(Str::kWaitingForTheNextGenerated_5b2b));
-    }
     ImGui::Separator();
     // 1.5.8: exclusive fullscreen served as borderless (off by default).
     constexpr const char* exclusiveHelp="Intel frame generation does not support exclusive fullscreen. When the game asks for it, XeMFG keeps the game windowed instead: the window covers the monitor without borders, and the game is told it is in fullscreen. The monitor resolution and refresh rate are not changed; a lower game resolution is scaled to the screen. Alt+Enter is held back so the game cannot switch to exclusive fullscreen. Applies at the game's next display mode change, or after a restart if the game is already in exclusive fullscreen.";
@@ -369,9 +351,7 @@ void DrawControls(PanelPage page) {
           <<"\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
           <<"\nCUDA="<<status.cudaState<<" compute="<<status.cudaMajor<<'.'<<status.cudaMinor<<" layers="<<status.cudaLayers
           <<" launches="<<status.cudaLaunches<<" fallbacks="<<status.cudaFallbacks<<" detail="<<status.cudaReason
-          <<"\nqueue_ahead="<<status.queueAheadActive<<" deadlines="<<status.queueAheadDeadlines
           <<"\nflip="<<flip<<" result="<<status.flipResult<<" feedback="<<status.flipFeedback<<" outputs="<<status.flipOutputs<<" calls="<<status.flipCalls
-          <<"\nsdk_deadlines_requested="<<status.sdkDeadlinesRequested<<" active="<<status.sdkDeadlinesActive
           <<"\nhud_inputs="<<status.hudInputs<<" issues="<<status.hudIssues<<" filtered_tags="<<status.hudRejected
           <<"\noverlay_created="<<overlay.created<<" destroyed="<<overlay.destroyed<<" updates="<<overlay.updates<<" failed="<<overlay.failed
           <<"\noverlay_requests="<<overlayInput.requests<<" recovered_taps="<<overlayInput.recovered<<" dropped_taps="<<overlayInput.dropped

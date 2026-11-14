@@ -30,14 +30,7 @@ CommandList::~CommandList() = default;
 
 HRESULT STDMETHODCALLTYPE CommandList::QueryInterface(REFIID riid, void** out)
 {
-    if (!out) return E_POINTER;
-    if (IsIid<IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12CommandList, ID3D12GraphicsCommandList>(riid)) {
-        AddRef();
-        *out = static_cast<ID3D12GraphicsCommandList*>(this);
-        return S_OK;
-    }
-    *out = nullptr;
-    return E_NOINTERFACE;
+    return QueryAs<ID3D12GraphicsCommandList, IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12CommandList, ID3D12GraphicsCommandList>(this, riid, out);
 }
 
 void CommandList::Fail(const char* what)
@@ -49,10 +42,20 @@ void CommandList::Fail(const char* what)
 HRESULT CommandList::Begin(CommandAllocator* allocator)
 {
     if (!allocator) return E_INVALIDARG;
-    buffer_ = allocator->Allocate();
-    if (!buffer_) return E_OUTOFMEMORY;
-    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
-    if (device_->vk().vkBeginCommandBuffer(buffer_, &begin) != VK_SUCCESS) return E_FAIL;
+    if (device_->recorded()) {
+        // vkprov.1: straight into the open recording (begun and ended by its owner, never here).
+        buffer_ = device_->RecordingBuffer();
+        if (!buffer_) {
+            static std::atomic<int> logged{0};
+            if (logged++ < 8) Log("CommandList::Begin: no recording open on the recorded device");
+            return E_FAIL;
+        }
+    } else {
+        buffer_ = allocator->Allocate();
+        if (!buffer_) return E_OUTOFMEMORY;
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+        if (device_->vk().vkBeginCommandBuffer(buffer_, &begin) != VK_SUCCESS) return E_FAIL;
+    }
     // D3D12 makes earlier ExecuteCommandLists work on the queue visible to the next list (state decay); Vulkan
     // has no implicit dependency between submissions, so each list starts with one full barrier.
     Barrier();
@@ -66,7 +69,7 @@ HRESULT STDMETHODCALLTYPE CommandList::Close()
 {
     if (!recording_) return E_FAIL;
     recording_ = false;
-    if (device_->vk().vkEndCommandBuffer(buffer_) != VK_SUCCESS) Fail("vkEndCommandBuffer");
+    if (!device_->recorded() && device_->vk().vkEndCommandBuffer(buffer_) != VK_SUCCESS) Fail("vkEndCommandBuffer");
     return failed_ ? E_INVALIDARG : S_OK;
 }
 
@@ -84,6 +87,7 @@ void STDMETHODCALLTYPE CommandList::ClearState(ID3D12PipelineState* pso)
     rootSignature_ = nullptr;
     boundPipeline_ = VK_NULL_HANDLE;
     tables_.fill(nullptr);
+    constantMasks_.fill(0);
     if (pso) SetPipelineState(pso);
 }
 
@@ -98,6 +102,7 @@ void STDMETHODCALLTYPE CommandList::SetComputeRootSignature(ID3D12RootSignature*
     if (next != rootSignature_) {
         // D3D12: changing the root signature invalidates all root arguments.
         tables_.fill(nullptr);
+        constantMasks_.fill(0);
         rootSignature_ = next;
     }
 }
@@ -112,18 +117,22 @@ void STDMETHODCALLTYPE CommandList::SetComputeRoot32BitConstant(UINT parameter, 
 {
     if (parameter >= constants_.size() || offset >= constants_[0].size()) { Fail("root constant index"); return; }
     constants_[parameter][offset] = value;
+    if (offset < 32) constantMasks_[parameter] |= 1u << offset;
 }
 
 void STDMETHODCALLTYPE CommandList::SetComputeRoot32BitConstants(UINT parameter, UINT count, const void* data, UINT offset)
 {
     if (parameter >= constants_.size() || offset + count > constants_[0].size()) { Fail("root constants range"); return; }
     memcpy(constants_[parameter].data() + offset, data, size_t(count) * 4);
+    for (UINT i = offset; i < std::min<UINT>(offset + count, 32); ++i) constantMasks_[parameter] |= 1u << i;
 }
 
 void STDMETHODCALLTYPE CommandList::Dispatch(UINT x, UINT y, UINT z)
 {
     if (!recording_ || failed_) return;
     if (!pso_) { Fail("Dispatch without a pipeline state"); return; }
+    if (device_->tensor().TryLaunch(*device_, buffer_, pso_->tensorLayer(), tables_[0], tables_[1], constants_[2].data(), constantMasks_[2], x, y, z))
+    { boundPipeline_ = VK_NULL_HANDLE; return; }
     const auto& vk = device_->vk();
     if (boundPipeline_ != pso_->pipeline()) {
         vk.vkCmdBindPipeline(buffer_, VK_PIPELINE_BIND_POINT_COMPUTE, pso_->pipeline());
@@ -184,6 +193,9 @@ void STDMETHODCALLTYPE CommandList::Dispatch(UINT x, UINT y, UINT z)
         vk.vkCmdPushConstants(buffer_, pso_->layout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, pso_->pushConstantBytes(),
                               constants_[pso_->constantsParameter()].data());
     vk.vkCmdDispatch(buffer_, x, y, z);
+    for (const auto& range : ranges)
+        if (const auto* table = tables_[range.parameter]; table && table[range.offset].kind == DescriptorKind::UavBuffer && table[range.offset].resource)
+            table[range.offset].resource->NoteWrite();
 }
 
 void CommandList::Barrier()
@@ -289,6 +301,7 @@ void STDMETHODCALLTYPE CommandList::CopyBufferRegion(ID3D12Resource* dst, UINT64
     auto* d = Own<Resource>(dst);
     auto* s = Own<Resource>(src);
     if (!d->IsBuffer() || !s->IsBuffer()) { Fail("CopyBufferRegion on a texture"); return; }
+    d->NoteWrite();
     VkBufferCopy region{srcOffset, dstOffset, bytes};
     device_->vk().vkCmdCopyBuffer(buffer_, s->buffer(), d->buffer(), 1, &region);
 }
@@ -301,6 +314,7 @@ void STDMETHODCALLTYPE CommandList::CopyResource(ID3D12Resource* dst, ID3D12Reso
     const auto& vk = device_->vk();
     if (d->IsBuffer() != s->IsBuffer()) { Fail("CopyResource between a buffer and a texture"); return; }
     if (d->IsBuffer()) {
+        d->NoteWrite();
         VkBufferCopy region{0, 0, std::min(d->size(), s->size())};
         vk.vkCmdCopyBuffer(buffer_, s->buffer(), d->buffer(), 1, &region);
         return;
@@ -362,6 +376,7 @@ void STDMETHODCALLTYPE CommandList::CopyTextureRegion(const D3D12_TEXTURE_COPY_L
         const VkExtent3D full = MipExtent(s, region.imageSubresource.mipLevel);
         region.imageExtent = box ? VkExtent3D{box->right - box->left, box->bottom - box->top, box->back - box->front} : full;
         if (box) region.imageOffset = {int32_t(box->left), int32_t(box->top), int32_t(box->front)};
+        d->NoteWrite();
         vk.vkCmdCopyImageToBuffer(buffer_, s->image(), VK_IMAGE_LAYOUT_GENERAL, d->buffer(), 1, &region);
         return;
     }
@@ -386,6 +401,7 @@ void CommandList::ClearUav(Resource* resource, D3D12_CPU_DESCRIPTOR_HANDLE cpu, 
     const Descriptor& d = *At(cpu);
     const auto& vk = device_->vk();
     if (d.kind == DescriptorKind::UavBuffer) {
+        if (resource) resource->NoteWrite();
         vk.vkCmdFillBuffer(buffer_, d.buffer.buffer, d.buffer.offset, d.buffer.range, fillValue);
         return;
     }

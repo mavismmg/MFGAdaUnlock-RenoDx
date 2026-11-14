@@ -20,9 +20,9 @@ struct Family { const char* name; const Witness* witnesses; size_t count; const 
 #include "runtime_layout.generated.h"
 
 namespace xess_layout {
-// beta.7: OptiScaler (upstream master 9171bf45) redirects its own libxell's exports with a Detours jump at each
+// OptiScaler (upstream master 9171bf45) redirects its own libxell's exports with a Detours jump at each
 // entry. A registered filter decides whether such an entry jump is the host's; only then a witness ignores the
-// entry bytes the jump replaced. Without a filter (no host) witnesses match exactly, as before.
+// entry bytes the jump replaced. Without a filter (no host) witnesses match exactly.
 using EntryRedirectFilter = bool (*)(const void* entry) noexcept;
 inline std::atomic<EntryRedirectFilter> entryRedirectFilter{nullptr};
 
@@ -32,7 +32,7 @@ class Image {
     uintptr_t base{};
     uint32_t bytes{};
     std::vector<RUNTIME_FUNCTION> functions;
-    // xefgrace.1: each executable section is copied once per Image and shared by every scanned witness.
+    // Each executable section is copied once per Image and shared by every scanned witness.
     mutable std::map<uint32_t,std::vector<unsigned char>> code;
     const std::vector<unsigned char>& Code(const Section& section) const {
         auto& copy=code[section.start];
@@ -110,7 +110,7 @@ public:
         if (edge.local>=0 && target!=int64_t(start)+edge.local) throw std::runtime_error("layout_local_branch");
         return uint32_t(target);
     }
-    // beta.7: the entry bytes a host's 5-byte jump replaced (Detours fills the rest of the last replaced
+    // The entry bytes a host's 5-byte jump replaced (Detours fills the rest of the last replaced
     // instruction with int 3), when the filter attributes the jump to the host; 0 keeps the exact match. No
     // relative edge may lie in them, its displacement would be the jump's.
     size_t HostReplaced(uint32_t start,const std::vector<unsigned char>& data,const Witness& w) const noexcept {
@@ -149,7 +149,7 @@ public:
                     const unsigned char* at=code.data()+offset;
                     const bool redirect=at[0]==0xe9 && redirects;
                     if (at[0]!=w.bytes[0] && !redirect) continue;
-                    // xefgrace.1: the copy rejects what match() would reject, without reading the image again.
+                    // The copy rejects what match() would reject, without reading the image again.
                     // A host's entry jump can excuse at most the bytes HostReplaced counts, so the bytes after
                     // them must match either way. Every remaining candidate is still read and verified by match().
                     size_t i=1;
@@ -166,7 +166,7 @@ public:
     }
 };
 
-// xefg134.1: object fields the RTXMFG code reads or patches next to the mapped sites. Each value is used by an
+// Object fields the RTXMFG code reads or patches next to the mapped sites. Each value is used by an
 // instruction inside the family's witnessed functions, so a matched family proves it. XeFG 1.3.4 (fg95) moved
 // the implementation's swap chain (+8 -> +10), the chain's native swap chain (+30 -> +38) and presenter
 // (+120 -> +128; queue +28 stays), the override count (+16C -> +18C), and the keep-2x-model predicate's first

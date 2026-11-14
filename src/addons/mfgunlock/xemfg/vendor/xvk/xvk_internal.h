@@ -7,6 +7,7 @@
 #endif
 #include <windows.h>
 #include "xvk.h"
+#include "xvk_tensor.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -75,11 +76,14 @@ void Unimplemented(const char* what);          // logged once per name
     X(vkGetPhysicalDeviceSurfaceFormatsKHR)                  \
     X(vkGetPhysicalDeviceSurfacePresentModesKHR)
 #define XVK_OPTIONAL_DEVICE_FNS(X)                           \
+    X(vkCreateCuModuleNVX) X(vkCreateCuFunctionNVX) X(vkDestroyCuModuleNVX) X(vkDestroyCuFunctionNVX) \
+    X(vkCmdCuLaunchKernelNVX) X(vkGetImageViewHandleNVX) X(vkGetImageViewHandle64NVX) \
     X(vkGetCalibratedTimestampsKHR)                          \
     X(vkGetCalibratedTimestampsEXT)                          \
     X(vkCreateSwapchainKHR) X(vkDestroySwapchainKHR) X(vkGetSwapchainImagesKHR) \
-    X(vkAcquireNextImageKHR) X(vkQueuePresentKHR) X(vkSetHdrMetadataEXT)
-// vkreflex.1: the host's low-latency outputs (NVIDIA Reflex, AMD Anti-Lag 2). With a deviceProcOverride they come from
+    X(vkAcquireNextImageKHR) X(vkQueuePresentKHR) X(vkSetHdrMetadataEXT) \
+    X(vkCreateEvent) X(vkDestroyEvent) X(vkCmdSetEvent) X(vkGetEventStatus) X(vkResetEvent)
+// The host's low-latency outputs (NVIDIA Reflex, AMD Anti-Lag 2). With a deviceProcOverride they come from
 // it alone: OptiScaler's vkGetDeviceProcAddr hands out its own Reflex and Anti-Lag input wrappers for these names.
 #define XVK_LATENCY_DEVICE_FNS(X)                            \
     X(vkSetLatencySleepModeNV) X(vkLatencySleepNV) X(vkSetLatencyMarkerNV) X(vkQueueNotifyOutOfBandNV) \
@@ -99,6 +103,20 @@ struct VkFns
 // ------------------------------------------------------------------ COM helpers
 template <class... I>
 inline bool IsIid(REFIID riid) { return (... || (riid == __uuidof(I))); }
+
+// QueryInterface for one interface chain: for the IIDs of I (tested in order) `self` is AddRef'd and comes back as Out.
+template <class Out, class... I, class Self>
+inline HRESULT QueryAs(Self* self, REFIID riid, void** out)
+{
+    if (!out) return E_POINTER;
+    if (IsIid<I...>(riid)) {
+        self->AddRef();
+        *out = static_cast<Out*>(self);
+        return S_OK;
+    }
+    *out = nullptr;
+    return E_NOINTERFACE;
+}
 
 struct GuidLess
 {
@@ -134,23 +152,11 @@ public:
     HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID guid, UINT* size, void* data) override { return private_.Get(guid, size, data); }
     HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID guid, UINT size, const void* data) override { return private_.Set(guid, size, data); }
     HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(REFGUID guid, const IUnknown* object) override { return private_.SetInterface(guid, object); }
-    HRESULT STDMETHODCALLTYPE SetName(LPCWSTR name) override
-    {
-        std::lock_guard lock(nameMutex_);
-        name_ = name ? name : L"";
-        return S_OK;
-    }
+    HRESULT STDMETHODCALLTYPE SetName(LPCWSTR) override { return S_OK; }
     virtual ~D3D12Object() = default;
-    std::wstring Name()
-    {
-        std::lock_guard lock(nameMutex_);
-        return name_;
-    }
 protected:
     std::atomic<ULONG> refs_{1};
     PrivateData private_;
-    std::mutex nameMutex_;
-    std::wstring name_;
 };
 
 class Device;
@@ -162,7 +168,6 @@ public:
     explicit DeviceChild(Device* device);
     ~DeviceChild() override;
     HRESULT STDMETHODCALLTYPE GetDevice(REFIID riid, void** out) override;
-    Device* device() const { return device_; }
 protected:
     Device* device_;
 };
@@ -248,6 +253,9 @@ struct Descriptor
     Resource* resource = nullptr;     // not owned
     VkDescriptorImageInfo image{};    // view (GENERAL) or sampler
     VkDescriptorBufferInfo buffer{};
+    VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_MAX_ENUM;
+    VkImageView cudaArrayView = VK_NULL_HANDLE; // 2D twin as a one-layer array; owned/cached by resource
+    uint32_t stride = 0;
 };
 
 // ------------------------------------------------------------------ resource descriptions
@@ -286,6 +294,9 @@ public:
     VkImageView View(VkFormat format, VkImageViewType type, VkImageAspectFlags aspect, uint32_t baseMip, uint32_t mips,
                      uint32_t baseLayer, uint32_t layers, VkImageUsageFlags usage);
     uint64_t size() const { return size_; }
+    void NoteWrite() noexcept { writeGeneration_.fetch_add(1, std::memory_order_relaxed); }
+    uint64_t CudaHandle(VkImageView view, bool storage, TensorRoute& route);
+    uint64_t TensorShadow(VkCommandBuffer, uint64_t offset, uint64_t range, TensorRoute&, std::string& reason);
 
 private:
     D3D12_RESOURCE_DESC desc_;
@@ -301,6 +312,10 @@ private:
     uint8_t* mapped_ = nullptr;
     std::mutex viewMutex_;
     std::map<std::array<uint32_t, 8>, VkImageView> views_;
+    struct Shadow { VkImage image{}; VkDeviceMemory memory{}; VkImageView view{}; uint64_t handle{}, generation{}; bool initialized{}; };
+    std::map<std::pair<uint64_t, uint64_t>, Shadow> shadows_;
+    std::map<std::pair<VkImageView, bool>, uint64_t> cudaHandles_;
+    std::atomic<uint64_t> writeGeneration_{1};
 };
 
 class Heap final : public DeviceChild<ID3D12Heap>
@@ -371,6 +386,8 @@ public:
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override;
     HRESULT STDMETHODCALLTYPE GetCachedBlob(ID3DBlob**) override { XVK_UNIMPLEMENTED_HR("PipelineState::GetCachedBlob"); }
 
+    void SetTensorLayer(uint8_t layer) noexcept { tensorLayer_ = layer; }
+    uint8_t tensorLayer() const noexcept { return tensorLayer_; }
     VkPipeline pipeline() const { return pipeline_; }
     VkPipelineLayout layout() const { return layout_; }
     const std::vector<BoundRange>& ranges() const { return ranges_; }
@@ -378,8 +395,8 @@ public:
     const std::vector<uint32_t>& staticBindings() const { return staticBindings_; }
     int constantsParameter() const { return constantsParameter_; }
     uint32_t pushConstantBytes() const { return pushConstantBytes_; }
-    const std::string& program() const { return program_; }
 private:
+    uint8_t tensorLayer_{};
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout setLayout_ = VK_NULL_HANDLE;
@@ -400,7 +417,6 @@ public:
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override;
     HRESULT STDMETHODCALLTYPE Reset() override;
     VkCommandBuffer Allocate();
-    D3D12_COMMAND_LIST_TYPE type() const { return type_; }
 private:
     D3D12_COMMAND_LIST_TYPE type_;
     std::mutex mutex_;
@@ -488,12 +504,6 @@ public:
     HRESULT SubmitStageCopy(VkCommandBuffer command, const VkSemaphoreSubmitInfo* signals, uint32_t count, VkFence fence, uint64_t* progress)
     {
         return Submit({command}, VK_NULL_HANDLE, 0, nullptr, 0, signals, count, fence, progress);
-    }
-    // The swap chain's copy into the acquired image, ordered after earlier work on this queue.
-    HRESULT SubmitPresentCopy(VkCommandBuffer command, const VkSemaphoreSubmitInfo& wait, const VkSemaphoreSubmitInfo* signals, uint32_t count,
-                              VkFence fence, uint64_t* progress = nullptr)
-    {
-        return Submit({command}, VK_NULL_HANDLE, 0, &wait, 1, signals, count, fence, progress);
     }
     // Host work on this queue (the Vulkan host's acquire signal): ordered after earlier work and after every
     // D3D12 Wait issued on this queue so far, like any submission.
@@ -611,6 +621,7 @@ private:
     VkPipeline boundPipeline_ = VK_NULL_HANDLE;
     std::array<const Descriptor*, 64> tables_{};
     std::array<std::array<uint32_t, 64>, 16> constants_{};
+    std::array<uint32_t, 16> constantMasks_{};
 };
 
 // ------------------------------------------------------------------ device
@@ -618,6 +629,9 @@ class Device final : public D3D12Object<ID3D12Device1>
 {
 public:
     Device() = default;
+    TensorRoute& tensor() noexcept { return tensor_; }
+    bool InstallTensor(std::span<const unsigned char> fatbin, const TensorOptions& options, std::string& reason) noexcept
+    { return tensor_.Install(tensorDesc_, fatbin, options, reason); }
     ~Device() override;
     HRESULT Init(const DeviceDesc& desc);
 
@@ -703,6 +717,14 @@ public:
     // Runs `destroy` once every queue has finished the work submitted before this call.
     void DeferDestroy(std::function<void()> destroy);
     void Collect();
+    // vkprov.1 (DeviceDesc::recorded): the command buffer lists record into while a recording is open (null
+    // otherwise), and the recording's bounds (xvk.h BeginRecording / EndRecording).
+    bool recorded() const { return recorded_; }
+    VkCommandBuffer RecordingBuffer();
+    bool BeginRecording(VkCommandBuffer commandBuffer);
+    void EndRecording();
+    // Marks recordings the GPU has run as finished on the progress timeline (their events are set), then collects.
+    void PollRecordings();
     // Adds this queue's progress signal to a submission (caller holds slot.mutex).
     VkSemaphoreSubmitInfo Progress(QueueSlot& slot)
     {
@@ -711,15 +733,13 @@ public:
     // Fence waits that signal Win32 events.
     void WaitAsync(VkSemaphore semaphore, uint64_t value, HANDLE event);
     void WaitAsync(VkSemaphore semaphore, uint64_t value, std::function<void()> done);
-    const Program* FindProgram(const std::string& sha) { return programs_.Find(sha); }
     PFN_vkGetInstanceProcAddr gipa() const { return gipa_; }
     VkInstance instance() const { return instance_; }
     // Samplers are cached by their create info (descriptor samplers and static samplers).
     VkSampler Sampler(const VkSamplerCreateInfo& info);
     // Swap chains present from their own thread on this queue; D3D12 queues never map to it (when there are two or more).
     QueueSlot* PresentSlot() const { return slots_.back().get(); }
-    bool calibratedTimestamps() const { return calibrated_ && (vk_.vkGetCalibratedTimestampsKHR || vk_.vkGetCalibratedTimestampsEXT); }
-    // vkreflex.1: VK_NV_low_latency2's functions came with the device (its swap chains can take low latency mode), and
+    // VK_NV_low_latency2's functions came with the device (its swap chains can take low latency mode), and
     // VK_KHR_present_id's presentId feature is on (Reflex's present markers name the real frame's present).
     bool lowLatency2() const { return vk_.vkSetLatencySleepModeNV && vk_.vkLatencySleepNV && vk_.vkSetLatencyMarkerNV; }
     bool presentIds() const { return presentIds_; }
@@ -758,6 +778,8 @@ public:
 
 private:
     void WaiterThread();
+    TensorRoute tensor_;
+    DeviceDesc tensorDesc_;
     VkFns vk_;
     VkInstance instance_ = VK_NULL_HANDLE;
     VkPhysicalDevice physical_ = VK_NULL_HANDLE;
@@ -770,7 +792,6 @@ private:
     std::vector<std::unique_ptr<QueueSlot>> slots_;
     std::atomic<uint32_t> nextSlot_{0};
     ProgramSet programs_;
-    bool calibrated_ = false;
     bool presentIds_ = false;
     bool presentMetering_ = false;   // MFGAdaUnlock 1.7
     std::mutex latencyMutex_;                       // latencySemaphore_'s creation
@@ -797,6 +818,16 @@ private:
     struct Grave { std::vector<uint64_t> targets; std::function<void()> destroy; };
     std::mutex graveMutex_;
     std::vector<Grave> graves_;
+
+    // vkprov.1: recorded mode. One queue-less slot carries the progress timeline; each ended recording is an epoch
+    // whose event, set by the GPU at the end of the caller's command buffer, moves the timeline to its value.
+    bool recorded_ = false;
+    std::mutex recordMutex_;
+    VkCommandBuffer recording_ = VK_NULL_HANDLE;
+    struct Epoch { VkEvent event; uint64_t value; };
+    std::vector<Epoch> epochs_;
+    std::vector<VkEvent> freeEvents_;
+    std::vector<std::function<void(VkCommandBuffer)>> pendingInit_;   // initializations before the first recording
 
     std::mutex samplerMutex_;
     std::map<std::array<uint8_t, sizeof(VkSamplerCreateInfo)>, VkSampler> samplers_;

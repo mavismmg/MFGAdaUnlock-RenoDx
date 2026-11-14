@@ -333,7 +333,9 @@ selections=[e for e in events if e.get('event')=='runtime_selection']
 runtime_selection=bool(selections) and all('_storage_' in e['provider_path'] and '_storage_' in e['xell_path'] for e in selections) if args.runtime_layout!='adjacent' else bool(selections)
 sdk_deadlines=[e for e in events if e.get('event')=='dlssg_interval_deadline' and e.get('sdk_deadlines')]
 policy=[e.get('deadlines') for e in events if e.get('event')=='pacing_policy']
-policy_activation=policy==['sdk','adaptive']
+# 1.10.0 (dashdogy v1.7.1): the SDK-deadline comparison is gone with the pacer rewrite, so a
+# request must not switch the policy any more (no pacing_policy record, no SDK-deadline output).
+policy_activation=policy==[] and not sdk_deadlines
 # An occluded output may not execute the deadline body. Distinguish that lack
 # of observation from either proving passthrough or witnessing a violation.
 passthrough=all(e['deadline_ns']==e['sdk_deadline_ns'] and not e['flip_metered'] for e in sdk_deadlines) if sdk_deadlines else None
@@ -349,7 +351,8 @@ persisted=(prefs.get('Latency','Input',fallback='')=='Reflex'
     and prefs.get('XeFG','ForceBorderless',fallback='')=='0'
     and prefs.get('XeFG','XeFGFlipMetering',fallback='')=='on'
     and prefs.get('XeFG','UIComposition',fallback='')=='0'
-    and prefs.get('XeFG','SdkDeadlines',fallback='')=='0')
+    # 1.10.0: SdkDeadlines is no longer written (the comparison is gone with dashdogy v1.7.1's pacer).
+    and prefs.get('XeFG','SdkDeadlines',fallback=None) is None)
 legacy_verified=(('Legacy factory: inference, resize, fallback and recreation verified' in result.stdout
     and 'Legacy native fallback: second output native and unchanged; no extra Intel context or manual final overlay' in result.stdout) if args.legacy_factory else None)
 markers_verified=('Historical markers: original calls preserved, real inference and duplicate forwarding verified' in result.stdout) if args.legacy_markers or args.mixed_markers or args.alias_markers else None

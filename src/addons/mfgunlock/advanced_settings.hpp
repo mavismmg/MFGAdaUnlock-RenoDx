@@ -35,8 +35,6 @@ inline constexpr Option kXeMfg[]{
   {L"XeFG",L"XeFGStock2xModel",Str::kIntelSStock2xModel_8fea,Str::kUsesIntelSOwn2x_e79e,L"0",MFGUNLOCK_CHOICES(kOnOff)},
   {L"XeFG",L"XeFGFlipMeteringLeadUs",Str::kFlipMeteringLeadUs_c51c,Str::kHowEarlyFramesAreHanded_040c,L"2500",MFGUNLOCK_NUMBER(0,8000)},
   {L"XeFG",L"XeFGFlipQueue",Str::kFlipQueue_ab75,Str::kExperimentalPresentationQueueOffBy_93db,L"0",MFGUNLOCK_CHOICES(kOnOff)},
-  {L"XeFG",L"XeFGFlipQueueBufferPct",Str::kFlipQueueBuffer_7f5b,Str::kHowMuchOfTheFrame_67ce,L"50",MFGUNLOCK_NUMBER(0,100)},
-  {L"XeFG",L"XeFGFlipQueueFirst",Str::kFlipQueueFirstFrame_ed62,Str::kWhatTheFlipQueuePresents_b6d0,L"ready",MFGUNLOCK_CHOICES(kFirstFrame)},
   {L"XeFG",L"XeFGNativeBuffers",Str::kFlipQueueBuffers_8ac2,Str::kBackBuffersUsedByThe_f04a,L"10",MFGUNLOCK_NUMBER(2,16)},
   {L"XeFG",L"XeFGNativeLatency",Str::kNativeLatencyFrames_e6f5,Str::kLatencyRequestedFromTheSdk_d057,L"0",MFGUNLOCK_NUMBER(0,16)},
   {L"XeFG",L"InvertedDepth",Str::kInvertedDepth_87ad,Str::kAutomaticUsesTheGameS_5452,L"-1",MFGUNLOCK_CHOICES(kAutomatic)},

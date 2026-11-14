@@ -1,5 +1,6 @@
 #pragma once
 #include <windows.h>
+#include <span>
 #include <string>
 struct ID3D12Device;
 // Small host adapter for the MIT program port and pacing component. The
@@ -22,4 +23,8 @@ bool HostRedirectedExport(HMODULE module, const char* name) noexcept;
 // The xvk device: no CUDA route, NVAPI flip metering or flip queue on it.
 void SetVulkanHostDevice(ID3D12Device* device) noexcept;
 bool VulkanHostDevice(const ID3D12Device* device) noexcept;
+// 1.10.0 (dashdogy v1.7.1): the CUDA layers the Vulkan host's tensor-core route
+// runs (xvk::InstallTensorCores); the same embedded, verified fatbin as the D3D12
+// route. Empty when it cannot be read.
+std::span<const unsigned char> TensorCoreFatbin();
 }

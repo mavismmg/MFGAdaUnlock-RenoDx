@@ -144,14 +144,7 @@ HRESULT PipelineState::Init(RootSignature* rootSignature, const Program& program
 
 HRESULT STDMETHODCALLTYPE PipelineState::QueryInterface(REFIID riid, void** out)
 {
-    if (!out) return E_POINTER;
-    if (IsIid<IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12Pageable, ID3D12PipelineState>(riid)) {
-        AddRef();
-        *out = static_cast<ID3D12PipelineState*>(this);
-        return S_OK;
-    }
-    *out = nullptr;
-    return E_NOINTERFACE;
+    return QueryAs<ID3D12PipelineState, IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12Pageable, ID3D12PipelineState>(this, riid, out);
 }
 
 } // namespace xvk

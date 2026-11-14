@@ -1,4 +1,5 @@
 #include "xvk_internal.h"
+#include "../cuda/cuda_layers.h"
 
 namespace xvk {
 
@@ -77,6 +78,10 @@ Device::~Device()
     }
     for (auto& slot : slots_)
         if (slot->timeline) vk_.vkDestroySemaphore(device_, slot->timeline, nullptr);
+    if (vk_.vkDestroyEvent) {
+        for (const Epoch& epoch : epochs_) vk_.vkDestroyEvent(device_, epoch.event, nullptr);
+        for (VkEvent event : freeEvents_) vk_.vkDestroyEvent(device_, event, nullptr);
+    }
     if (initPool_) vk_.vkDestroyCommandPool(device_, initPool_, nullptr);
     if (initSemaphore_) vk_.vkDestroySemaphore(device_, initSemaphore_, nullptr);
     if (wakeSemaphore_) vk_.vkDestroySemaphore(device_, wakeSemaphore_, nullptr);
@@ -97,7 +102,7 @@ VkSemaphore Device::LatencySemaphore()
 
 void Device::NotifyOutOfBand()
 {
-    if (!vk_.vkQueueNotifyOutOfBandNV || outOfBand_.exchange(true)) return;
+    if (!vk_.vkQueueNotifyOutOfBandNV || recorded_ || outOfBand_.exchange(true)) return;
     for (auto& slot : slots_) {
         const bool present = slot.get() == PresentSlot();
         VkOutOfBandQueueTypeInfoNV type{VK_STRUCTURE_TYPE_OUT_OF_BAND_QUEUE_TYPE_INFO_NV, nullptr,
@@ -110,9 +115,11 @@ void Device::NotifyOutOfBand()
 
 HRESULT Device::Init(const DeviceDesc& desc)
 {
-    if (!desc.instance || !desc.physicalDevice || !desc.device || !desc.getInstanceProcAddr || desc.queueCount < 2 || !desc.queues ||
-        !desc.programModule)
+    if (!desc.instance || !desc.physicalDevice || !desc.device || !desc.getInstanceProcAddr || !desc.programModule)
         return E_INVALIDARG;
+    if (desc.recorded ? desc.queueCount != 0 : desc.queueCount < 2 || !desc.queues) return E_INVALIDARG;
+    tensorDesc_ = desc;
+    recorded_ = desc.recorded;
     instance_ = desc.instance;
     physical_ = desc.physicalDevice;
     device_ = desc.device;
@@ -155,7 +162,21 @@ HRESULT Device::Init(const DeviceDesc& desc)
     memcpy(&luid_, id.deviceLUID, sizeof(LUID));
     vk_.vkGetPhysicalDeviceMemoryProperties(physical_, &memory_);
 
-    queueFamily_ = desc.queues[0].family;
+    if (recorded_) {
+        // One slot without a VkQueue: its timeline is the progress of the recordings the GPU has run.
+        if (!vk_.vkCreateEvent || !vk_.vkDestroyEvent || !vk_.vkCmdSetEvent || !vk_.vkGetEventStatus || !vk_.vkResetEvent) {
+            Log("recorded device: event functions missing");
+            return E_FAIL;
+        }
+        queueFamily_ = desc.recordedFamily;
+        auto slot = std::make_unique<QueueSlot>();
+        slot->family = queueFamily_;
+        VkSemaphoreTypeCreateInfo progress{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, nullptr, VK_SEMAPHORE_TYPE_TIMELINE, 0};
+        VkSemaphoreCreateInfo progressInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &progress};
+        if (vk_.vkCreateSemaphore(device_, &progressInfo, nullptr, &slot->timeline) != VK_SUCCESS) return E_FAIL;
+        slots_.push_back(std::move(slot));
+    }
+    else queueFamily_ = desc.queues[0].family;
     for (uint32_t i = 0; i < desc.queueCount; ++i) {
         if (desc.queues[i].family != queueFamily_) { Log("queues must share one family"); return E_INVALIDARG; }
         auto slot = std::make_unique<QueueSlot>();
@@ -169,7 +190,6 @@ HRESULT Device::Init(const DeviceDesc& desc)
         slots_.push_back(std::move(slot));
     }
     programs_.Load(desc.programModule);
-    calibrated_ = desc.calibratedTimestamps;
 
     VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, nullptr, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, queueFamily_};
     if (vk_.vkCreateCommandPool(device_, &pool, nullptr, &initPool_) != VK_SUCCESS) return E_FAIL;
@@ -184,14 +204,7 @@ HRESULT Device::Init(const DeviceDesc& desc)
 
 HRESULT STDMETHODCALLTYPE Device::QueryInterface(REFIID riid, void** out)
 {
-    if (!out) return E_POINTER;
-    if (IsIid<IUnknown, ID3D12Object, ID3D12Device, ID3D12Device1>(riid)) {
-        AddRef();
-        *out = static_cast<ID3D12Device1*>(this);
-        return S_OK;
-    }
-    *out = nullptr;
-    return E_NOINTERFACE;
+    return QueryAs<ID3D12Device1, IUnknown, ID3D12Object, ID3D12Device, ID3D12Device1>(this, riid, out);
 }
 
 bool Device::FindMemoryType(uint32_t bits, D3D12_HEAP_TYPE heap, uint32_t& type) const
@@ -245,20 +258,11 @@ Resource* Device::ResolveVa(D3D12_GPU_VIRTUAL_ADDRESS va, uint64_t& offset)
     return it->second.second;
 }
 
-void Device::InitializeResource(VkImage image, VkImageAspectFlags aspect, VkBuffer buffer)
+namespace
 {
-    std::lock_guard lock(initMutex_);
-    uint64_t completed = 0;
-    vk_.vkGetSemaphoreCounterValue(device_, initSemaphore_, &completed);
-    VkCommandBuffer command = VK_NULL_HANDLE;
-    for (auto it = initBatches_.begin(); it != initBatches_.end(); ++it)
-        if (it->value <= completed) { command = it->buffer; initBatches_.erase(it); break; }
-    if (!command) {
-        VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, initPool_, VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1};
-        if (vk_.vkAllocateCommandBuffers(device_, &allocate, &command) != VK_SUCCESS) { Fault("init command buffer"); return; }
-    }
-    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
-    vk_.vkBeginCommandBuffer(command, &begin);
+// A new image moves from UNDEFINED to GENERAL and is cleared, a new buffer is zeroed, then one full barrier.
+void RecordInitialization(const VkFns& vk, VkCommandBuffer command, VkImage image, VkImageAspectFlags aspect, VkBuffer buffer)
+{
     VkMemoryBarrier2 memory{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
     memory.srcStageMask = memory.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
     memory.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
@@ -275,21 +279,49 @@ void Device::InitializeResource(VkImage image, VkImageAspectFlags aspect, VkBuff
         barrier.subresourceRange = {aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
         dependency.imageMemoryBarrierCount = 1;
         dependency.pImageMemoryBarriers = &barrier;
-        vk_.vkCmdPipelineBarrier2(command, &dependency);
+        vk.vkCmdPipelineBarrier2(command, &dependency);
         const VkImageSubresourceRange range{aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
         if (aspect & VK_IMAGE_ASPECT_COLOR_BIT) {
             VkClearColorValue zero{};
-            vk_.vkCmdClearColorImage(command, image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+            vk.vkCmdClearColorImage(command, image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
         } else {
             VkClearDepthStencilValue zero{};
-            vk_.vkCmdClearDepthStencilImage(command, image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+            vk.vkCmdClearDepthStencilImage(command, image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
         }
     }
-    if (buffer) vk_.vkCmdFillBuffer(command, buffer, 0, VK_WHOLE_SIZE, 0);
+    if (buffer) vk.vkCmdFillBuffer(command, buffer, 0, VK_WHOLE_SIZE, 0);
     dependency = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
     dependency.memoryBarrierCount = 1;
     dependency.pMemoryBarriers = &memory;
-    vk_.vkCmdPipelineBarrier2(command, &dependency);
+    vk.vkCmdPipelineBarrier2(command, &dependency);
+}
+}
+
+void Device::InitializeResource(VkImage image, VkImageAspectFlags aspect, VkBuffer buffer)
+{
+    if (recorded_) {
+        // vkprov.1: into the open recording, ahead of any use (lists record into the same command buffer after this);
+        // before the first recording, at its start.
+        std::lock_guard lock(recordMutex_);
+        if (recording_) RecordInitialization(vk_, recording_, image, aspect, buffer);
+        else pendingInit_.push_back([this, image, aspect, buffer](VkCommandBuffer command) {
+            RecordInitialization(vk_, command, image, aspect, buffer);
+        });
+        return;
+    }
+    std::lock_guard lock(initMutex_);
+    uint64_t completed = 0;
+    vk_.vkGetSemaphoreCounterValue(device_, initSemaphore_, &completed);
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    for (auto it = initBatches_.begin(); it != initBatches_.end(); ++it)
+        if (it->value <= completed) { command = it->buffer; initBatches_.erase(it); break; }
+    if (!command) {
+        VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, initPool_, VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1};
+        if (vk_.vkAllocateCommandBuffers(device_, &allocate, &command) != VK_SUCCESS) { Fault("init command buffer"); return; }
+    }
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+    vk_.vkBeginCommandBuffer(command, &begin);
+    RecordInitialization(vk_, command, image, aspect, buffer);
     vk_.vkEndCommandBuffer(command);
     const uint64_t value = ++initValue_;
     VkCommandBufferSubmitInfo commandInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, command};
@@ -309,9 +341,15 @@ void Device::InitializeResource(VkImage image, VkImageAspectFlags aspect, VkBuff
 void Device::DeferDestroy(std::function<void()> destroy)
 {
     Grave grave{{}, std::move(destroy)};
+    // vkprov.1: a recording still open ends as the next epoch, and its work may use the object.
+    bool open = false;
+    if (recorded_) {
+        std::lock_guard lock(recordMutex_);
+        open = recording_ != VK_NULL_HANDLE;
+    }
     for (auto& slot : slots_) {
         std::lock_guard lock(slot->mutex);
-        grave.targets.push_back(slot->submitted);
+        grave.targets.push_back(slot->submitted + (open ? 1 : 0));
     }
     {
         std::lock_guard lock(graveMutex_);
@@ -346,6 +384,18 @@ void Device::InitWait(VkSemaphore& semaphore, uint64_t& value)
 
 bool Device::WaitIdle(uint64_t timeoutNs)
 {
+    if (recorded_) {
+        const ULONGLONG deadline = GetTickCount64() + timeoutNs / 1000000;
+        while (true) {
+            PollRecordings();
+            {
+                std::lock_guard lock(recordMutex_);
+                if (epochs_.empty()) return true;
+            }
+            if (GetTickCount64() >= deadline) return false;
+            Sleep(1);
+        }
+    }
     std::vector<VkSemaphore> semaphores;
     std::vector<uint64_t> values;
     for (auto& slot : slots_) {
@@ -363,6 +413,82 @@ void Device::Fault(const char* what)
 {
     Log("device fault: %s", what);
     removed_.store(DXGI_ERROR_DEVICE_HUNG);
+}
+
+VkCommandBuffer Device::RecordingBuffer()
+{
+    std::lock_guard lock(recordMutex_);
+    return recording_;
+}
+
+bool Device::BeginRecording(VkCommandBuffer commandBuffer)
+{
+    if (!recorded_ || !commandBuffer) return false;
+    PollRecordings();
+    std::vector<std::function<void(VkCommandBuffer)>> pending;
+    {
+        std::lock_guard lock(recordMutex_);
+        if (recording_) return false;
+        recording_ = commandBuffer;
+        pending.swap(pendingInit_);
+    }
+    for (auto& record : pending) record(commandBuffer);
+    return true;
+}
+
+void Device::EndRecording()
+{
+    VkEvent event = VK_NULL_HANDLE;
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    {
+        std::lock_guard lock(recordMutex_);
+        command = recording_;
+        recording_ = VK_NULL_HANDLE;
+        if (!command) return;
+        if (!freeEvents_.empty()) {
+            event = freeEvents_.back();
+            freeEvents_.pop_back();
+        }
+    }
+    if (!event) {
+        VkEventCreateInfo info{VK_STRUCTURE_TYPE_EVENT_CREATE_INFO};
+        if (vk_.vkCreateEvent(device_, &info, nullptr, &event) != VK_SUCCESS) { Fault("recording event"); return; }
+    }
+    // Set once everything recorded before it has run; the epoch's objects are released after that.
+    vk_.vkCmdSetEvent(command, event, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+    QueueSlot& slot = *slots_[0];
+    uint64_t value = 0;
+    {
+        std::lock_guard lock(slot.mutex);
+        value = ++slot.submitted;
+    }
+    std::lock_guard lock(recordMutex_);
+    epochs_.push_back({event, value});
+}
+
+void Device::PollRecordings()
+{
+    if (!recorded_) return;
+    uint64_t finished = 0;
+    {
+        std::lock_guard lock(recordMutex_);
+        // In order: a recording the caller never submitted holds every later one back, which only delays destruction.
+        while (!epochs_.empty() && vk_.vkGetEventStatus(device_, epochs_.front().event) == VK_EVENT_SET) {
+            finished = epochs_.front().value;
+            vk_.vkResetEvent(device_, epochs_.front().event);
+            freeEvents_.push_back(epochs_.front().event);
+            epochs_.erase(epochs_.begin());
+        }
+    }
+    if (finished) {
+        uint64_t current = 0;
+        vk_.vkGetSemaphoreCounterValue(device_, slots_[0]->timeline, &current);
+        if (finished > current) {
+            VkSemaphoreSignalInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO, nullptr, slots_[0]->timeline, finished};
+            vk_.vkSignalSemaphore(device_, &signal);
+        }
+    }
+    Collect();
 }
 
 void Device::WaitAsync(VkSemaphore semaphore, uint64_t value, HANDLE event)
@@ -556,6 +682,7 @@ HRESULT STDMETHODCALLTYPE Device::CreateComputePipelineState(const D3D12_COMPUTE
         rootSignature = Own<RootSignature>(embedded);
     }
     auto* pso = new PipelineState(this);
+    pso->SetTensorLayer(xefg_cuda::LayerForSha256(sha));
     const HRESULT hr = pso->Init(rootSignature, *program);
     if (embedded) embedded->Release();
     return Hand(pso, hr, riid, out);
@@ -849,6 +976,7 @@ void STDMETHODCALLTYPE Device::CreateShaderResourceView(ID3D12Resource* resource
         uint64_t stride = desc->Buffer.StructureByteStride;
         if (desc->Buffer.Flags & D3D12_BUFFER_SRV_FLAG_RAW) stride = 4;
         if (!stride) { Unimplemented("typed buffer SRV"); return; }
+        d->stride = uint32_t(stride);
         d->kind = DescriptorKind::SrvBuffer;
         d->buffer = {resource->buffer(), desc->Buffer.FirstElement * stride, uint64_t(desc->Buffer.NumElements) * stride};
         return;
@@ -875,8 +1003,11 @@ void STDMETHODCALLTYPE Device::CreateShaderResourceView(ID3D12Resource* resource
     }
     VkImageView view = resource->View(format, type, aspect, baseMip, mips, baseLayer, layers, VK_IMAGE_USAGE_SAMPLED_BIT);
     if (!view) return;
+    d->viewType = type;
     d->kind = DescriptorKind::SrvImage;
     d->image = {VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL};
+    if (type == VK_IMAGE_VIEW_TYPE_2D)
+        d->cudaArrayView = resource->View(format, VK_IMAGE_VIEW_TYPE_2D_ARRAY, aspect, baseMip, mips, baseLayer, 1, VK_IMAGE_USAGE_SAMPLED_BIT);
 }
 
 void STDMETHODCALLTYPE Device::CreateUnorderedAccessView(ID3D12Resource* resourceIn, ID3D12Resource* counter, const D3D12_UNORDERED_ACCESS_VIEW_DESC* desc,
@@ -893,6 +1024,7 @@ void STDMETHODCALLTYPE Device::CreateUnorderedAccessView(ID3D12Resource* resourc
         uint64_t stride = desc->Buffer.StructureByteStride;
         if (desc->Buffer.Flags & D3D12_BUFFER_UAV_FLAG_RAW) stride = 4;
         if (!stride) { Unimplemented("typed buffer UAV"); return; }
+        d->stride = uint32_t(stride);
         d->kind = DescriptorKind::UavBuffer;
         d->buffer = {resource->buffer(), desc->Buffer.FirstElement * stride, uint64_t(desc->Buffer.NumElements) * stride};
         return;
@@ -915,8 +1047,11 @@ void STDMETHODCALLTYPE Device::CreateUnorderedAccessView(ID3D12Resource* resourc
     }
     VkImageView view = resource->View(format, type, aspect, mip, 1, baseLayer, layers, VK_IMAGE_USAGE_STORAGE_BIT);
     if (!view) return;
+    d->viewType = type;
     d->kind = DescriptorKind::UavImage;
     d->image = {VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL};
+    if (type == VK_IMAGE_VIEW_TYPE_2D)
+        d->cudaArrayView = resource->View(format, VK_IMAGE_VIEW_TYPE_2D_ARRAY, aspect, mip, 1, baseLayer, 1, VK_IMAGE_USAGE_STORAGE_BIT);
 }
 
 void STDMETHODCALLTYPE Device::CreateRenderTargetView(ID3D12Resource* resource, const D3D12_RENDER_TARGET_VIEW_DESC*, D3D12_CPU_DESCRIPTOR_HANDLE dest)
@@ -975,12 +1110,6 @@ void STDMETHODCALLTYPE Device::CopyDescriptorsSimple(UINT count, D3D12_CPU_DESCR
 // ---------------------------------------------------------------- host entry points
 namespace xvk {
 
-const char* const* RequiredDeviceExtensions() noexcept
-{
-    static const char* const extensions[] = {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, nullptr};
-    return extensions;
-}
-
 HRESULT CreateDevice(const DeviceDesc& desc, REFIID riid, void** out) noexcept
 {
     if (!out) return E_INVALIDARG;
@@ -997,4 +1126,42 @@ HRESULT CreateDevice(const DeviceDesc& desc, REFIID riid, void** out) noexcept
     }
 }
 
+// vkprov.1: the device and resources passed here are this layer's own (a recorded device the caller created).
+bool BeginRecording(ID3D12Device* d3d, VkCommandBuffer commandBuffer) noexcept
+{
+    if (!d3d) return false;
+    try { return Own<Device>(static_cast<ID3D12Device1*>(d3d))->BeginRecording(commandBuffer); }
+    catch (...) { return false; }
+}
+
+void EndRecording(ID3D12Device* d3d) noexcept
+{
+    if (!d3d) return;
+    try { Own<Device>(static_cast<ID3D12Device1*>(d3d))->EndRecording(); }
+    catch (...) {}
+}
+
+bool WaitRecordedIdle(ID3D12Device* d3d, uint64_t timeoutNs) noexcept
+{
+    if (!d3d) return false;
+    try { return Own<Device>(static_cast<ID3D12Device1*>(d3d))->WaitIdle(timeoutNs); }
+    catch (...) { return false; }
+}
+
+VkImage ImageOf(ID3D12Resource* resource) noexcept
+{
+    if (!resource) return VK_NULL_HANDLE;
+    auto* own = Own<Resource>(resource);
+    return own->IsBuffer() ? VK_NULL_HANDLE : own->image();
+}
+
+bool InstallTensorCores(ID3D12Device* device, const void* fatbin, size_t bytes, const TensorOptions& options, std::string& reason) noexcept
+{
+    auto* own = Own<Device>(device);
+    return own && own->InstallTensor({static_cast<const unsigned char*>(fatbin), bytes}, options, reason);
+}
+void SetTensorCoresEnabled(ID3D12Device* device, bool enabled) noexcept
+{
+    if (auto* own = Own<Device>(device)) own->tensor().Enable(enabled);
+}
 } // namespace xvk

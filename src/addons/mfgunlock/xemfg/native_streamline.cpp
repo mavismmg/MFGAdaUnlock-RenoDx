@@ -1036,7 +1036,7 @@ static void WriteSummary(Output& o,const xefg_swapchain_present_status_t& status
       +",\"present_call_us\":"+std::to_string(presents?o.summaryPresentUs.load()/presents:0)
       +",\"latency_output\":"+std::to_string(uint32_t(s.latencyOutput.load()))
       +",\"native_buffers\":"+std::to_string(flip.nativeBuffers)+",\"native_latency\":"+std::to_string(flip.nativeLatency)
-      +",\"flip_metered\":"+std::to_string(flip.metered)+",\"queue_ahead\":"+std::to_string(flip.queueAheadActive)
+      +",\"flip_metered\":"+std::to_string(flip.metered)
       +(orderKnown?",\"evaluations\":"+std::to_string(order.evaluations)+",\"merged_evaluations\":"+std::to_string(order.merged)
           +",\"empty_presents\":"+std::to_string(order.emptyPresents)+",\"pipelined\":"+std::to_string(order.pipelined)
           +",\"pipelined_refused\":"+std::to_string(order.refused):std::string()));

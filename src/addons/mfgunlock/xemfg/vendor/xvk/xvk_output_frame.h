@@ -1,5 +1,5 @@
 #pragma once
-// vkreflex.1: the frame XeFG presents on the calling thread. sdk_pacing's hook of XeFG's internal present opens the scope
+// The frame XeFG presents on the calling thread. sdk_pacing's hook of XeFG's internal present opens the scope
 // around the call, and the xvk swap chain's Present1 reads it for NVIDIA Reflex: out-of-band present markers name the
 // batch's frame, and the real frame's present carries its present id. No Vulkan types, so modules on the pinned Vulkan
 // 1.2 headers can include it.

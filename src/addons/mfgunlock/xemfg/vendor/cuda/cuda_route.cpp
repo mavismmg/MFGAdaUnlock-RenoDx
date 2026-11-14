@@ -1,5 +1,5 @@
 #include "cuda_route.h"
-#include "xefg_cuda_params.h"
+#include "cuda_layers.h"
 #include "../adapter_discovery.h"
 #include "../sha256_util.h"
 #include "../overlay_native.h"
@@ -27,73 +27,6 @@ namespace
 {
 using Microsoft::WRL::ComPtr;
 
-// ---- the layer table ------------------------------------------------------------------------------
-// One entry per Intel program the kernels reproduce byte for byte (tests/xess_cuda; research
-// build\cubin-bench-20261014 and build\vk-layer-port-20261008). The SHA-256 is of the DXIL container
-// the provider passes to CreateComputePipelineState: the 11 U-Net programs and 2 flow programs from
-// libxess_fg 3.0.2 (the same bytes in OptiScaler's provider), and 4 of RTXMFG's embedded ported flow
-// programs (xess-programs/programs). Every program binds root parameter 0 = table (t0, [t4,] u0),
-// 1 = table (t1, t2, t3), 2 = root constants b0. unet.1: five layers also match RTXMFG's own program
-// (xess/port/unet_conv.hlsl, the pins in xess/generate_xess_shaders.py), which ShaderPort puts in place of
-// Intel's: same root signature, same Dispatch, byte-identical output.
-enum class Family : uint8_t { Pool, Decoder, Flow };
-constexpr const char* kKernels[] = {"L_aa016078", "L_198d6bf8", "L_dcd8becf", "L_efbe3788", "L_50f0c205", "L_a3c3caa1",
-    "L_9481d452", "L_06e97933", "L_3ed03daf", "L_748b0baf", "L_cb391582", "L_fc1b8a04", "L_3459485", "L_3452733",
-    "L_flow16_acc17", "L_3453044"};
-constexpr uint32_t kFlowConstants = (1u << 2) | (1u << 3) | (1u << 4) | (1u << 5) | (1u << 9) | (1u << 10);
-struct Layer
-{
-    LayerInfo info;
-    uint8_t kernel;            // index into kKernels
-    Family family;
-    uint16_t intelW, intelH;   // output positions per Intel thread group (x, y)
-    uint16_t groupsZ;          // the Intel Dispatch's z
-    uint16_t tileW, tileH;     // kernel tile (output positions)
-    uint16_t gridZ;            // kernel grid z
-    uint32_t constants;        // root constant words the program reads (mask)
-    // psorefused.1: the byte sizes of the program and of the own program (0: none). A program of any other size cannot
-    // have the layer's SHA-256, so the route hashes only these sizes, whoever creates the pipeline.
-    uint32_t bytes, ownBytes;
-};
-constexpr Layer kLayers[] = {
-    {{"aa016078", "8c2efb9e955f39379a91887ed3d90412c4b7ae2c142a874e3da5f699de197f7c", "L_aa016078",
-        "ce847b58086ce7e9d25f7d8b90e989247cd4582226506d9552112f1ef4130643"}, 0, Family::Pool, 16, 16, 1, 8, 16, 1, 0, 47728, 92932},
-    {{"198d6bf8", "aac1354a8004fe0aae02947a372f622a84b8d61c1691fc77d7fddedaf74ad36b", "L_198d6bf8"}, 1, Family::Pool, 4, 16, 1, 8, 8, 1, 0, 53304, 0},
-    {{"dcd8becf", "ba5c8b9ea1aa3aa3ce12acb4c2ff4c7c32d2bccab304c539246ad83f737523a0", "L_dcd8becf"}, 2, Family::Pool, 4, 8, 1, 8, 16, 2, 0, 54196, 0},
-    {{"efbe3788", "40e159414d5b839ba7e0e07cbf8ff4ef425ee026c216b2928ef3bb6dd0e20d40", "L_efbe3788",
-        "efa8da5ef5f90c62b789b0fed8e77e2ce043e558d164cc552ca7fb9127cedb00"}, 3, Family::Pool, 8, 4, 1, 8, 8, 4, 0, 54224, 54388},
-    {{"50f0c205", "fea66ef764b267613725fd37be22dc279b23280ffa132e53c285a798ac27df5e", "L_50f0c205"}, 4, Family::Pool, 16, 16, 1, 16, 4, 4, 0, 56256, 0},
-    {{"a3c3caa1", "51f5754a8f4dd34791351f2156f121c4cf119a5fae63bce76266a66b7a097d9a", "L_a3c3caa1"}, 5, Family::Pool, 16, 8, 1, 16, 8, 1, 0, 56280, 0},
-    {{"9481d452", "8cffea0f51779e7ddea756043802e9635d6b853d6aee2176ffb1f25a605750c0", "L_9481d452"}, 6, Family::Pool, 8, 8, 1, 16, 16, 1, 0, 28764, 0},
-    {{"06e97933", "3cdf1a4746fc91bf161f320e0256dbbccc954e774add6ac53caf50b7d1be69f7", "L_06e97933"}, 7, Family::Pool, 8, 8, 1, 16, 16, 1, 0, 35316, 0},
-    {{"3ed03daf", "01c8beac27d3f3f82ecba8f3dc2d9d8b60d4c175a41df3c24a24e8643f5578f5", "L_3ed03daf",
-        "9900c30febf95bfa81b4da1178e5773863116beba4d3f032897da4254b6d8926"}, 8, Family::Decoder, 16, 32, 1, 16, 16, 1, 3, 35852, 37760},
-    {{"748b0baf", "8291bbc36b1100b07d0788f35a3a9fadfbfcc2267ff0ccb7afb114d76f5d69fe", "L_748b0baf",
-        "e78063f97ad2c0913412f07589cd17d0f2a6ebeeb6edd70647a69cca6b6a02bf"}, 9, Family::Decoder, 8, 16, 1, 16, 8, 1, 3, 57376, 38104},
-    {{"cb391582", "a60f7488872a675d66afd2bec02b0b89e3cc38c1c4ed1d25d745a7b2fe677412", "L_cb391582",
-        "7a29fbf311cd8dee5b8c1cfdadf31ee983092a512cf9c10845a079b457eb62a9"}, 10, Family::Decoder, 32, 8, 1, 16, 16, 1, 3, 57372, 38124},
-    {{"fc1b8a04", "8c1d7667722c8692b376ed7511723b5e58efd61d4a4b8c4b61a1233f75df76ee", "L_fc1b8a04"}, 11, Family::Flow, 8, 8, 28, 16, 8, 7, kFlowConstants, 13704, 0},
-    {{"3459485", "51667b6d9955036a10cbd4e363881252de8ca5d3b6f210a7a3ee6cab719629a6", "L_3459485"}, 12, Family::Flow, 8, 8, 28, 16, 8, 7, kFlowConstants, 15948, 0},
-    {{"3452733", "f4aa535a6fc74410ae8b684eb881b9fd511c6a1ac1c784cc95bd8f7fd8ea0f61", "L_3452733"}, 13, Family::Flow, 8, 8, 28, 16, 8, 7, kFlowConstants, 15948, 0},
-    {{"55e5d6b9", "09887269759ef4d7588315f29e71126c899fde79f9edb336eedd598c662d4aea", "L_flow16_acc17"}, 14, Family::Flow, 8, 8, 4, 16, 8, 2, kFlowConstants, 23912, 0},
-    {{"34517926", "1bebcab193714ee264da7dc0a96e313d74ad4c71017fdea5314c8b07f6b56394", "L_flow16_acc17"}, 14, Family::Flow, 8, 8, 4, 16, 8, 2, kFlowConstants, 26164, 0},
-    {{"3453044", "13abff5d769ef56f99cb9ee7825968872e28395d77a6d344053c06cb08b8064c", "L_3453044"}, 15, Family::Flow, 8, 8, 4, 16, 8, 2, kFlowConstants, 26164, 0},
-};
-constexpr bool LayerSizes()
-{
-    for (const auto& layer : kLayers)
-        if (!layer.bytes || bool(layer.ownBytes) != bool(layer.info.ownSha256)) return false;
-    return true;
-}
-static_assert(LayerSizes(), "every program has a size, and every own program (only those) has one");
-constexpr std::array<LayerInfo, std::size(kLayers)> MakeInfos()
-{
-    std::array<LayerInfo, std::size(kLayers)> out{};
-    for (size_t i = 0; i < std::size(kLayers); ++i) out[i] = kLayers[i].info;
-    return out;
-}
-constexpr auto kLayerInfos = MakeInfos();
-
 // ---- NVAPI: the System32 dispatcher and driver-owned code only ----------------------------------------
 using NvQuery = void*(__cdecl*)(uint32_t);
 using NvInitialize = int(__cdecl*)();
@@ -116,10 +49,9 @@ constexpr uint32_t kIdInitialize = 0x0150e828, kIdCreate = 0x1dc7261f, kIdLaunch
     kIdDestroy = 0x7fb785ba, kIdDescriptorObject = 0x0ddac234;
 struct Nvapi { NvInitialize initialize{}; NvCreate create{}; NvLaunch launch{}; NvDestroy destroy{}; NvDescriptorObject object{}; };
 
-// cudafault.1 (Ghost of Tsushima, RTX 2060, 22 Oct): the driver faulted inside NvAPI's cubin create (an access violation
-// in nvcuda64.dll) and nothing caught it, since the C++ handlers here do not see SEH, so the game exited. These calls
-// run behind an SEH frame: a fault fails the call with kNvFault and keeps its exception code, the route turns off and
-// the DXIL port keeps the programs.
+// The driver can fault inside NvAPI's cubin create (an access violation in nvcuda64.dll), which the C++ handlers here
+// do not see (SEH), so the game would exit. These calls run behind an SEH frame: a fault fails the call with kNvFault
+// and keeps its exception code, the route turns off and the DXIL port keeps the programs.
 constexpr int kNvFault = 0x7FFFFFFF;
 std::atomic<unsigned long> gFaultCode{};
 int Faulted(unsigned long code) noexcept
@@ -255,7 +187,7 @@ IUnknown* gDeviceIdentity{};     // held reference; the route's kernels belong t
 ID3D12Device* gDevice{};
 uintptr_t gProviderBegin{}, gProviderEnd{};
 uintptr_t gWrapperBegin{}, gWrapperEnd{};   // the image of the wrapper the provider's device came through, if any
-uintptr_t gRuntimeBegin{}, gRuntimeEnd{};   // dredtable.1: the image of the runtime's device table (its D3D12Core.dll)
+uintptr_t gRuntimeBegin{}, gRuntimeEnd{};   // the image of the runtime's device table (its D3D12Core.dll)
 UINT gIncrement{};
 std::atomic<uint64_t> gLaunches{}, gFallbacks{};
 std::atomic<uint32_t> gLayerCount{};
@@ -270,7 +202,15 @@ void Log(const char* stage, const std::string& fields) noexcept
 constexpr size_t kSlots = 512;
 std::array<std::atomic<void*>, kSlots> gKeys{};
 std::array<std::atomic<uint8_t>, kSlots> gValues{};
-std::vector<ID3D12PipelineState*> gHeld;
+struct HeldLayer { ID3D12PipelineState* state; uint64_t token; uint8_t layer; };
+std::vector<HeldLayer> gHeld;
+thread_local uint64_t tPipelineToken{};
+std::atomic<uint64_t> gNextPipelineToken{1};
+std::atomic<uint64_t> gPipelineGeneration{};
+std::atomic<uint32_t> gLayerMask{(1u << std::size(kLayers)) - 1};
+std::atomic<bool> gAdoptProviderLists{};
+Status gVulkanStatus;
+std::atomic<bool> gVulkanReported{}, gVulkanLaunched{}, gVulkanActive{};
 std::atomic<bool> gAnyLayer{};
 
 size_t Home(const void* key) noexcept
@@ -279,18 +219,22 @@ size_t Home(const void* key) noexcept
 }
 uint8_t Lookup(const void* key) noexcept
 {
-    if (!key || !gAnyLayer.load(std::memory_order_acquire)) return 0;
+    const auto generation = gPipelineGeneration.load(std::memory_order_acquire);
+    if ((generation & 1) || !key || !gAnyLayer.load(std::memory_order_acquire)) return 0;
     for (size_t n = 0, i = Home(key); n < kSlots; ++n, i = (i + 1) & (kSlots - 1))
     {
         const void* found = gKeys[i].load(std::memory_order_acquire);
-        if (found == key) return gValues[i].load(std::memory_order_relaxed);
+        if (found == key)
+        {
+            const auto value = gValues[i].load(std::memory_order_relaxed);
+            return generation == gPipelineGeneration.load(std::memory_order_acquire) ? value : 0;
+        }
         if (!found) return 0;
     }
     return 0;
 }
 bool Insert(void* key, uint8_t value) noexcept // under gMutex
 {
-    if (gHeld.size() >= kSlots/2) return false;
     for (size_t n = 0, i = Home(key); n < kSlots; ++n, i = (i + 1) & (kSlots - 1))
     {
         void* found = gKeys[i].load(std::memory_order_relaxed);
@@ -383,16 +327,16 @@ bool ApplyDevice(void** vtable, std::span<const Hook> hooks) noexcept
 // (tests/xess_cuda --expect-agility). The provider's lists therefore get their first Reset where they are
 // created (HookCreateCommandList*), and the hooks go into the table each one then keeps. An Agility image
 // table is never written: hooks copied from it into the game's own list tables would also be refused by
-// modules that validate those tables (Witcher DOTS, which then falls back to raster hair). dredtable.1: an Agility
-// runtime that intercepts every call (DRED) keeps each list on its class table after the first Reset; that table is
-// shared, as the system runtime's is (AdoptList).
+// modules that validate those tables (Witcher DOTS, which then falls back to raster hair). An Agility runtime that
+// intercepts every call (DRED) keeps each list on its class table after the first Reset; that table is shared, as the
+// system runtime's is (AdoptList).
 struct ListTable
 {
     std::atomic<void**> table{};               // key; never removed (a retired own table keeps its originals)
     std::array<void*, kVtableSlots> original{};
     std::atomic<bool> complete{};              // every hook installed: its Dispatch may launch
     bool shared{};
-    bool runtimeClass{};                       // dredtable.1: shared, the class table of the device's Agility runtime
+    bool runtimeClass{};                       // shared, the class table of the device's Agility runtime
     ID3D12GraphicsCommandList* list{};         // an own table's list, held until the table is retired
     ID3D12CommandAllocator* allocator{};       // the temporary allocator of a CreateCommandList1 list's first Reset
 };
@@ -433,16 +377,12 @@ template <class F> F ListOriginal(void* self, int slot) noexcept
 // The replaced Dispatch needs the pipeline state, the CBV/SRV/UAV heap, root tables 0 and 1 and the
 // root constants. Kept for one list (and its table) per thread: another list on the same thread starts
 // over, and an incomplete state keeps the Dispatch.
-struct Recording
+struct Recording : ListState
 {
     void* list{};
     void** table{};
-    uint8_t layer{};
-    ID3D12DescriptorHeap* heap{};
-    D3D12_GPU_DESCRIPTOR_HANDLE tables[2]{};
-    uint32_t tableMask{};
-    uint32_t constants[12]{};
-    uint32_t constantMask{};
+    Recording() = default;
+    Recording(void* l, void** t) : list(l), table(t) {}
 };
 thread_local Recording tRecording;
 
@@ -530,7 +470,7 @@ void Fallback(Reason reason, const char* text, const Layer& layer) noexcept
         catch (...) {}
 }
 
-// cudafault.1: a fault inside the driver while recording turns the route off for the rest of the session; this
+// A fault inside the driver while recording turns the route off for the rest of the session; this
 // Dispatch and every later one run the DXIL port.
 std::atomic<bool> gFaultLogged{};
 void RuntimeFault(const char* where) noexcept
@@ -547,10 +487,10 @@ void RuntimeFault(const char* where) noexcept
 }
 
 // The layer's Dispatch as a CUDA launch on the same descriptors. False keeps the Dispatch.
-bool Launch(ID3D12GraphicsCommandList* list, const Recording& r, UINT x, UINT y, UINT z) noexcept
+bool Launch(ID3D12GraphicsCommandList* list, const ListState& r, UINT x, UINT y, UINT z) noexcept
 {
     const Layer& layer = kLayers[r.layer - 1];
-    if (z != layer.groupsZ || !x || !y || x > 65535 || y > 65535) { Fallback(kShape, "dispatch_shape", layer); return false; }
+    if (!DispatchShapeOk(layer, x, y, z)) { Fallback(kShape, "dispatch_shape", layer); return false; }
     if ((r.tableMask & 3u) != 3u || !r.heap) { Fallback(kBindings, "bindings_incomplete", layer); return false; }
     if ((r.constantMask & layer.constants) != layer.constants) { Fallback(kConstants, "constants_incomplete", layer); return false; }
     const D3D12_DESCRIPTOR_HEAP_DESC heap = r.heap->GetDesc();
@@ -578,10 +518,8 @@ bool Launch(ID3D12GraphicsCommandList* list, const Recording& r, UINT x, UINT y,
         || !object(r.tables[1], 1, kTextureObject, params.scale)
         || !object(r.tables[1], 2, kTextureObject, params.bias))
     { Fallback(kObject, "descriptor_object", layer); return false; }
-    params.limitW = x*layer.intelW;
-    params.limitH = y*layer.intelH;
-    std::memcpy(params.constants, r.constants, sizeof(params.constants));
-    const uint32_t gridX = (params.limitW + layer.tileW - 1)/layer.tileW, gridY = (params.limitH + layer.tileH - 1)/layer.tileH;
+    uint32_t gridX{}, gridY{};
+    FillLaunch(layer, x, y, r.constants, params, gridX, gridY);
     const int launched=[&] {
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
         mfgunlock::xemfg::native::RuntimeCall trace("nvapi_cuda_launch");
@@ -605,7 +543,7 @@ void STDMETHODCALLTYPE HookDispatch(ID3D12GraphicsCommandList* self, UINT x, UIN
     const auto& r = tRecording;
     if (r.list == self && r.layer && r.table == *reinterpret_cast<void***>(self) && gActive.load(std::memory_order_acquire))
         if (const ListTable* table = FindTable(r.table); table && table->complete.load(std::memory_order_acquire)
-            && Launch(self, r, x, y, z))
+            && LayerEnabled(r.layer) && Launch(self, r, x, y, z))
             return;
     ListOriginal<DispatchFn>(self, kDispatch)(self, x, y, z);
 }
@@ -678,10 +616,9 @@ bool RuntimeDevice(ID3D12Device* device, std::string& owner) noexcept
 // The runtime's device behind the one the provider holds. A wrapper (ReShade, Streamline, Special K) is seen through
 // with its public unwrap contract, else through a device child it does not wrap (a fence reports the device that
 // created it). The route then works on that device's own objects, under the wrapper: the wrapper's tables are never
-// written and the provider's lists are not created through it. (Behind ReShade + RenoDX in Witcher 3, patching
-// ReShade's device table and re-creating the lists through it ended in a double free in ReShade's descriptor-heap
-// bookkeeping during XeFG's initialization, board #396; every list it returned carried ReShade's table and was
-// refused anyway.)
+// written and the provider's lists are not created through it. (Patching ReShade's device table and re-creating the
+// lists through it ends in a double free in ReShade's descriptor-heap bookkeeping during XeFG's initialization, and
+// every list it returns carries ReShade's table and is refused anyway.)
 bool ResolveNative(ID3D12Device* device, ComPtr<ID3D12Device>& native, std::string& owner, const char*& how) noexcept
 {
     how = "runtime";
@@ -698,8 +635,8 @@ bool ResolveNative(ID3D12Device* device, ComPtr<ID3D12Device>& native, std::stri
     return false;
 }
 
-// cudaowner.1 (board #431): where a refused provider list's table (or its creator) lies, "image.dll+0xRVA protect", else
-// its memory kind and protection. Read-only; adoption is unchanged.
+// Where a refused provider list's table (or its creator) lies, "image.dll+0xRVA protect", else its memory kind and
+// protection. Read-only; adoption does not depend on it.
 std::string Where(const void* address)
 {
     MEMORY_BASIC_INFORMATION memory{};
@@ -715,7 +652,7 @@ std::string Where(const void* address)
     return out + tail;
 }
 
-// dredtable.1: a class table of the device's own runtime: the table and the slots the route hooks lie in the image
+// A class table of the device's own runtime: the table and the slots the route hooks lie in the image
 // of the runtime's device table (gRuntime*, set at Install), and each slot is that runtime's code or the route's hook
 // (the table was hooked for an earlier list). A wrapper's or another module's table never matches.
 bool RuntimeClassTable(void** table) noexcept // gMutex held
@@ -731,8 +668,7 @@ bool RuntimeClassTable(void** table) noexcept // gMutex held
     return true;
 }
 
-// Hooks the table the list keeps (its first Reset has happened). Null on success, else the reason.
-const char* AdoptList(ID3D12GraphicsCommandList* list, D3D12_COMMAND_LIST_TYPE type, ID3D12CommandAllocator* temporary) noexcept // gMutex held
+const char* ClassifyList(ID3D12GraphicsCommandList* list, bool& shared, bool& runtimeClass, bool& writable) noexcept
 {
     void** table = *reinterpret_cast<void***>(list);
     constexpr size_t needed = (kSetComputeRoot32BitConstants + 1)*sizeof(void*);
@@ -741,20 +677,28 @@ const char* AdoptList(ID3D12GraphicsCommandList* list, D3D12_COMMAND_LIST_TYPE t
         || memory.State != MEM_COMMIT || memory.RegionSize < needed
         || reinterpret_cast<uintptr_t>(table) - reinterpret_cast<uintptr_t>(memory.BaseAddress) > memory.RegionSize - needed)
         return "table_memory";
-    // Shared: a runtime's class table (image data) that the runtime's lists keep: the system runtime's, or
-    // (dredtable.1) the device's Agility runtime's while it intercepts every call. With DRED on (Wuthering Waves
-    // asks for SDK 618 and enables it, board #431; Witcher 3's 619 does the same with DRED forced on, tests/xess_cuda
+    // Shared: a runtime's class table (image data) that the runtime's lists keep: the system runtime's, or the
+    // device's Agility runtime's while it intercepts every call. With DRED on (SDK 618 and 619 alike, tests/xess_cuda
     // --dred), each list keeps a class table in the runtime's .data after its first Reset. Own: a fast-path Agility
     // list's table, committed private read-write memory inside the list object (list + 0x5C8 with SDK 619). Any other
     // table is not written, above all the Agility image table a fast-path list starts on (copied into every game
     // list's own table): such a list has left it by its first Reset, which happens before this call.
     const auto at = reinterpret_cast<uintptr_t>(table), object = reinterpret_cast<uintptr_t>(list);
     const bool system = memory.Type == MEM_IMAGE && SystemRuntimeImage(table);
-    const bool runtimeClass = !system && memory.Type == MEM_IMAGE && RuntimeClassTable(table);
-    const bool shared = system || runtimeClass;
+    runtimeClass = !system && memory.Type == MEM_IMAGE && RuntimeClassTable(table);
+    shared = system || runtimeClass;
     const bool own = memory.Type == MEM_PRIVATE && memory.Protect == PAGE_READWRITE && at > object && at - object < 0x10000;
     if (!shared && !own) return memory.Type == MEM_IMAGE ? "table_runtime_image" : "table_unknown";
-    const bool writable = memory.Protect == PAGE_READWRITE || memory.Protect == PAGE_EXECUTE_READWRITE;
+    writable = memory.Protect == PAGE_READWRITE || memory.Protect == PAGE_EXECUTE_READWRITE;
+    return nullptr;
+}
+
+// Hooks the table the list keeps (its first Reset has happened). Null on success, else the reason.
+const char* AdoptList(ID3D12GraphicsCommandList* list, D3D12_COMMAND_LIST_TYPE type, ID3D12CommandAllocator* temporary) noexcept // gMutex held
+{
+    bool shared{}, runtimeClass{}, writable{};
+    if (const char* refusal = ClassifyList(list, shared, runtimeClass, writable)) return refusal;
+    void** table = *reinterpret_cast<void***>(list);
     ListTable* record = FindTable(table);
     if (record && record->complete.load(std::memory_order_acquire))
         return shared && record->shared ? nullptr : "table_in_use"; // a shared table hooked for an earlier list
@@ -897,12 +841,12 @@ bool ProviderCall(const void* caller) noexcept
     return i < count && FromProvider(frames[i]);
 }
 
-// psorefused.1 (board #543): where a pipeline state call came from. A module that hooks pipeline creation between the
-// provider and the wrapper (or the runtime) is the first frame after the wrapper's: the SCSKiller shader recorder's
-// d3d12.dll under ReShade (CONTROL Resonant, 16 Oct) and a dxgi.dll setup in Keeper (20 Oct) kept every layer on the
-// DXIL port that way, with the provider's lists adopted (that recorder does not hook list creation). A layer pipeline is
-// therefore also recognized when the provider's image is a frame of this bounded walk above that module; lists keep
-// ProviderCall, so a launch still needs a list the provider created itself.
+// Where a pipeline state call came from. A module that hooks pipeline creation between the provider and the wrapper
+// (or the runtime) is the first frame after the wrapper's: the SCSKiller shader recorder's d3d12.dll under ReShade, or
+// a dxgi.dll setup, would keep every layer on the DXIL port that way, with the provider's lists adopted (that recorder
+// does not hook list creation). A layer pipeline is therefore also recognized when the provider's image is a frame of
+// this bounded walk above that module; lists keep ProviderCall, so a launch still needs a list the provider created
+// itself.
 struct Origin
 {
     const void* first{};  // the first frame after the wrapper's frames (the hook's caller when that is not the wrapper's)
@@ -937,10 +881,10 @@ std::string OriginFields(const void* caller, const Origin& origin)
         std::to_string(origin.provider) + ",\"frames\":" + std::to_string(origin.frames);
 }
 
-// psorefused.1: a pipeline state the route did not recognize although its program is a layer's (caller: the provider is
-// not within the walk; device: another device than the route's), or the provider created it as a stream the route does
-// not parse. Each reason is logged once (a stream once per subobject type, four lines at most), so a tester log names
-// the module or the stream shape in the way. Logging only: recognition does not depend on it.
+// A pipeline state the route did not recognize although its program is a layer's (caller: the provider is not within
+// the walk; device: another device than the route's), or the provider created it as a stream the route does not parse.
+// Each reason is logged once (a stream once per subobject type, four lines at most), so a log names the module or the
+// stream shape in the way. Logging only: recognition does not depend on it.
 enum PsoRefusal : uint32_t { kPsoCaller = 1, kPsoDevice = 2 };
 std::atomic<uint32_t> gPsoRefusals{};
 std::atomic<uint64_t> gPsoStreamKinds{};
@@ -962,7 +906,7 @@ HRESULT STDMETHODCALLTYPE HookCreateCommandList(ID3D12Device* self, UINT mask, D
     ID3D12CommandAllocator* allocator, ID3D12PipelineState* initial, REFIID iid, void** out)
 {
     void* caller = _ReturnAddress();
-    if (out && allocator && ProviderCall(caller) && Routable(self, type))
+    if (gAdoptProviderLists.load(std::memory_order_relaxed) && out && allocator && ProviderCall(caller) && Routable(self, type))
     {
         ComPtr<ID3D12Device4> device4;
         ComPtr<ID3D12GraphicsCommandList> list;
@@ -998,7 +942,7 @@ HRESULT STDMETHODCALLTYPE HookCreateCommandList1(ID3D12Device4* self, UINT mask,
 {
     void* caller = _ReturnAddress();
     const HRESULT result = DeviceOriginal<CreateList1Fn>(self, kCreateCommandList1)(self, mask, type, flags, iid, out);
-    if (SUCCEEDED(result) && out && *out && ProviderCall(caller) && Routable(self, type))
+    if (gAdoptProviderLists.load(std::memory_order_relaxed) && SUCCEEDED(result) && out && *out && ProviderCall(caller) && Routable(self, type))
     {
         ComPtr<ID3D12GraphicsCommandList> list;
         ComPtr<ID3D12CommandAllocator> temporary;
@@ -1011,7 +955,7 @@ HRESULT STDMETHODCALLTYPE HookCreateCommandList1(ID3D12Device4* self, UINT mask,
 }
 
 // A pipeline state whose program is a layer's, on the route's device, created by the provider (OriginOf). Only a program
-// of a layer's exact size is hashed (psorefused.1): every module's compute pipelines reach this, and only the provider's
+// of a layer's exact size is hashed: every module's compute pipelines reach this, and only the provider's
 // count.
 void Recognize(ID3D12Device* device, const D3D12_COMPUTE_PIPELINE_STATE_DESC& desc, REFIID iid, void* created, const void* caller) noexcept
 {
@@ -1040,8 +984,10 @@ void Recognize(ID3D12Device* device, const D3D12_COMPUTE_PIPELINE_STATE_DESC& de
             const std::string stack = origin.strict ? std::string() : ",\"origin\":\"stack\",\"first\":\"" + Where(origin.first) +
                 "\",\"provider_frame\":" + std::to_string(origin.provider);
             std::lock_guard lock(gMutex);
-            if (!gActive.load(std::memory_order_relaxed) || !Insert(state.Get(), uint8_t(i + 1))) return;
-            gHeld.push_back(state.Detach());
+            if (!gActive.load(std::memory_order_relaxed)) return;
+            if (Lookup(state.Get())) return;
+            if (gHeld.size() >= kSlots/2 || !Insert(state.Get(), uint8_t(i + 1))) return;
+            gHeld.push_back({state.Detach(), tPipelineToken, uint8_t(i + 1)});
             gAnyLayer.store(true, std::memory_order_release);
             gLayerCount.store(uint32_t(gHeld.size()), std::memory_order_relaxed);
             if (!gLayerSeen[i].exchange(true))
@@ -1073,7 +1019,7 @@ template <class Inner> constexpr size_t SubobjectSize()
     constexpr size_t align = (std::max)(alignof(Inner), alignof(void*));
     return (InnerOffset<Inner>() + sizeof(Inner) + align - 1)/align*align;
 }
-// Where a stream's parse ended without a compute shader (psorefused.1 log).
+// Where a stream's parse ended without a compute shader (for the log).
 struct StreamStop { const char* reason{}; UINT type{}; size_t offset{}; };
 // The stream's compute shader; null for a stream with any other shader, or a subobject not listed here. A stream with
 // another subobject (even default graphics state a wrapper might add) stays unrecognized: that the runtime ignores it
@@ -1106,7 +1052,7 @@ const D3D12_SHADER_BYTECODE* StreamComputeShader(const D3D12_PIPELINE_STATE_STRE
     return compute;
 }
 
-// psorefused.1: a stream the provider created (either origin rule) that the parse refused: once per subobject type or
+// A stream the provider created (either origin rule) that the parse refused: once per subobject type or
 // reason, four lines at most. Once those are logged, refused streams are not walked.
 void StreamRefused(const StreamStop& stop, const void* caller) noexcept
 {
@@ -1214,10 +1160,11 @@ void MarkUnavailable(const std::string& reason)
 }
 
 void SetLog(LogFunction log) noexcept { gLog = log; }
+void Report(const char* stage, const std::string& fields) noexcept { Log(stage, fields); }
 
 void SetStackRecognition(bool enabled) noexcept { gStackRecognition.store(enabled, std::memory_order_relaxed); }
 
-bool Install(ID3D12Device* device, HMODULE providerModule, std::span<const unsigned char> fatbin, std::string& reason) noexcept
+bool Install(ID3D12Device* device, HMODULE providerModule, std::span<const unsigned char> fatbin, std::string& reason, bool adoptProviderLists) noexcept
 {
     std::lock_guard lock(gMutex);
     try
@@ -1233,7 +1180,11 @@ bool Install(ID3D12Device* device, HMODULE providerModule, std::span<const unsig
                 && identity.Get() == gDeviceIdentity)
             {
                 uintptr_t begin{}, end{};
-                if (ProviderRange(providerModule, begin, end) && begin == gProviderBegin) return true;
+                if (ProviderRange(providerModule, begin, end) && begin == gProviderBegin)
+                {
+                    if (adoptProviderLists) gAdoptProviderLists.store(true, std::memory_order_relaxed);
+                    return true;
+                }
                 reason = "other_provider_image";
                 return false;
             }
@@ -1260,7 +1211,7 @@ bool Install(ID3D12Device* device, HMODULE providerModule, std::span<const unsig
             Log("cuda_route_device", "\"owner\":\"" + owner + "\",\"native\":\"" + how + "\"");
         }
         device = native.Get(); // from here on, the runtime's device
-        // dredtable.1: the runtime's image (kept mapped: the device lives on), whose class tables a list may keep.
+        // The runtime's image (kept mapped: the device lives on), whose class tables a list may keep.
         {
             HMODULE runtime{};
             if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
@@ -1309,6 +1260,7 @@ bool Install(ID3D12Device* device, HMODULE providerModule, std::span<const unsig
         gDeviceIdentity = identity.Detach();
         gDevice = device;
         gDevice->AddRef();
+        gAdoptProviderLists.store(adoptProviderLists, std::memory_order_relaxed);
         if (!PatchDevice(device, failure)) { MarkUnavailable(failure); reason = gReason; return false; }
         gReason.clear();
         gActive.store(true, std::memory_order_release);
@@ -1338,10 +1290,12 @@ void Disable(const char* reason) noexcept
 void ForgetLayers() noexcept
 {
     std::lock_guard lock(gMutex);
+    gPipelineGeneration.fetch_add(1, std::memory_order_acq_rel);
     gAnyLayer.store(false, std::memory_order_release);
     for (auto& key : gKeys) key.store(nullptr, std::memory_order_release);
-    for (auto* state : gHeld) state->Release();
+    for (const auto& held : gHeld) held.state->Release();
     gHeld.clear();
+    gPipelineGeneration.fetch_add(1, std::memory_order_release);
     gLayerCount.store(0, std::memory_order_relaxed);
     // The provider's lists' own tables get their originals back and the lists are released.
     for (auto& table : gTables) Retire(table);
@@ -1351,6 +1305,7 @@ Status Snapshot() noexcept
 {
     Status status;
     std::lock_guard lock(gMutex);
+    if (gVulkanReported.load(std::memory_order_acquire)) return gVulkanStatus;
     status.state = gState.load(std::memory_order_acquire);
     status.major = gMajor;
     status.minor = gMinor;
@@ -1363,7 +1318,7 @@ Status Snapshot() noexcept
 
 bool Launched() noexcept
 {
-    return gState.load(std::memory_order_acquire) == State::Active && gLaunches.load(std::memory_order_relaxed) != 0;
+    return (gVulkanActive.load(std::memory_order_acquire) && gVulkanLaunched.load(std::memory_order_relaxed)) || (gState.load(std::memory_order_acquire) == State::Active && gLaunches.load(std::memory_order_relaxed) != 0);
 }
 
 bool TrySnapshot(Status& status) noexcept {
@@ -1389,6 +1344,77 @@ bool SupportedArchitecture(int major, int minor, const std::string& name) noexce
     constexpr std::string_view t4 = " T4";
     return name.find("RTX") != std::string::npos
         || (name.size() >= t4.size() && name.compare(name.size() - t4.size(), t4.size(), t4) == 0);
+}
+
+uint8_t LayerOf(ID3D12PipelineState* state) noexcept { return Lookup(state); }
+void SetLayerMask(uint32_t mask) noexcept { gLayerMask.store(mask, std::memory_order_relaxed); }
+bool LayerEnabled(uint8_t id) noexcept
+{
+    return id && id <= std::size(kLayers) && (gLayerMask.load(std::memory_order_relaxed) & (1u << (id - 1)));
+}
+bool LaunchOn(ID3D12GraphicsCommandList* real, const ListState& state, UINT x, UINT y, UINT z) noexcept
+{
+    return real && gActive.load(std::memory_order_acquire) && LayerEnabled(state.layer) && Launch(real, state, x, y, z);
+}
+bool CanRecord(ID3D12GraphicsCommandList* real, std::string& reason) noexcept
+{
+    try
+    {
+        std::lock_guard lock(gMutex);
+        if (!real || !gActive.load(std::memory_order_acquire)) { reason = "inactive"; return false; }
+        const auto type = real->GetType();
+        if (type != D3D12_COMMAND_LIST_TYPE_DIRECT && type != D3D12_COMMAND_LIST_TYPE_COMPUTE)
+        { reason = "list_type"; return false; }
+        ComPtr<IUnknown> identity;
+        if (FAILED(real->GetDevice(IID_PPV_ARGS(&identity))) || identity.Get() != gDeviceIdentity)
+        { reason = "list_device"; return false; }
+        bool shared{}, runtimeClass{}, writable{};
+        if (ClassifyList(real, shared, runtimeClass, writable)) { reason = "list_table"; return false; }
+        reason = runtimeClass ? "runtime_class" : shared ? "system_class" : "own";
+        return true;
+    }
+    catch (...) { return false; }
+}
+bool AdapterCapability(const LUID& luid, int& major, int& minor, std::string& name) noexcept
+{
+    try { return Capability(luid, major, minor, name); } catch (...) { return false; }
+}
+uint64_t NewPipelineToken() noexcept { return gNextPipelineToken.fetch_add(1, std::memory_order_relaxed); }
+PipelineScope::PipelineScope(uint64_t token) noexcept : previous_(tPipelineToken) { tPipelineToken = token; }
+PipelineScope::~PipelineScope() { tPipelineToken = previous_; }
+void ForgetPipelines(uint64_t token) noexcept
+{
+    if (!token) return;
+    std::lock_guard lock(gMutex);
+    gPipelineGeneration.fetch_add(1, std::memory_order_acq_rel);
+    gAnyLayer.store(false, std::memory_order_release);
+    for (auto& key : gKeys) key.store(nullptr, std::memory_order_release);
+    std::array<ID3D12PipelineState*, kSlots/2> removed{};
+    size_t count{};
+    auto out = gHeld.begin();
+    for (auto it = gHeld.begin(); it != gHeld.end(); ++it)
+        if (it->token == token) removed[count++] = it->state;
+        else *out++ = *it;
+    gHeld.erase(out, gHeld.end());
+    for (const auto& held : gHeld) Insert(held.state, held.layer);
+    gLayerCount.store(uint32_t(gHeld.size()), std::memory_order_relaxed);
+    gAnyLayer.store(!gHeld.empty(), std::memory_order_release);
+    gPipelineGeneration.fetch_add(1, std::memory_order_release);
+    for (size_t i = 0; i < count; ++i) removed[i]->Release();
+}
+void ReportVulkan(State state, int major, int minor, uint32_t layers, const char* reason) noexcept
+{
+    std::lock_guard lock(gMutex);
+    gVulkanStatus.state = state; gVulkanStatus.major = major; gVulkanStatus.minor = minor; gVulkanStatus.layers = layers;
+    try { gVulkanStatus.reason = reason ? reason : ""; } catch (...) {}
+    gVulkanActive.store(state == State::Active, std::memory_order_release);
+    gVulkanReported.store(true, std::memory_order_release);
+}
+void CountVulkan(uint64_t launches, uint64_t fallbacks) noexcept
+{
+    std::lock_guard lock(gMutex);
+    gVulkanStatus.launches += launches; gVulkanStatus.fallbacks += fallbacks;
+    if (launches) gVulkanLaunched.store(true, std::memory_order_relaxed);
 }
 
 std::span<const LayerInfo> Layers() noexcept { return kLayerInfos; }

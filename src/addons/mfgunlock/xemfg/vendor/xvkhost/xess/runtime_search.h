@@ -1,13 +1,16 @@
 #pragma once
-// alpha.15 (B4-12): the folder search for XeMFG standalone's libxess_fg.dll / libxell.dll pair, shared by the D3D12 host
+// The folder search for XeMFG standalone's libxess_fg.dll / libxell.dll pair, shared by the D3D12 host
 // (xess/d3d12_host.cpp) and the Vulkan host (xess/vulkan/vk_host.cpp), each in its own folder order. File attributes
-// and directory listings only: a folder qualifies with both exact names as regular files, as before. Near-miss names
+// and directory listings only: a folder qualifies with both exact names as regular files. Near-miss names
 // (libxess_fg.dll.dll, the SDK's .lib files, "(1)" copies, a folder named like the DLL) are listed for the log and the
 // menu and never loaded. A failed search says why (runtime_misnamed, runtime_split, runtime_missing_libxell,
 // runtime_missing_libxess_fg, runtime_path_too_long, runtime_not_found) and where the pair belongs.
+// oldruntime.1: a pair that loads without every export the host calls (a game's own older copy, such as Cyberpunk's
+// libxess_fg 1.1.0.19 beside its exe) names the short file, its version and the folder a newer pair takes over from.
 #include <windows.h>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -17,6 +20,8 @@ namespace xess_runtime_search
 inline constexpr wchar_t kFg[] = L"libxess_fg.dll";
 inline constexpr wchar_t kLl[] = L"libxell.dll";
 inline constexpr size_t kNearNames = 4; // per folder
+// oldruntime.1: the SDK the menu points to for a newer pair (xess_runtime.h kSdk302, README step 1).
+inline constexpr char kTestedSdk[] = "3.0.2";
 
 enum class Order { eD3D12, eVulkan };
 
@@ -166,6 +171,52 @@ inline const wchar_t* Wanted(const std::wstring& name)
     return _wcsnicmp(name.c_str(), L"libxess_fg", 10) == 0 ? kFg : kLl;
 }
 
+// oldruntime.1: a loaded pair short of exports the host calls: the first file short of one (libxess_fg.dll resolves
+// first), how many are missing and the first of them, and that file's version.
+struct Outdated
+{
+    const wchar_t* file{};   // kFg or kLl; nullptr while every export resolved
+    const char* first{};
+    size_t missing = 0;
+    std::string version;     // "1.1.0.19"; empty without a version resource
+    void Miss(const wchar_t* name, const char* exportName)
+    {
+        if (!file) { file = name; first = exportName; }
+        ++missing;
+    }
+};
+
+// A loaded module's FileVersion from its own version resource (no version.dll), empty without one. nullptr is never
+// read as the process EXE.
+inline std::string ModuleVersion(HMODULE module)
+{
+    if (!module) return {};
+    const HRSRC info = FindResourceW(module, MAKEINTRESOURCEW(VS_VERSION_INFO), RT_VERSION);
+    const HGLOBAL resource = info ? LoadResource(module, info) : nullptr;
+    const auto* data = resource ? static_cast<const BYTE*>(LockResource(resource)) : nullptr;
+    const DWORD size = data ? SizeofResource(module, info) : 0;
+    for (DWORD at = 0; at + sizeof(VS_FIXEDFILEINFO) <= size; at += 4)
+    {
+        VS_FIXEDFILEINFO fixed{};
+        memcpy(&fixed, data + at, sizeof(fixed));
+        if (fixed.dwSignature != VS_FFI_SIGNATURE) continue;
+        return std::to_string(HIWORD(fixed.dwFileVersionMS)) + "." + std::to_string(LOWORD(fixed.dwFileVersionMS)) + "." +
+            std::to_string(HIWORD(fixed.dwFileVersionLS)) + "." + std::to_string(LOWORD(fixed.dwFileVersionLS));
+    }
+    return {};
+}
+
+// Where a newer pair takes over from the one found: the RTXMFG-XeSS folder beside MFG Unlocker when the search reaches
+// it first (always on D3D12), else the found folder itself (its files replaced; Vulkan searches the module's folder
+// first). Empty when nothing was found.
+inline std::filesystem::path NewerPairFolder(const Result& result)
+{
+    if (result.found >= result.folders.size()) return {};
+    for (size_t index = 0; index < result.found; ++index)
+        if (_wcsicmp(result.folders[index].path.c_str(), result.recommended.c_str()) == 0) return result.recommended;
+    return result.folders[result.found].path;
+}
+
 inline std::string Utf8(const std::wstring& text)
 {
     if (text.empty()) return {};
@@ -215,5 +266,14 @@ inline std::string Json(const Bases& bases, const Result& result)
         json += "}";
     }
     return json + "]";
+}
+
+// oldruntime.1: the d3d12_runtime / vk_runtime fields of a pair short of exports (before "searched", so a long line
+// keeps them), empty for a complete pair.
+inline std::string OutdatedJson(const Outdated& outdated)
+{
+    if (!outdated.file) return {};
+    return ",\"outdated\":\"" + JsonText(outdated.file) + "\",\"outdated_version\":\"" + outdated.version +
+        "\",\"missing\":" + std::to_string(outdated.missing) + ",\"first_missing\":\"" + (outdated.first ? outdated.first : "") + "\"";
 }
 }

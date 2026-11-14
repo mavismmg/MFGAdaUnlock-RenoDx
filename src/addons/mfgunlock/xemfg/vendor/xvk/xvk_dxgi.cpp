@@ -23,10 +23,10 @@ struct Surface
     bool owned = true;                          // false: the game's surface, registered by the host
     VkSwapchainKHR current = VK_NULL_HANDLE;   // the live swap chain on this surface (retired ones are not listed)
     bool broken = false;                        // a layer chain's VkSwapchainKHR could not be created here
-    VkFullScreenExclusiveEXT exclusive = VK_FULL_SCREEN_EXCLUSIVE_DEFAULT_EXT;   // vkswapext.1: the game's mode
-    VkPresentModeKHR presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;                // mailbox.1: the game's present mode
-    VkSwapchainKHR latencyChain = VK_NULL_HANDLE;   // vkreflex.1: the live chain with low latency mode (gLatencyLock)
-    std::atomic<uint64_t> frameBase{0};             // vkreflex.1: the host's id of XeFG's frame 0 (SetFrameBase)
+    VkFullScreenExclusiveEXT exclusive = VK_FULL_SCREEN_EXCLUSIVE_DEFAULT_EXT;   // the game's mode
+    VkPresentModeKHR presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;                // the game's present mode
+    VkSwapchainKHR latencyChain = VK_NULL_HANDLE;   // the live chain with low latency mode (gLatencyLock)
+    std::atomic<uint64_t> frameBase{0};             // the host's id of XeFG's frame 0 (SetFrameBase)
     ~Surface()
     {
         if (surface && owned) device->vk().vkDestroySurfaceKHR(device->instance(), surface, nullptr);
@@ -38,7 +38,7 @@ std::atomic<uint64_t> gPresents{0};
 std::map<HWND, std::weak_ptr<Surface>> gSurfaces;
 std::map<HWND, std::shared_ptr<Surface>> gRegistered;   // the game's surfaces (gSurfaceMutex)
 
-// vkreflex.1: Reflex on the layer's swap chains. A surface's latencyChain is published and withdrawn under gLatencyLock
+// Reflex on the layer's swap chains. A surface's latencyChain is published and withdrawn under gLatencyLock
 // held exclusively; Reflex calls on it (sleep mode, sleep, markers from the game's threads) hold it shared, so none
 // reaches a destroyed chain. gReflexOn mirrors gReflex.on for the present thread's markers.
 std::shared_mutex gLatencyLock;
@@ -144,10 +144,10 @@ std::vector<SurfaceChoice> Candidates(DXGI_FORMAT format, DXGI_COLOR_SPACE_TYPE 
     }
 }
 
-// stallguard.1 (Enshrouded on an RX 6900 XT, 22 Oct: presentation stopped at the first generated frame, the process kept
-// running and the log said nothing): the present thread's waits run in kStallStepNs steps. One that passes a step is
-// logged; one that passes kStallLimitMs while the window is not minimised returns `stalled`, and the caller marks the
-// surface broken (its frames are dropped, the host gives the window back to the game for the rest of the session).
+// The present thread's waits run in kStallStepNs steps, so presentation that stops while the process keeps running is
+// not silent. One that passes a step is logged; one that passes kStallLimitMs while the window is not minimised returns
+// `stalled`, and the caller marks the surface broken (its frames are dropped, the host gives the window back to the
+// game for the rest of the session).
 constexpr uint64_t kStallStepNs = 1'000'000'000ull;
 constexpr uint32_t kStallLimitMs = 10000;
 template <class Wait>
@@ -187,14 +187,8 @@ public:
     // IUnknown
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override
     {
-        if (!out) return E_POINTER;
-        if (IsIid<IUnknown, IDXGIObject, IDXGIDeviceSubObject, IDXGISwapChain, IDXGISwapChain1, IDXGISwapChain2, IDXGISwapChain3, IDXGISwapChain4>(riid)) {
-            AddRef();
-            *out = static_cast<IDXGISwapChain4*>(this);
-            return S_OK;
-        }
-        *out = nullptr;
-        return E_NOINTERFACE;
+        return QueryAs<IDXGISwapChain4, IUnknown, IDXGIObject, IDXGIDeviceSubObject, IDXGISwapChain, IDXGISwapChain1, IDXGISwapChain2,
+                       IDXGISwapChain3, IDXGISwapChain4>(this, riid, out);
     }
     ULONG STDMETHODCALLTYPE AddRef() override { return ++refs_; }
     ULONG STDMETHODCALLTYPE Release() override
@@ -341,15 +335,6 @@ private:
     HANDLE latency_ = nullptr;
     bool hasHdr_ = false;
     VkHdrMetadataEXT hdr_{VK_STRUCTURE_TYPE_HDR_METADATA_EXT};
-#if MFG_UNLOCK_XVK_CAPTURE
-    // Diagnostic builds only: XVK_CAPTURE=<dir> (+ XVK_CAPTURE_FIRST/COUNT) writes presented frames (4-byte formats)
-    // as raw present-<n>.bin.
-    std::wstring captureDir_;
-    uint64_t captureFirst_ = 1, captureCount_ = 0;
-    VkBuffer captureBuffer_ = VK_NULL_HANDLE;
-    VkDeviceMemory captureMemory_ = VK_NULL_HANDLE;
-    uint8_t* captureMapped_ = nullptr;
-#endif
     // CPU time spent in Present1 steps (QPC ticks): fence wait, acquire, record+submit, enqueue, total; and
     // vkQueuePresentKHR on the present thread.
     std::array<int64_t, 6> presentTicks_{};
@@ -358,9 +343,9 @@ private:
     // frame-latency waitable when that copy completes; the present thread owns the VkSwapchainKHR and presents
     // the newest staged frame, dropping older ones as DXGI flip-discard does when the display falls behind.
     // (vkQueuePresentKHR can block 0.5-0.9 ms per call windowed on 617.42, and tying XeFG's waitable to the
-    // presentation engine starved it into XeFG's 1 s timeout under load, 19-20 Oct.)
+    // presentation engine starves it into XeFG's 1 s timeout under load.)
     // staging slot, timeline_ value of its copy, and whether it was presented with a sync interval (V-Sync: shown in
-    // order, never dropped) or without (flip-discard: the newest wins); vkreflex.1: the host's frame it belongs to (0:
+    // order, never dropped) or without (flip-discard: the newest wins); the host's frame it belongs to (0:
     // unknown) and whether it is a generated one.
     struct QueuedPresent { uint32_t staged; uint64_t value; bool sync; uint64_t frame; bool generated; };
     static constexpr uint32_t kStaged = 3;
@@ -389,7 +374,7 @@ private:
     bool broken_ = false;                      // present thread: the first VkSwapchainKHR failed; frames are dropped
     VkSwapchainKHR owned_ = VK_NULL_HANDLE;   // swapchain_ as published to the surface (gSurfaceMutex): the present
                                               // thread can recreate swapchain_ while Present1 checks for retirement
-    // vkreflex.1: swapchain_ has low latency mode (Reflex), and the last present id it was given (ids only increase);
+    // swapchain_ has low latency mode (Reflex), and the last present id it was given (ids only increase);
     // the present the present thread took last, and whether it already remade the chain for low latency mode.
     static constexpr uint64_t kLatencyAfterPresents = 240;
     bool latencyMode_ = false;
@@ -413,14 +398,7 @@ public:
     ~Factory() { device_->Release(); }
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override
     {
-        if (!out) return E_POINTER;
-        if (IsIid<IUnknown, IDXGIObject, IDXGIFactory, IDXGIFactory1, IDXGIFactory2, IDXGIFactory3, IDXGIFactory4>(riid)) {
-            AddRef();
-            *out = static_cast<IDXGIFactory4*>(this);
-            return S_OK;
-        }
-        *out = nullptr;
-        return E_NOINTERFACE;
+        return QueryAs<IDXGIFactory4, IUnknown, IDXGIObject, IDXGIFactory, IDXGIFactory1, IDXGIFactory2, IDXGIFactory3, IDXGIFactory4>(this, riid, out);
     }
     ULONG STDMETHODCALLTYPE AddRef() override { return ++refs_; }
     ULONG STDMETHODCALLTYPE Release() override
@@ -526,10 +504,6 @@ SwapChain::~SwapChain()
     if (threadPool_) vk.vkDestroyCommandPool(device, threadPool_, nullptr);
     if (timeline_) vk.vkDestroySemaphore(device, timeline_, nullptr);
     if (presentTimeline_) vk.vkDestroySemaphore(device, presentTimeline_, nullptr);
-#if MFG_UNLOCK_XVK_CAPTURE
-    if (captureBuffer_) vk.vkDestroyBuffer(device, captureBuffer_, nullptr);
-    if (captureMemory_) vk.vkFreeMemory(device, captureMemory_, nullptr);
-#endif
     if (latency_) CloseHandle(latency_);
     surface_.reset();
     factory_->Release();
@@ -556,32 +530,6 @@ HRESULT SwapChain::Init()
     if (vk.vkCreateSemaphore(device, &semaphore, nullptr, &timeline_) != VK_SUCCESS ||
         vk.vkCreateSemaphore(device, &semaphore, nullptr, &presentTimeline_) != VK_SUCCESS ||
         vk.vkCreateCommandPool(device, &pool, nullptr, &threadPool_) != VK_SUCCESS) return E_OUTOFMEMORY;
-#if MFG_UNLOCK_XVK_CAPTURE
-    {
-        wchar_t text[MAX_PATH]{};
-        if (GetEnvironmentVariableW(L"XVK_CAPTURE", text, MAX_PATH) && Format(desc_.Format).bytes == 4) {
-            captureDir_ = text;
-            captureCount_ = 64;
-            if (GetEnvironmentVariableW(L"XVK_CAPTURE_FIRST", text, MAX_PATH)) captureFirst_ = _wtoi64(text);
-            if (GetEnvironmentVariableW(L"XVK_CAPTURE_COUNT", text, MAX_PATH)) captureCount_ = _wtoi64(text);
-            VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0, VkDeviceSize(desc_.Width) * desc_.Height * 4,
-                                    VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_SHARING_MODE_EXCLUSIVE};
-            VkMemoryRequirements requirements{};
-            uint32_t type = 0;
-            void* host = nullptr;
-            if (vk.vkCreateBuffer(device, &info, nullptr, &captureBuffer_) != VK_SUCCESS) return E_OUTOFMEMORY;
-            vk.vkGetBufferMemoryRequirements(device, captureBuffer_, &requirements);
-            if (!device_->FindMemoryType(requirements.memoryTypeBits, D3D12_HEAP_TYPE_READBACK, type)) return E_OUTOFMEMORY;
-            VkMemoryAllocateInfo allocate{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, requirements.size, type};
-            if (vk.vkAllocateMemory(device, &allocate, nullptr, &captureMemory_) != VK_SUCCESS ||
-                vk.vkBindBufferMemory(device, captureBuffer_, captureMemory_, 0) != VK_SUCCESS ||
-                vk.vkMapMemory(device, captureMemory_, 0, VK_WHOLE_SIZE, 0, &host) != VK_SUCCESS) return E_OUTOFMEMORY;
-            captureMapped_ = static_cast<uint8_t*>(host);
-            Log("capturing presents %llu..%llu (%ux%u, DXGI format %d)", captureFirst_, captureFirst_ + captureCount_ - 1, desc_.Width,
-                desc_.Height, int(desc_.Format));
-        }
-    }
-#endif
     // The VkSwapchainKHR itself comes with the first present (CreateFirstSwapchain): XeFG creates its chain early
     // in its init and can still fail after it, and a chain created here would already have retired the game's.
     UINT support = 0;
@@ -688,7 +636,7 @@ void SwapChain::PresentThread()
             endRecreate();
         }
         if (stalled) {
-            // stallguard.1: the frame is dropped and so is every later one (broken_), as when no swap chain could be made.
+            // The frame is dropped and so is every later one (broken_), as when no swap chain could be made.
             broken_ = true;
             {
                 std::lock_guard lock(gSurfaceMutex);
@@ -773,7 +721,7 @@ void SwapChain::PresentThread()
                 present.swapchainCount = 1;
                 present.pSwapchains = &swapchain_;
                 present.pImageIndices = &image;
-                // vkreflex.1: Reflex counts every output as an out-of-band present of its batch's frame (the game's
+                // Reflex counts every output as an out-of-band present of its batch's frame (the game's
                 // own present markers come from the host); the real frame also names its present by the frame's id.
                 // The present thread owns swapchain_, so these need no gLatencyLock.
                 const bool marked = latencyMode_ && item.frame && gReflexOn.load(std::memory_order_relaxed);
@@ -823,7 +771,7 @@ void SwapChain::PresentThread()
             endRecreate();
         } else if (swapchain_ && !latencyMode_ && !latencyUpgraded_ && gReflexOn.load(std::memory_order_relaxed) &&
                    device_->lowLatency2() && item.value >= kLatencyAfterPresents) {
-            // vkreflex.1: a chain made before Reflex was on, or in its first presents, takes low latency mode now (once).
+            // A chain made before Reflex was on, or in its first presents, takes low latency mode now (once).
             latencyUpgraded_ = true;
             Log("Reflex: the swap chain takes low latency mode after %llu presents", item.value);
             beginRecreate();
@@ -882,8 +830,8 @@ HRESULT SwapChain::CreateSwapchain(VkSwapchainKHR old)
     std::vector<VkPresentModeKHR> modes(count);
     vk.vkGetPhysicalDeviceSurfacePresentModesKHR(physical, surface_->surface, &count, modes.data());
     auto has = [&](VkPresentModeKHR m) { return std::find(modes.begin(), modes.end(), m) != modes.end(); };
-    // XeFG presents with sync interval 0 and ALLOW_TEARING; tearing-capable chains take IMMEDIATE. mailbox.1: a game
-    // that asked for MAILBOX (no tearing, no V-Sync wait: RDR2) keeps it, it got IMMEDIATE before (22 Oct).
+    // XeFG presents with sync interval 0 and ALLOW_TEARING; tearing-capable chains take IMMEDIATE. A game
+    // that asked for MAILBOX (no tearing, no V-Sync wait: RDR2) keeps it.
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
     if (desc_.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING)
         mode = surface_->presentMode == VK_PRESENT_MODE_MAILBOX_KHR && has(VK_PRESENT_MODE_MAILBOX_KHR) ? VK_PRESENT_MODE_MAILBOX_KHR
@@ -893,7 +841,7 @@ HRESULT SwapChain::CreateSwapchain(VkSwapchainKHR old)
     if (caps.currentExtent.width != UINT32_MAX) extent_ = caps.currentExtent;
     // Two images beyond the DXGI buffer count: XeFG waits on the frame-latency waitable before every present,
     // and we release it when the present copy completes, which waits for a free image. With only the DXGI count,
-    // the presentation engine holding images starved the waitable into XeFG's 1 s timeout (19-20 Oct).
+    // the presentation engine holding images starves the waitable into XeFG's 1 s timeout.
     uint32_t images = std::max(caps.minImageCount, desc_.BufferCount) + 2;
     if (caps.maxImageCount) images = std::min(images, caps.maxImageCount);
     VkSwapchainCreateInfoKHR info{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
@@ -910,17 +858,17 @@ HRESULT SwapChain::CreateSwapchain(VkSwapchainKHR old)
     info.presentMode = mode;
     info.clipped = VK_TRUE;
     info.oldSwapchain = old;
-    // vkswapext.1: the game's full-screen-exclusive mode on its registered surface (only set when its device enabled
+    // The game's full-screen-exclusive mode on its registered surface (only set when its device enabled
     // VK_EXT_full_screen_exclusive).
     VkSurfaceFullScreenExclusiveInfoEXT exclusive{VK_STRUCTURE_TYPE_SURFACE_FULL_SCREEN_EXCLUSIVE_INFO_EXT};
     if (surface_->exclusive != VK_FULL_SCREEN_EXCLUSIVE_DEFAULT_EXT) {
         exclusive.fullScreenExclusive = surface_->exclusive;
         info.pNext = &exclusive;
     }
-    // vkreflex.1: low latency mode while the host's output is Reflex and the device has VK_NV_low_latency2, from the
-    // chain's kLatencyAfterPresents-th present on: a game recreates its swap chain several times a second while it starts
-    // (No Man's Sky, 23 Oct: the driver faulted in dxgi.dll making the first low-latency chain in that churn), and the
-    // present thread upgrades the chain made before then.
+    // Low latency mode while the host's output is Reflex and the device has VK_NV_low_latency2, from the chain's
+    // kLatencyAfterPresents-th present on: a game may recreate its swap chain several times a second while it starts,
+    // and the driver can fault in dxgi.dll making the first low-latency chain in that churn. The present thread
+    // upgrades the chain made before then.
     VkSwapchainLatencyCreateInfoNV latency{VK_STRUCTURE_TYPE_SWAPCHAIN_LATENCY_CREATE_INFO_NV, info.pNext, VK_TRUE};
     const bool lowLatency = gReflexOn.load() && device_->lowLatency2() && shownPresents_.load() >= kLatencyAfterPresents;
     if (lowLatency) info.pNext = &latency;
@@ -972,7 +920,7 @@ void SwapChain::DestroySwapchain()
     renderDone_.clear();
     if (swapchain_) {
         {
-            // vkreflex.1: no Reflex call may still name it (they hold gLatencyLock shared).
+            // No Reflex call may still name it (they hold gLatencyLock shared).
             std::unique_lock lock(gLatencyLock);
             if (surface_ && surface_->latencyChain == swapchain_) surface_->latencyChain = VK_NULL_HANDLE;
         }
@@ -1169,7 +1117,7 @@ HRESULT STDMETHODCALLTYPE SwapChain::Present1(UINT sync, UINT flags, const DXGI_
     LARGE_INTEGER t0{}, t1{}, t2{}, t3{}, t4{};
     QueryPerformanceCounter(&t0);
     Frame& frame = frames_[presentCount_ % frames_.size()];
-    // stallguard.1: Present1's waits are logged once when they pass kStallStepNs (they still wait).
+    // Present1's waits are logged once when they pass kStallStepNs (they still wait).
     for (bool logged = false; vk.vkWaitForFences(device, 1, &frame.fence, VK_TRUE, kStallStepNs) == VK_TIMEOUT;)
         if (!std::exchange(logged, true)) Log("Present1: staging copy fence of present %llu still pending after 1 s", presentCount_ + 1);
     QueryPerformanceCounter(&t1);
@@ -1221,13 +1169,6 @@ HRESULT STDMETHODCALLTYPE SwapChain::Present1(UINT sync, UINT flags, const DXGI_
     dependency.pMemoryBarriers = &written;
     vk.vkCmdPipelineBarrier2(frame.command, &dependency);
     Resource* source = backbuffers_[current_];
-#if MFG_UNLOCK_XVK_CAPTURE
-    const bool capture = captureMapped_ && presentValue >= captureFirst_ && presentValue < captureFirst_ + captureCount_;
-    if (capture) {
-        VkBufferImageCopy region{0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {desc_.Width, desc_.Height, 1}};
-        vk.vkCmdCopyImageToBuffer(frame.command, source->image(), VK_IMAGE_LAYOUT_GENERAL, captureBuffer_, 1, &region);
-    }
-#endif
     const VkImageSubresourceLayers layers{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     VkImageCopy region{layers, {}, layers, {}, {desc_.Width, desc_.Height, 1}};
     vk.vkCmdCopyImage(frame.command, source->image(), VK_IMAGE_LAYOUT_GENERAL, staged_[slot]->image(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
@@ -1236,18 +1177,6 @@ HRESULT STDMETHODCALLTYPE SwapChain::Present1(UINT sync, UINT flags, const DXGI_
     const VkSemaphoreSubmitInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, timeline_, presentValue, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT};
     HRESULT hr = queue_->SubmitStageCopy(frame.command, &signal, 1, frame.fence, nullptr);
     if (FAILED(hr)) return hr;
-#if MFG_UNLOCK_XVK_CAPTURE
-    if (capture) {
-        vk.vkWaitForFences(device, 1, &frame.fence, VK_TRUE, UINT64_MAX);
-        wchar_t name[64];
-        swprintf_s(name, L"\\present-%06llu.bin", presentValue);
-        FILE* file = nullptr;
-        if (_wfopen_s(&file, (captureDir_ + name).c_str(), L"wb") == 0 && file) {
-            fwrite(captureMapped_, 1, size_t(desc_.Width) * desc_.Height * 4, file);
-            fclose(file);
-        }
-    }
-#endif
     QueryPerformanceCounter(&t3);
     // The host's frame id: XeFG's own frame number (low 32 bits, from 0 per context) on the chain's base.
     const uint64_t frameId = tOutputFrame ? frameBase_ + (tOutputFrame & 0xFFFFFFFFull) : 0;
@@ -1346,7 +1275,8 @@ bool SurfaceBroken(HWND window) noexcept
     return found != gRegistered.end() && found->second->broken;
 }
 
-// ---------------------------------------------------------------- vkreflex.1: the host's low-latency outputs
+// ---------------------------------------------------------------- the host's low-latency outputs
+// MFGAdaUnlock 1.7: present metering, see xvk.h.
 void SetPresentMeteringBatch(uint32_t frames) noexcept
 {
     gMeteringBatch.store(frames, std::memory_order_relaxed);

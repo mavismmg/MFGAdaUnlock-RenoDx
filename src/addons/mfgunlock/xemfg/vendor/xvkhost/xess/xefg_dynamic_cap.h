@@ -1,5 +1,5 @@
 #pragma once
-// xemfgsa.6 (V1.7.0): XeMFG standalone's Dynamic MFG with "Use target as cap". Our own controller from the
+// XeMFG standalone's Dynamic MFG with "Use target as cap". Our own controller from the
 // OptiScaler XeFG output (fork commit fe47b437, framegen/xefg/XeFG_DynamicCap.h), kept unchanged below. Here the
 // host's XeLL limit holds the presented rate at the target (xess/xemfg_dynamic.h); its sleep is the limiter sleep
 // below. Tests: tests/xemfg_standalone/dynamic_cap_tests.cpp.

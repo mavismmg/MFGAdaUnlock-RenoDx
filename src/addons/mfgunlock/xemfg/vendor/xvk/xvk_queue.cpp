@@ -20,14 +20,7 @@ HRESULT CommandAllocator::Init()
 
 HRESULT STDMETHODCALLTYPE CommandAllocator::QueryInterface(REFIID riid, void** out)
 {
-    if (!out) return E_POINTER;
-    if (IsIid<IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12Pageable, ID3D12CommandAllocator>(riid)) {
-        AddRef();
-        *out = static_cast<ID3D12CommandAllocator*>(this);
-        return S_OK;
-    }
-    *out = nullptr;
-    return E_NOINTERFACE;
+    return QueryAs<ID3D12CommandAllocator, IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12Pageable, ID3D12CommandAllocator>(this, riid, out);
 }
 
 HRESULT STDMETHODCALLTYPE CommandAllocator::Reset()
@@ -70,14 +63,7 @@ HRESULT QueryHeap::Init()
 
 HRESULT STDMETHODCALLTYPE QueryHeap::QueryInterface(REFIID riid, void** out)
 {
-    if (!out) return E_POINTER;
-    if (IsIid<IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12Pageable, ID3D12QueryHeap>(riid)) {
-        AddRef();
-        *out = static_cast<ID3D12QueryHeap*>(this);
-        return S_OK;
-    }
-    *out = nullptr;
-    return E_NOINTERFACE;
+    return QueryAs<ID3D12QueryHeap, IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12Pageable, ID3D12QueryHeap>(this, riid, out);
 }
 
 // ---------------------------------------------------------------- Fence
@@ -98,14 +84,7 @@ HRESULT Fence::Init(UINT64 initial)
 
 HRESULT STDMETHODCALLTYPE Fence::QueryInterface(REFIID riid, void** out)
 {
-    if (!out) return E_POINTER;
-    if (IsIid<IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12Pageable, ID3D12Fence>(riid)) {
-        AddRef();
-        *out = static_cast<ID3D12Fence*>(this);
-        return S_OK;
-    }
-    *out = nullptr;
-    return E_NOINTERFACE;
+    return QueryAs<ID3D12Fence, IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12Pageable, ID3D12Fence>(this, riid, out);
 }
 
 UINT64 STDMETHODCALLTYPE Fence::GetCompletedValue()
@@ -148,14 +127,7 @@ HRESULT STDMETHODCALLTYPE Fence::Signal(UINT64 value)
 // ---------------------------------------------------------------- CommandQueue
 HRESULT STDMETHODCALLTYPE CommandQueue::QueryInterface(REFIID riid, void** out)
 {
-    if (!out) return E_POINTER;
-    if (IsIid<IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12Pageable, ID3D12CommandQueue>(riid)) {
-        AddRef();
-        *out = static_cast<ID3D12CommandQueue*>(this);
-        return S_OK;
-    }
-    *out = nullptr;
-    return E_NOINTERFACE;
+    return QueryAs<ID3D12CommandQueue, IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12Pageable, ID3D12CommandQueue>(this, riid, out);
 }
 
 HRESULT CommandQueue::Submit(const std::vector<VkCommandBuffer>& buffers, VkSemaphore signal, uint64_t signalValue,
@@ -163,6 +135,30 @@ HRESULT CommandQueue::Submit(const std::vector<VkCommandBuffer>& buffers, VkSema
                              const VkSemaphoreSubmitInfo* extraSignals, uint32_t extraSignalCount, VkFence fence, uint64_t* progress)
 {
     if (FAILED(device_->GetDeviceRemovedReason())) return DXGI_ERROR_DEVICE_REMOVED;
+    if (device_->recorded()) {
+        // vkprov.1: the lists already recorded into the open recording, in order; nothing is submitted. Waits are
+        // met by that order, and a signal completes at once (a CPU wait on it must not wait for a submission the
+        // caller makes only after it returns). Objects stay alive until the recording's event (DeferDestroy).
+        {
+            std::lock_guard lock(pendingMutex_);
+            pendingWaits_.clear();
+        }
+        if (signal) {
+            uint64_t current = 0;
+            device_->vk().vkGetSemaphoreCounterValue(device_->vkDevice(), signal, &current);
+            if (signalValue > current) {
+                VkSemaphoreSignalInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO, nullptr, signal, signalValue};
+                if (device_->vk().vkSignalSemaphore(device_->vkDevice(), &info) != VK_SUCCESS) return E_FAIL;
+            }
+        }
+        if (progress) {
+            std::lock_guard lock(slot_->mutex);
+            *progress = slot_->submitted;
+        }
+        (void)buffers; (void)extraWaits; (void)extraWaitCount; (void)extraSignals; (void)extraSignalCount; (void)fence;
+        device_->PollRecordings();
+        return S_OK;
+    }
     std::vector<VkSemaphoreSubmitInfo> waits;
     VkSemaphore init = VK_NULL_HANDLE;
     uint64_t initValue = 0;

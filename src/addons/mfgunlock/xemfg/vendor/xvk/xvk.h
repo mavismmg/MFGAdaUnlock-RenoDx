@@ -1,8 +1,8 @@
 #pragma once
-// xvk: the minimal D3D12-on-Vulkan layer that runs Intel's unmodified XeSS-FG/XeLL CPU code on a game's own
-// Vulkan device (XeMFG on Vulkan, V1.6.2 vkxefg.1; research board #515-#519). It implements only the D3D12/DXGI
-// subset XeFG uses and fails closed on anything else. Compute programs come from embedded SPIR-V, translated
-// from the exact DXIL and matched by the DXIL's SHA-256 (xess/vulkan/generate_xvk_programs.py).
+// xvk: the minimal D3D12-on-Vulkan layer that runs Intel's unmodified XeSS-FG/XeLL CPU code on a game's own Vulkan
+// device (XeMFG on Vulkan). It implements only the D3D12/DXGI subset XeFG uses and fails closed on anything else.
+// Compute programs come from embedded SPIR-V, translated from the exact DXIL and matched by the DXIL's SHA-256
+// (xess/vulkan/generate_xvk_programs.py).
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -17,6 +17,7 @@
 #endif
 #include <vulkan/vulkan.h>
 #include <cstdint>
+#include <string>
 
 namespace xvk
 {
@@ -30,43 +31,54 @@ struct DeviceDesc
 {
     VkInstance instance = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
-    VkDevice device = VK_NULL_HANDLE;                   // created with the extensions and features from Requirements()
+    VkDevice device = VK_NULL_HANDLE;                   // created with the extensions and features PrepareDevice adds
     PFN_vkGetInstanceProcAddr getInstanceProcAddr = nullptr;   // the loader's own entry, never an interposed one
     uint32_t queueCount = 0;                            // queues only the layer submits to, all in one family;
     const QueueId* queues = nullptr;                    // the last one presents, the others back D3D12 queues
     HMODULE programModule = nullptr;                    // module holding the embedded program set
-    bool calibratedTimestamps = false;                  // VK_KHR/EXT_calibrated_timestamps enabled on the device
-    bool presentIds = false;                            // vkreflex.1: VK_KHR_present_id with its presentId feature on
+    bool presentIds = false;                            // VK_KHR_present_id with its presentId feature on
     bool presentMetering = false;                       // MFGAdaUnlock 1.7: VK_NV_present_metering with its feature on
     // Optional: device functions to use instead of vkGetDeviceProcAddr's (a host whose swap chain and present
     // entries are hooked passes its originals, so the layer's own calls never re-enter its hooks). Null = loader's.
     PFN_vkVoidFunction (VKAPI_PTR* deviceProcOverride)(void* user, const char* name) = nullptr;
     void* deviceProcOverrideUser = nullptr;
+    // vkprov.1: a recorded device has no queues of its own (queueCount 0). Every D3D12 command list records into the
+    // command buffer given to BeginRecording, D3D12 queue submissions and fence signals complete at once, and objects
+    // released meanwhile are destroyed once the GPU has run that command buffer. `recordedFamily` is the queue family
+    // of the command buffers it records into.
+    bool recorded = false;
+    uint32_t recordedFamily = 0;
+    // Explicit extension enablement: a non-null device entry point does not prove enablement.
+    bool tensorExtensions = false;
+    uint32_t binaryImportSpec = 0;
+    uint32_t imageViewHandleSpec = 0;
 };
 
 // MFGAdaUnlock 1.7: the frames XeFG presents per base frame for the driver's present metering (VK_NV_present_metering,
 // the Vulkan form of NVIDIA's flip metering): each batch's first present carries VkSetPresentConfigNV. 0 or 1: no batch.
 void SetPresentMeteringBatch(uint32_t frames) noexcept;
 
+struct TensorOptions
+{
+    bool fullBarriers = false;
+    // V0 matrix selectors. No product caller enables the route before equivalence is established.
+    bool texturing64 = true;
+    bool elfModule = false;
+    bool argumentParams = false;
+};
+
+bool InstallTensorCores(ID3D12Device*, const void* fatbin, size_t bytes, const TensorOptions&, std::string& reason) noexcept;
+void SetTensorCoresEnabled(ID3D12Device*, bool enabled) noexcept;
+
 // What the device needs. The SPIR-V is version 1.6, so the device must run at Vulkan 1.3 or later.
 constexpr uint32_t kRequiredApiVersion = VK_API_VERSION_1_3;
-// Device extensions beyond VK_KHR_swapchain (null-terminated).
-const char* const* RequiredDeviceExtensions() noexcept;
-// Every feature the layer needs, as Vulkan 1.2/1.3 feature bits.
-struct RequiredFeatures
-{
-    bool timelineSemaphore = true;
-    bool synchronization2 = true;
-    bool maintenance4 = true;
-    bool shaderIntegerDotProduct = true;
-};
 
 HRESULT CreateDevice(const DeviceDesc& desc, REFIID riid, void** device) noexcept;
 HRESULT CreateFactory(ID3D12Device* device, REFIID riid, void** factory) noexcept;
 // The game's surface for a window: swap chains the layer creates on that window use it and never destroy it.
-// vkswapext.1: `exclusive` is the game's VK_EXT_full_screen_exclusive mode for it (DEFAULT: none asked for); the
-// layer's swap chains on the surface are created with it. mailbox.1: `presentMode` is the mode the game asked for; a
-// game on MAILBOX keeps it for XeFG's tearing presents (otherwise IMMEDIATE, as before).
+// `exclusive` is the game's VK_EXT_full_screen_exclusive mode for it (DEFAULT: none asked for); the
+// layer's swap chains on the surface are created with it. `presentMode` is the mode the game asked for; a
+// game on MAILBOX keeps it for XeFG's tearing presents (otherwise IMMEDIATE).
 void RegisterSurface(ID3D12Device* device, HWND window, VkSurfaceKHR surface,
                      VkFullScreenExclusiveEXT exclusive = VK_FULL_SCREEN_EXCLUSIVE_DEFAULT_EXT,
                      VkPresentModeKHR presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR) noexcept;
@@ -79,7 +91,7 @@ uint64_t PresentCount() noexcept;
 size_t EmbeddedProgramCount(HMODULE module) noexcept;
 uint64_t MissingProgramCount() noexcept;
 
-// vkreflex.1: NVIDIA Reflex (VK_NV_low_latency2) on the layer's swap chains and AMD Anti-Lag 2 (VK_AMD_anti_lag) on its
+// NVIDIA Reflex (VK_NV_low_latency2) on the layer's swap chains and AMD Anti-Lag 2 (VK_AMD_anti_lag) on its
 // device, for the host's low-latency output. While Reflex is on, a layer swap chain created on a device with the
 // extension's functions gets low latency mode; the sleep mode goes to every such chain, now and when one is created,
 // and its presents carry out-of-band present markers (the real frame also its present id) for the batch's frame.
@@ -101,4 +113,16 @@ void ReflexMarker(HWND window, uint64_t frame, VkLatencyMarkerNV marker) noexcep
 void SetFrameBase(HWND window, uint64_t base) noexcept;
 // Anti-Lag 2's input or present stage for `frame` (maxFps 0: no limit); false without the extension's function.
 bool AntiLagUpdate(ID3D12Device* device, bool on, uint32_t maxFps, VkAntiLagStageAMD stage, uint64_t frame) noexcept;
+
+// vkprov.1, recorded devices only. Between BeginRecording and EndRecording every D3D12 command list records into
+// `commandBuffer` (recording state, the caller's; it is never begun, ended or submitted here). EndRecording records
+// an event at its end; the device learns from it when the GPU has run that work. False: not a recorded device, or
+// a recording is already open.
+bool BeginRecording(ID3D12Device* device, VkCommandBuffer commandBuffer) noexcept;
+void EndRecording(ID3D12Device* device) noexcept;
+// Waits (bounded) until the GPU has run every recording ended so far; false on timeout or a recording never
+// submitted.
+bool WaitRecordedIdle(ID3D12Device* device, uint64_t timeoutNs) noexcept;
+// The VkImage behind an xvk texture (null for buffers and foreign objects). Its layout is GENERAL.
+VkImage ImageOf(ID3D12Resource* resource) noexcept;
 }

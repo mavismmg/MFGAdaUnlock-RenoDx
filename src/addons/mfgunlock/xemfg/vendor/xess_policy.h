@@ -3,11 +3,10 @@
 
 namespace xess_mod
 {
-// Every portable context is created with five generated frames (6x). Lower counts run inside it without
-// reinitialization; at a live count below the capacity the output matches a context created at that
-// count (research/xess-6x). V1.5.1: count 1 too (host_unlock.h fg_live_count_no_reinit), so live
-// switches take microseconds and match fixed-count output from the first frame. The V1.5.1 betas' opt-in
-// 7x/8x capacities (mfg8.1) are not part of the release.
+// Every portable context is created with five generated frames (6x). Lower counts, count 1 included
+// (host_unlock.h fg_live_count_no_reinit), run inside it without reinitialization; at a live count below
+// the capacity the output matches a context created at that count, so live switches take microseconds
+// and match fixed-count output from the first frame.
 constexpr uint32_t kGeneratedCapacity = 5;
 constexpr bool ValidMultiplier(uint32_t value) noexcept
 {

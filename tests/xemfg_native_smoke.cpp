@@ -1048,6 +1048,7 @@ int main(int argc,char** argv) {
         settings.displayCap=false; Require(configure(&settings,sizeof(settings)),"display cap off");
       }
       if(frame==36 || frame==42) {
+        // 1.10.0: the SDK-deadline comparison is gone with dashdogy v1.7.1's pacer; the ABI field stays and is ignored.
         settings.sdkDeadlines=frame==36; Require(configure(&settings,sizeof(settings)),"deadline comparison request");
       }
       if(frame==8) {
@@ -1206,7 +1207,7 @@ int main(int argc,char** argv) {
         Require(cs.hudFiltered&(1u<<XEFG_SWAPCHAIN_RES_UI),"panel did not report the filtered UI input");
       }
       if(frame==40 || frame==48) {
-        controlStatus(&cs,sizeof(cs)); Require(cs.sdkDeadlinesActive==(frame==40),"deadline policy did not commit/restore");
+        controlStatus(&cs,sizeof(cs)); Require(!cs.sdkDeadlinesActive && !cs.settings.sdkDeadlines,"removed SDK-deadline comparison became active");
       }
       MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
       if(flag("--reserved-state") && (frame==10 || frame==11 || frame==13)) {

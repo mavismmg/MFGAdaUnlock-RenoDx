@@ -1,5 +1,5 @@
 #pragma once
-// vkxefg.1 (V1.6.2): XeMFG on Vulkan games. RTXMFG is the XeFG host here: it runs the player's own libxess_fg and
+// XeMFG on Vulkan games. RTXMFG is the XeFG host here: it runs the player's own libxess_fg and
 // libxell on the game's VkDevice through the xvk D3D12-on-Vulkan layer (xess/vulkan/xvk.h), takes over the
 // game's swap chain (the game renders into XeFG's back buffers, XeFG presents through a VkSwapchainKHR it owns)
 // and feeds XeFG the game's DLSS Super Resolution inputs.
@@ -20,24 +20,43 @@
 #include <string>
 
 struct NVSDK_NGX_Parameter;
+struct ID3D12Device;
 
 namespace xess_vulkan
 {
 // The user's choice (control file; patcher.cpp passes every revision): enabled, and the frame count (2..6).
-// `harness`: the harness builds' xessVulkan key (MFG_UNLOCK_XEFG_VK_STANDALONE only); `standalone`: xemfgsa.1's
+// `harness`: the harness builds' xessVulkan key (MFG_UNLOCK_XEFG_VK_STANDALONE only); `standalone`: the
 // XeMFG standalone switch, the product's.
 void Configure(bool harness, bool standalone, uint32_t frames) noexcept;
-// xemfgsa.5: XeMFG standalone's FPS limit (the menu's, presented frames per second; 0 off). Without OptiScaler's
+// XeMFG standalone's FPS limit (the menu's, presented frames per second; 0 off). Without OptiScaler's
 // latency output a standalone chain applies it as XeLL's minimum interval between the game's frames.
 void SetStandaloneFpsLimit(uint32_t fps) noexcept;
-// xemfgsa.6: XeMFG standalone's Dynamic MFG (xess/xemfg_dynamic.h), as xess_d3d12::SetDynamic. Applies live.
+// XeMFG standalone's Dynamic MFG (xess/xemfg_dynamic.h), as xess_d3d12::SetDynamic. Applies live.
 void SetStandaloneDynamic(bool enabled, uint32_t targetFps, int rounding, bool allow1x, bool targetAsCap) noexcept;
 // The game's own DLSS Frame Generation (Streamline DLSS-G options) is on. Harness: the host takes no chain over and
-// gives a taken-over one back, so two frame generators never stack. XeMFG standalone (xemfgsa.1): the host replaces
+// gives a taken-over one back, so two frame generators never stack. XeMFG standalone: the host replaces
 // it (patcher.cpp holds DLSS-G at Off) and the game's switch turns XeMFG's generation on and off.
 void SetGameFrameGeneration(bool on) noexcept;
-// xemfgsa.1: a chain presents through XeFG under XeMFG standalone (the game's DLSS-G is then held at Off).
+// A chain presents through XeFG under XeMFG standalone (the game's DLSS-G is then held at Off).
 bool ReplacesFrameGeneration() noexcept;
+// vkprov.1: the XeMFG DLSS-G provider is wanted (its shim sits in OptiScaler's custom DLSSG folder): instances and
+// devices created from now on get the layer's API version, extensions and features, never its queues.
+void SetProvider(bool on) noexcept;
+// A device prepared for the provider: its physical device, instance, the loader's vkGetInstanceProcAddr and the
+// graphics family of its command buffers. False for any other device.
+struct ProviderDevice
+{
+    VkPhysicalDevice physical = VK_NULL_HANDLE;
+    VkInstance instance = VK_NULL_HANDLE;
+    PFN_vkGetInstanceProcAddr gipa = nullptr;
+    uint32_t family = 0;
+    bool tensorExtensions = false; uint32_t binaryImportSpec = 0, imageViewHandleSpec = 0;
+};
+void InstallConfiguredTensorCores(ID3D12Device*) noexcept;
+bool FindProviderDevice(VkDevice device, ProviderDevice& out) noexcept;
+// The player's libxess_fg/libxell pair, loaded and adopted by the XeSS route as for the Vulkan host (its libxess_fg,
+// or null with `reason`).
+HMODULE ProviderRuntime(std::string& reason) noexcept;
 
 // vkCreateInstance: the SPIR-V program set is SPIR-V 1.6, so the application's Vulkan version is raised to 1.3
 // when the loader offers it and the host is enabled. `storage` keeps the edited structures alive for the call.
@@ -152,28 +171,31 @@ struct Snapshot
     bool vulkanGame = false;      // the game created a Vulkan window surface
     bool restartNeeded = false;   // enabled, but the game's device was created while the host was off
     bool gameFrameGeneration = false;
-    bool hosted = false;          // OptiScaler's XeFG output owns a device (vkxefg.2)
+    bool hosted = false;          // OptiScaler's XeFG output owns a device
     uint32_t frames = 0;          // XeFG's current count of presented frames per base frame (generated + 1)
     uint64_t basePresents = 0;
     uint64_t vulkanPresents = 0;  // the layer's own presents (all frames)
     uint64_t inputFrames = 0;
     uint64_t missingPrograms = 0;
-    uint32_t latencyMode = 0;     // vkreflex.1: the low-latency mode the last frame slept in (MfgXeFGVkLatencyMode)
+    uint32_t latencyMode = 0;     // the low-latency mode the last frame slept in (MfgXeFGVkLatencyMode)
     bool latencyLimited = false;  // and whether it applied the host's FPS limit
-    // xemfgsa.5: the game's and the layer's frame rates (FPS x 1000), the sample's age (UINT64_MAX before the first) and
+    // The game's and the layer's frame rates (FPS x 1000), the sample's age (UINT64_MAX before the first) and
     // XeMFG standalone's FPS limit.
     uint32_t baseFpsMilli = 0, outputFpsMilli = 0;
     uint64_t fpsAgeMs = UINT64_MAX;
     uint32_t fpsLimit = 0;
-    // xemfgsa.6: Dynamic MFG runs (frames is its count, 1 = generation off), its target (FPS x 1000) and its cap mode.
+    // Dynamic MFG runs (frames is its count, 1 = generation off), its target (FPS x 1000) and its cap mode.
     bool dynamic = false, dynamicCap = false;
     uint32_t dynamicTargetMilli = 0;
     bool gameLatency = false;     // MFGAdaUnlock 1.7.1: the game's own sleep drove XeLL on the last frame
     std::string state = "off";
     std::string reason;
-    // alpha.15 (B4-12), after a failed search: the RTXMFG-XeSS folder beside MFG Unlocker, the game's EXE folder and
+    // After a failed search: the RTXMFG-XeSS folder beside MFG Unlocker, the game's EXE folder and
     // the first near-miss name (UTF-8), as xess_d3d12::Snapshot.
     std::string runtimeSearch, runtimeGame, runtimeMisnamed;
+    // oldruntime.1, after a searched pair loaded without every export: its folder, the short file, that file's version
+    // and the folder a newer pair takes over from (UTF-8), as xess_d3d12::Snapshot.
+    std::string runtimeOld, runtimeOldFile, runtimeOldVersion, runtimeNewer;
 };
 Snapshot ReadSnapshot() noexcept;
 
@@ -203,10 +225,10 @@ VkResult QueuePresent(VkQueue queue, const VkPresentInfoKHR* info) noexcept;
 void SetHdrMetadata(VkSwapchainKHR swapchain, const VkHdrMetadataEXT* metadata) noexcept;
 // vkReleaseSwapchainImagesKHR/EXT (swapchain_maintenance1) on a hosted chain.
 VkResult ReleaseSwapchainImages(VkSwapchainKHR swapchain, uint32_t count, const uint32_t* indices) noexcept;
-// vkswapext.1: the swap-chain entry points the host routes (MFG_XEFG_VK_ROUTE_* in mfg_xefg_vk.h); device extensions
-// whose entry points are all routed no longer keep a device native.
+// The swap-chain entry points the host routes (MFG_XEFG_VK_ROUTE_* in mfg_xefg_vk.h); device extensions
+// whose entry points are all routed do not keep a device native.
 void SetHostRoutes(uint32_t routes) noexcept;
-// vkreflex.1: the host's low-latency output (MfgXeFGVkLatency in mfg_xefg_vk.h).
+// The host's low-latency output (MfgXeFGVkLatency in mfg_xefg_vk.h).
 void SetLatency(uint32_t mode, bool lowLatency, bool boost, float outputFpsLimit) noexcept;
 }
 }

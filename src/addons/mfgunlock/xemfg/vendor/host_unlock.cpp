@@ -172,7 +172,7 @@ struct Image
     const IMAGE_NT_HEADERS64* nt{};
     std::vector<IMAGE_SECTION_HEADER> sections;
 };
-// `name` prefixes the reasons (hdrpq.1 shares these with the ring).
+// `name` prefixes the reasons (the HDR10 flag shares these with the ring).
 Image Headers(HMODULE module, const std::string& name = "fg_output_ring")
 {
     Image image{reinterpret_cast<const uint8_t*>(module)};
@@ -258,7 +258,7 @@ void RejectRelocations(const Image& image, uint32_t start, uint32_t end, const s
     }
 }
 
-// hdrpq.1: XeFG's SetColorSpace1 proxy, 0 = wildcard (displacements): mov [rsp+8],rbx / push rdi / sub rsp,20h /
+// XeFG's SetColorSpace1 proxy, 0 = wildcard (displacements): mov [rsp+8],rbx / push rdi / sub rsp,20h /
 // mov edi,edx / mov rbx,rcx / mov rcx,[rcx+context] / xor edx,edx / cmp edi,0Ch / sete dl / call rel32 /
 // mov rcx,[rbx+native] / mov edx,edi / mov rax,[rcx] / mov rax,[rax+130h] / mov rbx,[rsp+30h] / add rsp,20h /
 // pop rdi / jmp qword ptr [rip+rel32].
@@ -321,14 +321,6 @@ OutputRing::OutputRing(HMODULE fg, uint8_t depth) : depth(depth)
             try { Write(immediate, {depth}, {0x01}, protection, "fg_output_ring"); } catch (...) {}
         throw;
     }
-    applied = true;
-}
-
-void OutputRing::Restore()
-{
-    if (!applied) return;
-    Write(immediate, {depth}, {0x01}, protection, "fg_output_ring");
-    applied = false;
 }
 
 Hdr10Flag::Hdr10Flag(HMODULE fg)
@@ -388,14 +380,5 @@ Hdr10Flag::Hdr10Flag(HMODULE fg)
             try { Write(sete, nop, stock, protection, "fg_hdr10_flag"); } catch (...) {}
         throw;
     }
-    applied = true;
-}
-
-void Hdr10Flag::Restore()
-{
-    if (!applied) return;
-    Write(sete, std::vector<uint8_t>(std::begin(kNop3), std::end(kNop3)), std::vector<uint8_t>(std::begin(kSete), std::end(kSete)),
-        protection, "fg_hdr10_flag");
-    applied = false;
 }
 }

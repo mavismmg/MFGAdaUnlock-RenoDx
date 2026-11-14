@@ -1,6 +1,6 @@
 #include "../runtime_payload.h"
 // Exact-build, process-local shader additions. Unknown keys use the provider's
-// original decoder and retain its native failure behavior; splat.1, unet.1: a decoded
+// original decoder and retain its native failure behavior; a decoded
 // program identical to one RTXMFG replaces is swapped for RTXMFG's own shader.
 // Install before any context; retain programs and relay until after exact
 // context destruction.
@@ -92,7 +92,7 @@ class ShaderPort {
         }
         throw std::runtime_error("shader_port_pipeline_frame");
     }
-    // splat.1: a program from the provider's own decoder is replaced only when its decoded bytes are
+    // A program from the provider's own decoder is replaced only when its decoded bytes are
     // exactly the Intel program the replacement was proven byte-identical against (SHA-256 and size);
     // any other provider build or program keeps Intel's bytes.
     void native(const std::string& key,void* output) {
@@ -162,7 +162,7 @@ class ShaderPort {
     }
 public:
     bool hasProgram(const char* key) const { return programs.contains(key); }
-    // amdkeep.1: adapterVendor = PCI vendor of the provider's device (0 = unknown).
+    // adapterVendor = PCI vendor of the provider's device (0 = unknown).
     explicit ShaderPort(HMODULE module,HMODULE payload,const std::filesystem::path& dataRoot = {},UINT adapterVendor = 0) {
         const auto& layout=xess_layout::Get(module);
         base=reinterpret_cast<uintptr_t>(module); site=reinterpret_cast<unsigned char*>(base+layout.Rva(0x1ad217));
@@ -185,12 +185,10 @@ public:
         // Embedded resources supply the exact same 54 verified byte arrays.
         // No external program directory is consulted by the game build.
         programs=xess_payload::LoadPrograms(payload);
-        // splat.1, unet.1: our own splat and U-Net conv shaders replace Intel's (proven byte-identical; always validated).
+        // Our own splat and U-Net conv shaders replace Intel's (proven byte-identical; always validated).
         replacements=xess_payload::LoadReplacements(payload);
-        // amdkeep.1 (= wmma.1's rule, lost in V1.6.x): on AMD, Intel's aa016078 and efbe3788 run faster than unet.1's
-        // (RX 7800 XT at 4K: 266 vs 337 us and 161 vs 163, at 1440p 162 vs 175 and 81 vs 84; RX 9070 XT at 4K: 160 vs
-        // 172 and 64 vs 79; amdwmma.1 tester runs, board #456), so those two keep Intel's bytes there. Both outputs
-        // are identical, so only the speed differs.
+        // On AMD, Intel's aa016078 and efbe3788 run faster than our own (RX 7800 XT at 4K: 266 vs 337 us and 161 vs
+        // 163 us), so those two keep Intel's bytes there; the outputs are identical.
         std::string kept;
         if (adapterVendor==0x1002) {
             std::erase_if(replacements,[&](const xess_payload::Replacement& r) {

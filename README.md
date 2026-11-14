@@ -637,6 +637,7 @@ users never need to edit it: since 1.8, every key has a control, under
 | `[XeFG] VulkanPresentMetering` | `1` | NVIDIA present metering (`VK_NV_present_metering`, the Vulkan form of flip metering) for XeMFG's Vulkan output, where the driver offers it; not used with VSync on. `0` paces with XeLL and the CPU pacer only |
 | `[XeFG] VulkanGameLatency` | `0` | Experimental, not yet measured in a game. `1` lets a Vulkan game's own Reflex sleep and simulation markers drive XeLL, instead of sleeping when the game acquires its image |
 | `[XeFG] VulkanDynamicMFG` | `0` | Experimental, not yet measured in a game. `1` turns on Dynamic MFG in Vulkan games: the multiplier follows the real frame rate, up to the one set in the panel. `VulkanDynamicTargetFps` (`0`: the FPS limit, else just under the refresh rate), `VulkanDynamicRounding` (`0` at most, `1` nearest, `2` at least), `VulkanDynamicAllow1x` (`1`) and `VulkanDynamicTargetAsCap` (`0`) adjust it |
+| `[XeFG] XeFGFlipQueue` | `0` | `1` turns on the flip queue: since 1.10.0, dashdogy's v1.7.1 pacer, which presents each batch on an even cadence and sizes its own buffer and first frame (the 1.7 `XeFGFlipQueueBufferPct` and `XeFGFlipQueueFirst` are gone) |
 | `[XeFG] XeFGNativeLatency` | `0` | Maximum frame latency of XeFG's own swap chain in D3D12 games, `1` to `16`, for latency tests. `0` keeps Intel's (at most 3). Not used with `XeFGFlipQueue=1`; applies from the next output |
 | `[XeFG] InvertedDepth` / `JitteredMotion` | not set | Manual convention overrides for unusual games. Normally learned automatically (see below) |
 | `[Adapters] FidelityFX` | `1` | `0` stops XeMFG from taking over FSR 3.1 frame generation |
@@ -866,7 +867,7 @@ on an RTX 4070 SUPER with 2x, DX12 showed 111 fps with one frame every 8.7 ms,
 give or take 1 ms. Vulkan showed 86 fps, with frames arriving in pairs, 3 to 5 ms
 apart, then a 13 to 17 ms gap, and stalls up to 166 ms. On screen the image seems
 to step back, and motion does not look smooth despite the higher count. A user
-with an RTX 4090 reported the same. **Queue metered frames early** does not change it.
+with an RTX 4090 reported the same. **Queue metered frames early** (removed in 1.10.0) did not change it.
 
 In Vulkan, XeMFG's work and copies share the GPU with the game's frame and wait
 behind it when the GPU is saturated. The game also gives no latency markers in

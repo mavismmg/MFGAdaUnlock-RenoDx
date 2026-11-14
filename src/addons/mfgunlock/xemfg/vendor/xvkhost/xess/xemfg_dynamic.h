@@ -1,5 +1,5 @@
 #pragma once
-// xemfgsa.6 (V1.7.0): Dynamic MFG for XeMFG standalone, on both hosts (xess/d3d12_host.cpp, xess/vulkan/vk_host.cpp).
+// Dynamic MFG for XeMFG standalone, on both hosts (xess/d3d12_host.cpp, xess/vulkan/vk_host.cpp).
 // The count follows the real frame rate toward a target, up to the most frames set in the menu, with our OptiScaler
 // XeFG output's controllers (xefg_dynamic_count.h, xefg_dynamic_cap.h; the fork's XeFG_DynamicMFG drives them the same
 // way there). Each host calls Update once per game frame, before its present, with what the game waited for in the

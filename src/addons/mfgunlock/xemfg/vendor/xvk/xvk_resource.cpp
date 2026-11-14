@@ -69,13 +69,19 @@ Resource::~Resource()
     const VkImage image = image_;
     const VkDeviceMemory memory = ownMemory_;
     Heap* heap = heap_;
-    owner->DeferDestroy([owner, views, buffer, image, memory, heap] {
+    auto shadows = std::move(shadows_);
+    owner->DeferDestroy([owner, views, buffer, image, memory, heap, shadows] {
         const auto& vk = owner->vk();
         const VkDevice device = owner->vkDevice();
         for (VkImageView view : views) vk.vkDestroyImageView(device, view, nullptr);
         if (buffer) vk.vkDestroyBuffer(device, buffer, nullptr);
         if (image) vk.vkDestroyImage(device, image, nullptr);
         if (memory) vk.vkFreeMemory(device, memory, nullptr);
+        for (const auto& [key, shadow] : shadows) {
+            if (shadow.view) vk.vkDestroyImageView(device, shadow.view, nullptr);
+            if (shadow.image) vk.vkDestroyImage(device, shadow.image, nullptr);
+            if (shadow.memory) vk.vkFreeMemory(device, shadow.memory, nullptr);
+        }
         if (heap) heap->Release();
     });
 }
@@ -152,14 +158,7 @@ HRESULT Resource::Init(Heap* placedHeap, UINT64 placedOffset)
 
 HRESULT STDMETHODCALLTYPE Resource::QueryInterface(REFIID riid, void** out)
 {
-    if (!out) return E_POINTER;
-    if (IsIid<IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12Pageable, ID3D12Resource>(riid)) {
-        AddRef();
-        *out = static_cast<ID3D12Resource*>(this);
-        return S_OK;
-    }
-    *out = nullptr;
-    return E_NOINTERFACE;
+    return QueryAs<ID3D12Resource, IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12Pageable, ID3D12Resource>(this, riid, out);
 }
 
 HRESULT STDMETHODCALLTYPE Resource::Map(UINT subresource, const D3D12_RANGE*, void** data)
@@ -253,14 +252,7 @@ HRESULT Heap::Init()
 
 HRESULT STDMETHODCALLTYPE Heap::QueryInterface(REFIID riid, void** out)
 {
-    if (!out) return E_POINTER;
-    if (IsIid<IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12Pageable, ID3D12Heap>(riid)) {
-        AddRef();
-        *out = static_cast<ID3D12Heap*>(this);
-        return S_OK;
-    }
-    *out = nullptr;
-    return E_NOINTERFACE;
+    return QueryAs<ID3D12Heap, IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12Pageable, ID3D12Heap>(this, riid, out);
 }
 
 // ---------------------------------------------------------------- DescriptorHeap / RootSignature
@@ -271,26 +263,77 @@ DescriptorHeap::DescriptorHeap(Device* device, const D3D12_DESCRIPTOR_HEAP_DESC&
 
 HRESULT STDMETHODCALLTYPE DescriptorHeap::QueryInterface(REFIID riid, void** out)
 {
-    if (!out) return E_POINTER;
-    if (IsIid<IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12Pageable, ID3D12DescriptorHeap>(riid)) {
-        AddRef();
-        *out = static_cast<ID3D12DescriptorHeap*>(this);
-        return S_OK;
-    }
-    *out = nullptr;
-    return E_NOINTERFACE;
+    return QueryAs<ID3D12DescriptorHeap, IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12Pageable, ID3D12DescriptorHeap>(this, riid, out);
 }
 
 HRESULT STDMETHODCALLTYPE RootSignature::QueryInterface(REFIID riid, void** out)
 {
-    if (!out) return E_POINTER;
-    if (IsIid<IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12RootSignature>(riid)) {
-        AddRef();
-        *out = static_cast<ID3D12RootSignature*>(this);
-        return S_OK;
+    return QueryAs<ID3D12RootSignature, IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12RootSignature>(this, riid, out);
+}
+
+
+uint64_t Resource::CudaHandle(VkImageView view, bool storage, TensorRoute& route)
+{
+    std::lock_guard lock(viewMutex_);
+    auto& handle = cudaHandles_[{view, storage}];
+    if (!handle) handle = route.ImageHandle(view, storage);
+    return handle;
+}
+uint64_t Resource::TensorShadow(VkCommandBuffer command, uint64_t offset, uint64_t range, TensorRoute& route, std::string& reason)
+{
+    if (heapProperties_.Type != D3D12_HEAP_TYPE_DEFAULT) { reason = "shadow_heap"; return 0; }
+    if (!IsBuffer() || offset > size_ || range > size_ - offset || !range || range % 16
+        || range / 16 > device_->properties().limits.maxImageDimension1D) { reason = "shadow_shape"; return 0; }
+    std::lock_guard lock(viewMutex_);
+    const auto& vk = device_->vk(); const auto device = device_->vkDevice();
+    auto& shadow = shadows_[{offset, range}];
+    if (!shadow.image)
+    {
+        VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        image.imageType = VK_IMAGE_TYPE_1D; image.format = VK_FORMAT_R32G32B32A32_UINT;
+        image.extent = {uint32_t(range / 16), 1, 1}; image.mipLevels = image.arrayLayers = 1;
+        image.samples = VK_SAMPLE_COUNT_1_BIT; image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        if (vk.vkCreateImage(device, &image, nullptr, &shadow.image) != VK_SUCCESS) { reason = "shadow_image"; return 0; }
+        VkMemoryRequirements requirements{}; vk.vkGetImageMemoryRequirements(device, shadow.image, &requirements);
+        uint32_t type{};
+        if (!device_->FindMemoryType(requirements.memoryTypeBits, D3D12_HEAP_TYPE_DEFAULT, type)) { reason = "shadow_memory_type"; return 0; }
+        VkMemoryAllocateInfo allocate{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, requirements.size, type};
+        if (vk.vkAllocateMemory(device, &allocate, nullptr, &shadow.memory) != VK_SUCCESS
+            || vk.vkBindImageMemory(device, shadow.image, shadow.memory, 0) != VK_SUCCESS) { reason = "shadow_memory"; return 0; }
+        VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view.image = shadow.image; view.viewType = VK_IMAGE_VIEW_TYPE_1D; view.format = image.format;
+        view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        if (vk.vkCreateImageView(device, &view, nullptr, &shadow.view) != VK_SUCCESS) { reason = "shadow_view"; return 0; }
+        shadow.handle = route.ImageHandle(shadow.view, false);
+        if (!shadow.handle) { reason = "shadow_handle"; return 0; }
     }
-    *out = nullptr;
-    return E_NOINTERFACE;
+    if (!shadow.handle) { reason = "shadow_incomplete"; return 0; }
+    const auto generation = writeGeneration_.load(std::memory_order_relaxed);
+    if (!shadow.initialized || shadow.generation != generation)
+    {
+        VkMemoryBarrier2 memory{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        memory.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT; memory.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+        memory.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT; memory.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        VkImageMemoryBarrier2 image{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        image.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT; image.srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
+        image.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT; image.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        image.oldLayout = shadow.initialized ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED;
+        image.newLayout = VK_IMAGE_LAYOUT_GENERAL; image.srcQueueFamilyIndex = image.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        image.image = shadow.image; image.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.memoryBarrierCount = dep.imageMemoryBarrierCount = 1; dep.pMemoryBarriers = &memory; dep.pImageMemoryBarriers = &image;
+        vk.vkCmdPipelineBarrier2(command, &dep);
+        VkBufferImageCopy copy{}; copy.bufferOffset = offset; copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {uint32_t(range / 16), 1, 1};
+        vk.vkCmdCopyBufferToImage(command, buffer_, shadow.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+        memory.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT; memory.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        memory.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT; memory.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
+        dep.imageMemoryBarrierCount = 0;
+        vk.vkCmdPipelineBarrier2(command, &dep);
+        shadow.initialized = true; shadow.generation = generation;
+    }
+    return shadow.handle;
 }
 
 } // namespace xvk

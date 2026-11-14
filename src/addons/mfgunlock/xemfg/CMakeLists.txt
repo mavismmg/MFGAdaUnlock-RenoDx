@@ -215,8 +215,12 @@ target_include_directories(xemfg_ui_tests PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg
   "${RENODX_SOURCE_DIR}/external/Streamline/include")
 target_link_libraries(xemfg_ui_tests PRIVATE d3d12 dxgi)
 add_test(NAME xemfg_ui_composition COMMAND xemfg_ui_tests)
-add_executable(xemfg_cadence_tests "${CMAKE_SOURCE_DIR}/xemfg_cadence_tests.cpp")
-add_test(NAME xemfg_cadence COMMAND xemfg_cadence_tests)
+# 1.10.0 (dashdogy v1.7.1): the pacer's own tests replace the cadence test of the
+# removed DLSS-G-style estimator (sdk_pacing_dlssg.h).
+add_executable(xemfg_latency_pacing_tests "${CMAKE_SOURCE_DIR}/xemfg_latency_pacing_tests.cpp")
+add_test(NAME xemfg_latency_pacing COMMAND xemfg_latency_pacing_tests)
+add_executable(xemfg_pacing_diag_tests "${CMAKE_SOURCE_DIR}/xemfg_pacing_diag_tests.cpp")
+add_test(NAME xemfg_pacing_diag COMMAND xemfg_pacing_diag_tests)
 add_executable(xemfg_hud_input_tests "${CMAKE_SOURCE_DIR}/xemfg_hud_input_tests.cpp")
 target_compile_definitions(xemfg_hud_input_tests PRIVATE NOMINMAX)
 add_test(NAME xemfg_hud_inputs COMMAND xemfg_hud_input_tests)
@@ -626,7 +630,7 @@ if(EXISTS "${XEMFG_VULKAN_HEADERS}/vulkan/vulkan.h" AND EXISTS "${XEMFG_XVK_PROG
   # The Vulkan host (vendor/xvkhost, same release) and the addon's vulkan-1 and
   # NGX Vulkan hooks (native_vulkan.cpp). The program set is embedded as RCDATA
   # 7400+ in the addon itself (vk_host passes its own module to xvk).
-  target_sources(mfgunlock_native_xemfg PRIVATE vendor/xvkhost/vk_host.cpp native_vulkan.cpp
+  target_sources(mfgunlock_native_xemfg PRIVATE vendor/xvkhost/vk_host.cpp vendor/xvkhost/xess/host_xell_binding.cpp native_vulkan.cpp
     "${XEMFG_XVK_GENERATED}/vk_input_copy_spv.h" "${XEMFG_XVK_GENERATED}/embedded_xvk_programs.rc")
   target_include_directories(mfgunlock_native_xemfg PRIVATE vendor/xvkhost)
   target_compile_definitions(mfgunlock_native_xemfg PRIVATE MFGUNLOCK_XEMFG_VULKAN)

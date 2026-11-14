@@ -1,4 +1,4 @@
-// vkxefg.1 (V1.6.2): XeMFG on Vulkan games, with RTXMFG as the XeFG host (vk_host.h).
+// XeMFG on Vulkan games, with RTXMFG as the XeFG host (vk_host.h).
 //
 // Frame flow on a taken-over swap chain (one family F; the layer owns its extra queues on F):
 //  acquire  waits on XeFG's frame-latency waitable, takes the proxy's current back buffer and signals the game's
@@ -11,15 +11,22 @@
 //           proxy presents. XeFG renders the generated frames and presents through the layer's VkSwapchainKHR.
 #include "vk_host.h"
 #include "../../vulkan_policy.hpp"
+#include "vk_provider.h"
 #include "mfg_xefg_vk.h"
 #include "xvk_internal.h"
 #include "vk_input_copy_spv.h"
 #include "xess/xess_mod.h"
+#include "xess/cuda/cuda_route.h"
 #include "xess/standalone_policy.h"
+#include "xess/sdk_pacing.h"
 #include "xess/runtime_search.h"
 #include "xess/xemfg_dynamic.h"
 #include "xess/xemfg_window.h"
 #include "single_module.h"
+#include "optiscaler_host.h"
+#include "xess/xemfg_host_common.h"
+#include "xess/host_xell_binding.h"
+#include "frame_gen_target.h"
 #include <xefg_swapchain.h>
 #include <xefg_swapchain_d3d12.h>
 #include <xefg_swapchain_debug.h>
@@ -38,41 +45,20 @@ namespace xess_vulkan
 namespace
 {
 using Microsoft::WRL::ComPtr;
-
-std::string Escape(const std::string& text)
-{
-    std::string out;
-    for (char c : text) {
-        if (c == '"' || c == '\\') out += '\\';
-        if (static_cast<unsigned char>(c) >= 0x20) out += c;
-    }
-    return out;
-}
-
-void Log(const char* stage, const std::string& fields) noexcept
-{
-    xess_mod::WriteLog(stage, fields);
-}
-
-int64_t Now() noexcept
-{
-    LARGE_INTEGER value{};
-    QueryPerformanceCounter(&value);
-    return value.QuadPart;
-}
-
-double Milliseconds(int64_t ticks) noexcept
-{
-    static const double frequency = [] { LARGE_INTEGER f{}; QueryPerformanceFrequency(&f); return double(f.QuadPart); }();
-    return double(ticks) * 1000.0 / frequency;
-}
+using xemfg_host::Escape, xemfg_host::Narrow, xemfg_host::Log, xemfg_host::Now, xemfg_host::Milliseconds;
 
 std::atomic<bool> gEnabled{false};
-std::atomic<bool> gStandalone{false};            // xemfgsa.1: the product's XeMFG standalone switch (replaces DLSS-G)
+// vkprov.1: the XeMFG DLSS-G provider (vk_provider.cpp) runs XeFG on the game's device: its instance and device get
+// the layer's version, extensions and features (never its queues) while the provider is wanted.
+std::atomic<bool> gProvider{false};
+struct ProviderDeviceRecord { VkPhysicalDevice physical; VkInstance instance; PFN_vkGetInstanceProcAddr gipa; uint32_t family; bool tensorExtensions = false; uint32_t binaryImportSpec = 0, imageViewHandleSpec = 0; };
+std::mutex gProviderMutex;
+std::unordered_map<VkDevice, ProviderDeviceRecord> gProviderDevices;
+std::atomic<bool> gStandalone{false};            // the product's XeMFG standalone switch (replaces DLSS-G)
 std::atomic<bool> gGameFrameGeneration{false};   // SetGameFrameGeneration
 std::atomic<bool> gDlssgSeen{false};             // the game drives Streamline's DLSS-G (its switch gates XeMFG)
 std::atomic<bool> gSurfaceSeen{false};           // a Vulkan window surface (the menu shows the host's settings)
-std::atomic<bool> gDeviceWhileOff{false};        // a device created while the host was off (on applies at restart)
+std::atomic<bool> gDeviceWhileOff{false};        // a device created unprepared (on applies at restart)
 std::atomic<uint32_t> gFrames{2};
 constexpr const char* kHostedEntries[] = {"vkCreateSwapchainKHR", "vkQueuePresentKHR", "vkDestroySwapchainKHR", "vkGetSwapchainImagesKHR",
                                           "vkAcquireNextImageKHR"};
@@ -92,7 +78,8 @@ struct Runtime
     std::string reason = "not_loaded";
     HMODULE fg = nullptr, ll = nullptr;
     std::wstring folder;
-    xess_runtime_search::Result search;   // alpha.15 (B4-12): the folders searched and why the pair was not found
+    xess_runtime_search::Result search;   // the folders searched and why the pair was not found
+    xess_runtime_search::Outdated outdated; // oldruntime.1: the file short of exports and its version
 #define MFG_XEFG_FUNCTIONS(X) \
     X(xefgSwapChainD3D12CreateContext) X(xefgSwapChainSetLatencyReduction) X(xefgSwapChainD3D12InitFromSwapChainDesc) \
     X(xefgSwapChainD3D12GetSwapChainPtr) X(xefgSwapChainSetNumInterpolatedFrames) X(xefgSwapChainSetEnabled) \
@@ -109,7 +96,7 @@ struct Runtime
 Runtime gRuntime;
 std::atomic<bool> gRuntimeTried{false};
 
-// vkxefg.2: OptiScaler sends libxell's exports to its XeLL input, which would take the host's context for the game's.
+// OptiScaler sends libxell's exports to its XeLL input, which would take the host's context for the game's.
 // The hosting device's originals give OptiScaler's real XeLL functions instead (set before the layer loads the
 // runtime).
 std::atomic<hosted::OriginalProc> gHostOriginals{nullptr};
@@ -123,18 +110,15 @@ Runtime& LoadRuntime()
     std::call_once(gRuntime.once, [] {
         Runtime& rt = gRuntime;
         xess_runtime_search::Bases bases;
-        // alpha.15 (B4-12): vk_runtime on every outcome, with the folders searched (the early returns below skipped it
-        // for every failure).
+        // vk_runtime on every outcome, with the folders searched, the early returns below included.
         struct Report {
             Runtime& rt;
             const xess_runtime_search::Bases& bases;
             ~Report() {
                 try {
-                    std::string folder;
-                    for (wchar_t c : rt.folder) folder += c < 0x80 ? char(c) : '?';
-                    Log("vk_runtime", std::string("\"ready\":") + (rt.ready ? "true" : "false") + ",\"folder\":\"" + Escape(folder) +
-                        "\"" + ",\"xellFromHost\":" + (gHostOriginals.load() ? "true" : "false") +
-                        (rt.reason.empty() ? "" : ",\"reason\":\"" + rt.reason + "\"") +
+                    Log("vk_runtime", std::string("\"ready\":") + (rt.ready ? "true" : "false") + ",\"folder\":\"" +
+                        Escape(Narrow(rt.folder)) + "\"" + ",\"xellFromHost\":" + (gHostOriginals.load() ? "true" : "false") +
+                        (rt.reason.empty() ? "" : ",\"reason\":\"" + rt.reason + "\"") + xess_runtime_search::OutdatedJson(rt.outdated) +
                         (rt.search.folders.empty() ? "" : "," + xess_runtime_search::Json(bases, rt.search)));
                 } catch (...) {}
                 gRuntimeTried = true;
@@ -143,7 +127,7 @@ Runtime& LoadRuntime()
         try {
             HMODULE activeFg = nullptr, activeLl = nullptr;
             if (xess_mod::ActiveSdkPair(activeFg, activeLl)) {
-                // vkxefg.2: the route is already active on the pair OptiScaler loaded (the one OptiScaler keeps
+                // The route is already active on the pair OptiScaler loaded (the one OptiScaler keeps
                 // as the real XeLL; any other libxell goes to its XeLL input entirely).
                 wchar_t modulePath[MAX_PATH]{};
                 const DWORD n = GetModuleFileNameW(activeFg, modulePath, MAX_PATH);
@@ -166,14 +150,21 @@ Runtime& LoadRuntime()
             if (rt.folder.empty()) { rt.reason = rt.search.reason.empty() ? "runtime_not_found" : rt.search.reason; return; }
             if (!rt.fg || !rt.ll) { rt.reason = "runtime_load_failed"; return; }
             if (!xess_mod::AdoptVulkanHostPair(rt.fg, rt.ll)) { rt.reason = "runtime_route_rejected"; return; }
+            xess_host_xell::Bind(rt.fg, rt.ll);   // xellbind.1: XeFG's lookup of libxell.dll finds this pair's
             bool complete = true;
-#define MFG_RESOLVE_FG(name) rt.name = reinterpret_cast<decltype(rt.name)>(GetProcAddress(rt.fg, #name)); complete &= rt.name != nullptr;
-#define MFG_RESOLVE_LL(name) rt.name = reinterpret_cast<decltype(rt.name)>(GetProcAddress(rt.ll, #name)); complete &= rt.name != nullptr;
+#define MFG_RESOLVE_FG(name) rt.name = reinterpret_cast<decltype(rt.name)>(GetProcAddress(rt.fg, #name)); complete &= rt.name != nullptr; \
+                             if (!rt.name) rt.outdated.Miss(xess_runtime_search::kFg, #name);
+#define MFG_RESOLVE_LL(name) rt.name = reinterpret_cast<decltype(rt.name)>(GetProcAddress(rt.ll, #name)); complete &= rt.name != nullptr; \
+                             if (!rt.name) rt.outdated.Miss(xess_runtime_search::kLl, #name);
             MFG_XEFG_FUNCTIONS(MFG_RESOLVE_FG)
             MFG_XELL_FUNCTIONS(MFG_RESOLVE_LL)
 #undef MFG_RESOLVE_FG
 #undef MFG_RESOLVE_LL
-            if (!complete) { rt.reason = "runtime_exports_missing"; return; }
+            if (!complete) {
+                rt.outdated.version = xess_runtime_search::ModuleVersion(rt.outdated.file == xess_runtime_search::kFg ? rt.fg : rt.ll);
+                rt.reason = "runtime_exports_missing";
+                return;
+            }
             if (auto originals = gHostOriginals.load()) {
                 void* user = gHostOriginalsUser.load();
 #define MFG_HOST_LL(name) if (auto real = originals(user, #name)) rt.name = reinterpret_cast<decltype(rt.name)>(real); \
@@ -252,15 +243,15 @@ struct HostDevice
     PFN_vkGetInstanceProcAddr gipa = nullptr;
     DeviceFns vk;
     uint32_t family = 0, firstQueue = 0, queueCount = 0;
-    bool calibrated = false;
-    bool presentIds = false;            // vkreflex.1: VK_KHR_present_id and its presentId feature added (Reflex)
+    bool tensorExtensions = false; uint32_t binaryImportSpec = 0, imageViewHandleSpec = 0;
+    bool presentIds = false;            // VK_KHR_present_id and its presentId feature added (Reflex)
     bool presentMetering = false;       // MFGAdaUnlock 1.7: VK_NV_present_metering and its feature added
     uint32_t vendor = 0;
     std::mutex mutex;                   // layer creation, inputs, bridge
-    xvk::ReflexMode reflex;             // vkreflex.1: the Reflex mode last given to the layer (game thread, chain mutex)
-    // vkreflex.1: frame ids run on across the game's swap-chain recreations. XeLL's context and the driver's Reflex state
-    // belong to the device, and an id that starts again at 1 is older than the ones they already saw (No Man's Sky, 23 Oct:
-    // the driver's Reflex frame reports stopped at the recreated chain).
+    xvk::ReflexMode reflex;             // the Reflex mode last given to the layer (game thread, chain mutex)
+    // Frame ids run on across the game's swap-chain recreations. XeLL's context and the driver's Reflex state belong to
+    // the device, and an id that starts again at 1 is older than the ones they already saw (the driver's Reflex frame
+    // reports would stop at the recreated chain).
     std::atomic<uint32_t> lastFrameId{0};
     ComPtr<ID3D12Device> d3d;
     xvk::Device* layer = nullptr;
@@ -269,7 +260,7 @@ struct HostDevice
     ComPtr<ID3D12Fence> bridge;
     uint64_t bridgeValue = 0;
     xell_context_handle_t xell = nullptr;
-    uint32_t xellIntervalUs = 0;        // xemfgsa.5: the XeLL minimum interval the standalone FPS limit last set
+    uint32_t xellIntervalUs = 0;        // the XeLL minimum interval the standalone FPS limit last set
     std::string failure;                // the layer could not be created: native from now on
     // inputs
     uint64_t inputFrames = 0;
@@ -320,7 +311,7 @@ struct FakeChain
     bool latencyHeld = false;
     VkCommandPool pool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> toPresent, toGeneral;
-    // presentqueue.1: the game presents from a queue of another family of the device (idTech's out-of-band present
+    // The game presents from a queue of another family of the device (idTech's out-of-band present
     // queue): the image goes to the host family with an ownership transfer, released on the presenting queue
     // (`release`, a pool of that family) and acquired on the application queue (`acquireForeign`, `pool`).
     uint32_t foreignFamily = UINT32_MAX;
@@ -347,13 +338,13 @@ struct FakeChain
     bool debugViewApplied = false;
     uint64_t lastPresentId = 0;
     std::condition_variable_any presented;
-    // vkreflex.1: the low-latency mode this frame slept in (MfgXeFGVkLatencyMode) and its Anti-Lag 2 limit; counts per
+    // The low-latency mode this frame slept in (MfgXeFGVkLatencyMode) and its Anti-Lag 2 limit; counts per
     // mode for the log.
     uint32_t latencyUsed = MFG_XEFG_VK_LATENCY_XELL;
     uint32_t antiLagMaxFps = 0;
     uint32_t latencyLogged = UINT32_MAX;
     std::array<uint64_t, 3> latencyFrames{};
-    // xemfgsa.6: Dynamic MFG on a standalone chain: its controllers, 1X (generation off, the count kept), whether it ran
+    // Dynamic MFG on a standalone chain: its controllers, 1X (generation off, the count kept), whether it ran
     // last frame, what the game waited for at its last acquisition (the low-latency sleep, XeFG's frame-latency
     // waitable) and present, and the window's refresh rate (looked up every 2 s).
     xemfg_standalone::DynamicFrames dynamic;
@@ -388,7 +379,7 @@ std::unordered_map<VkSwapchainKHR, NativeChain> gNatives;
 std::atomic<uint64_t> gBasePresents{0};
 std::string gLastReason;
 
-// vkreflex.1: the host's low-latency output (hosted::SetLatency), and the modes it asked for before PrepareDevice (their
+// The host's low-latency output (hosted::SetLatency), and the modes it asked for before PrepareDevice (their
 // device extensions are added there), one bit per MfgXeFGVkLatencyMode.
 std::mutex gLatencyMutex;
 MfgXeFGVkLatency gLatency{sizeof(MfgXeFGVkLatency), MFG_XEFG_VK_LATENCY_XELL};
@@ -396,12 +387,12 @@ std::atomic<uint32_t> gLatencyRequested{0};
 // The mode the last frame slept in, and whether that mode applied the FPS limit (the status for the host's limiter).
 std::atomic<uint32_t> gLatencyUsed{MFG_XEFG_VK_LATENCY_XELL};
 std::atomic<bool> gLatencyLimited{false};
-// xemfgsa.5: XeMFG standalone's FPS limit from the menu (presented frames per second; 0 off), and the game's and the
+// XeMFG standalone's FPS limit from the menu (presented frames per second; 0 off), and the game's and the
 // layer's frame rates for the menu.
 std::atomic<uint32_t> gStandaloneFpsLimit{0};
 std::mutex gFpsMutex;
 xemfg_standalone::FpsWindow gFps;
-// xemfgsa.6: XeMFG standalone's Dynamic MFG settings (the most frames and the FPS limit are filled in per frame).
+// XeMFG standalone's Dynamic MFG settings (the most frames and the FPS limit are filled in per frame).
 std::mutex gDynamicMutex;
 xemfg_standalone::DynamicSettings gDynamic;
 
@@ -494,15 +485,16 @@ bool EnsureLayer(HostDevice& host, std::string& reason)
         desc.queueCount = uint32_t(queues.size());
         desc.queues = queues.data();
         desc.programModule = single_module::Self();
-        desc.calibratedTimestamps = host.calibrated;
         desc.presentIds = host.presentIds;
         desc.presentMetering = host.presentMetering;
+        desc.tensorExtensions = host.tensorExtensions; desc.binaryImportSpec = host.binaryImportSpec; desc.imageViewHandleSpec = host.imageViewHandleSpec;
         desc.deviceProcOverride = host.originals;   // OptiScaler-hosted: its unhooked swap chain and present entries
         desc.deviceProcOverrideUser = host.originalsUser;
         HRESULT hr = xvk::CreateDevice(desc, IID_PPV_ARGS(&host.d3d));
         if (FAILED(hr)) throw std::runtime_error("layer_device_" + std::to_string(hr));
         host.layer = static_cast<xvk::Device*>(static_cast<ID3D12Device1*>(host.d3d.Get()));
         xess_mod::SetVulkanHostDevice(host.d3d.Get());
+        InstallConfiguredTensorCores(host.d3d.Get());
         if (FAILED(xvk::CreateFactory(host.d3d.Get(), IID_PPV_ARGS(&host.factory)))) throw std::runtime_error("layer_factory");
         D3D12_COMMAND_QUEUE_DESC queueDesc{D3D12_COMMAND_LIST_TYPE_DIRECT};
         if (FAILED(host.d3d->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&host.appQueue)))) throw std::runtime_error("layer_queue");
@@ -625,7 +617,7 @@ void ReleaseFake(FakeChain& chain)
     chain.retired = true;
 }
 
-// presentqueue.1: a present from `family` (not the host family): per image, a release from that family to the host
+// A present from `family` (not the host family): per image, a release from that family to the host
 // family on the presenting queue (PRESENT_SRC to GENERAL) and the matching acquire on the application queue. Made
 // at the first such present; a chain serves one presenting family.
 bool EnsureForeignFamily(FakeChain& chain, uint32_t family)
@@ -679,7 +671,7 @@ std::shared_ptr<FakeChain> CreateFake(const std::shared_ptr<HostDevice>& hostPtr
     chain->info.pQueueFamilyIndices = nullptr;
     chain->info.queueFamilyIndexCount = 0;
     chain->window = window;
-    // vkswapext.1: FIFO_LATEST_READY (VK_KHR/EXT_present_mode_fifo_latest_ready) is V-Sync too.
+    // FIFO_LATEST_READY (VK_KHR/EXT_present_mode_fifo_latest_ready) is V-Sync too.
     constexpr auto kFifoLatestReady = static_cast<VkPresentModeKHR>(1000361000);
     chain->vsync = info.presentMode == VK_PRESENT_MODE_FIFO_KHR || info.presentMode == VK_PRESENT_MODE_FIFO_RELAXED_KHR ||
                    info.presentMode == kFifoLatestReady;
@@ -693,7 +685,7 @@ std::shared_ptr<FakeChain> CreateFake(const std::shared_ptr<HostDevice>& hostPtr
         return nullptr;
     }
     VkSurfaceKHR surface = info.surface;
-    // vkswapext.1: the game's full-screen-exclusive mode (VK_EXT_full_screen_exclusive, hosted::CreateSwapchain admits
+    // The game's full-screen-exclusive mode (VK_EXT_full_screen_exclusive, hosted::CreateSwapchain admits
     // it only when the host routes the mode calls) applies to the real swap chain on this surface. The game's
     // acquire/release calls on our handle are answered by the host, so application-controlled becomes allowed.
     VkFullScreenExclusiveEXT exclusive = VK_FULL_SCREEN_EXCLUSIVE_DEFAULT_EXT;
@@ -702,12 +694,12 @@ std::shared_ptr<FakeChain> CreateFake(const std::shared_ptr<HostDevice>& hostPtr
                                                                                                    : fse->fullScreenExclusive;
     // The game's surface: XeFG's swap chain takes it over, retiring the game's own chain on it.
     xvk::RegisterSurface(host.d3d.Get(), window, surface, exclusive, info.presentMode);
-    // vkreflex.1: XeFG's frame 0 on this chain is the host's next frame (Reflex names each output by it).
+    // XeFG's frame 0 on this chain is the host's next frame (Reflex names each output by it).
     xvk::SetFrameBase(window, uint64_t(chain->frameId) + 1);
     if (retire) host.layer->SetRetireHint(window, retire);
     // Never HIGH_RES_MV: the host's motion-vector copy is at render size (XeFG wants depth and motion vectors at one
-    // size). Never JITTERED_MV: with it XeFG fails its init with "Invalid internal state" on the MFG port (seen
-    // 21 Oct, before it requests the port's splat programs), so a game's jittered vectors are taken as they are.
+    // size). Never JITTERED_MV: with it XeFG fails its init with "Invalid internal state" on the MFG port (before
+    // it requests the port's splat programs), so a game's jittered vectors are taken as they are.
     chain->initFlags = invertedDepth ? XEFG_SWAPCHAIN_INIT_FLAG_INVERTED_DEPTH : 0;
     const UINT bufferCount = std::clamp<UINT>(info.minImageCount, 2, 8);
     host.layer->SetBackbufferHint({info.imageExtent.width, info.imageExtent.height, format.dxgi, format.image, info.imageUsage});
@@ -751,8 +743,8 @@ std::shared_ptr<FakeChain> CreateFake(const std::shared_ptr<HostDevice>& hostPtr
             result = rt.xefgSwapChainD3D12InitFromSwapChainDesc(chain->fg, window, &desc, nullptr, host.appQueue.Get(), host.factory.Get(), &params);
         }
         if (xvk::MissingProgramCount() != missingBefore) {
-            // presentqueue.1: the set lacks one of the device's programs for good; the game keeps its chains
-            // instead of every recreation running XeFG's init again (an RDR2 log spent 26 s in the first one).
+            // The set lacks one of the device's programs for good; the game keeps its chains
+            // instead of every recreation running XeFG's init again (the first one can take 26 s).
             // Both callers hold host.mutex.
             host.failure = "programs_missing";
             return fail("programs_missing");
@@ -865,11 +857,67 @@ void SetGameFrameGeneration(bool on) noexcept
     if (gGameFrameGeneration.exchange(on) != on) Log("vk_host_game_fg", std::string("\"on\":") + (on ? "true" : "false"));
 }
 
+void SetProvider(bool on) noexcept
+{
+    if (gProvider.exchange(on) != on) Log("vk_provider_config", std::string("\"wanted\":") + (on ? "true" : "false"));
+}
+
+void InstallConfiguredTensorCores(ID3D12Device* device) noexcept
+{
+    try {
+        xefg_cuda::SetLog([](const char* stage, const std::string& fields) noexcept { Log(stage, fields); });
+        std::wstring setting;
+        const bool enabled = optiscaler_host::ReadXefgTensorCores(setting);
+        if (!enabled) {
+            xefg_cuda::ReportVulkan(xefg_cuda::State::Disabled, 0, 0, 0, "optiscaler_ini_off");
+            Log("cuda_route_vk", "\"state\":\"disabled\",\"reason\":\"optiscaler_ini_off\"");
+            return;
+        }
+        xefg_cuda::SetLayerMask(optiscaler_host::ReadXefgTensorCoresMask(setting));
+        xvk::TensorOptions options;
+        options.fullBarriers = optiscaler_host::ReadXefgTensorCoresVulkanBarriers(setting);
+        const auto fatbin = xess_mod::TensorCoreFatbin();
+        std::string reason;
+        if (!xvk::InstallTensorCores(device, fatbin.data(), fatbin.size(), options, reason)) {
+            xefg_cuda::ReportVulkan(xefg_cuda::State::Unavailable, 0, 0, 0, reason.c_str());
+            Log("cuda_route_vk", "\"state\":\"unavailable\",\"reason\":\"" + Escape(reason) + "\"");
+        }
+    } catch (...) {
+        xefg_cuda::ReportVulkan(xefg_cuda::State::Unavailable, 0, 0, 0, "exception");
+        Log("cuda_route_vk", "\"state\":\"unavailable\",\"reason\":\"exception\"");
+    }
+}
+
+HMODULE ProviderRuntime(std::string& reason) noexcept
+{
+    try {
+        Runtime& rt = LoadRuntime();
+        if (!rt.ready) { reason = rt.reason.empty() ? "not_ready" : rt.reason; return nullptr; }
+        return rt.fg;
+    } catch (...) {
+        reason = "exception";
+        return nullptr;
+    }
+}
+
+bool FindProviderDevice(VkDevice device, ProviderDevice& out) noexcept
+{
+    try {
+        std::lock_guard lock(gProviderMutex);
+        auto it = gProviderDevices.find(device);
+        if (it == gProviderDevices.end()) return false;
+        out = {it->second.physical, it->second.instance, it->second.gipa, it->second.family, it->second.tensorExtensions, it->second.binaryImportSpec, it->second.imageViewHandleSpec};
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 void Configure(bool harness, bool standalone, uint32_t frames) noexcept
 {
 #if !MFG_UNLOCK_XEFG_VK_STANDALONE
     // The harness key's takeover stays the harness build's (MFG_UNLOCK_XEFG_VK_STANDALONE); the product takes chains
-    // over only under XeMFG standalone (xemfgsa.1). Under OptiScaler its XeFG_Vk output hosts XeFG (namespace hosted).
+    // over only under XeMFG standalone. Under OptiScaler its XeFG_Vk output hosts XeFG (namespace hosted).
     harness = false;
 #endif
     const bool enabled = harness || standalone;
@@ -888,20 +936,7 @@ void SetStandaloneFpsLimit(uint32_t fps) noexcept
 
 void SetStandaloneDynamic(bool enabled, uint32_t targetFps, int rounding, bool allow1x, bool targetAsCap) noexcept
 {
-    try {
-        std::lock_guard lock(gDynamicMutex);
-        auto next = gDynamic;
-        next.enabled = enabled;
-        next.targetFps = std::min<uint32_t>(targetFps, 1000);
-        next.rounding = std::clamp(rounding, 0, 2);
-        next.allow1x = allow1x;
-        next.targetAsCap = targetAsCap;
-        if (next == gDynamic) return;
-        gDynamic = next;
-        Log("vk_dynamic_config", std::string("\"enabled\":") + (enabled ? "true" : "false") + ",\"target\":" +
-            std::to_string(next.targetFps) + ",\"rounding\":" + std::to_string(next.rounding) + ",\"allow_1x\":" +
-            (allow1x ? "true" : "false") + ",\"target_as_cap\":" + (targetAsCap ? "true" : "false"));
-    } catch (...) {}
+    xemfg_host::ConfigureDynamic(gDynamicMutex, gDynamic, "vk_dynamic_config", enabled, targetFps, rounding, allow1x, targetAsCap);
 }
 
 bool ReplacesFrameGeneration() noexcept
@@ -914,11 +949,45 @@ bool ReplacesFrameGeneration() noexcept
     return false;
 }
 
+// ---------------------------------------------------------------- readiness (xemfglive.1)
+namespace
+{
+// The player's XeSS pair is where the host would load it from (a file search once; nothing is loaded here).
+bool PairInstalled() noexcept
+{
+    static std::once_flag once;
+    static bool found = false;
+    std::call_once(once, [] {
+        try {
+            const auto bases = xess_runtime_search::ReadBases(xess_runtime_search::ModulePath(single_module::Self()),
+                xess_runtime_search::ModulePath(nullptr));
+            found = xess_runtime_search::Find(bases, xess_runtime_search::Order::eVulkan).found != SIZE_MAX;
+        } catch (...) {
+            found = false;
+        }
+        Log("vk_host_ready", std::string("\"pair_installed\":") + (found ? "true" : "false") + ",\"enabled\":" +
+            (gEnabled.load() ? "true" : "false"));
+    });
+    return found;
+}
+
+// Instances and devices are prepared for XeMFG while the switch is off too when the player's pair is installed (not
+// beside OptiScaler, whose XeFG output hosts XeMFG there), so switching on takes the game's chain over within frames
+// (AfterNativePresent's out-of-date) and off gives it back, with no restart. A prepared device only carries the
+// layer's queues, extensions and features; the layer itself starts with the first chain taken over.
+bool Prepared() noexcept
+{
+    return gEnabled.load() || (!optiscaler_host::Detected() && PairInstalled());
+}
+}
+
 // ---------------------------------------------------------------- instance
 const VkInstanceCreateInfo* PrepareInstance(const VkInstanceCreateInfo* info, PFN_vkGetInstanceProcAddr loader,
                                             InstanceEdit& storage) noexcept
 {
-    if (!info || !loader || !gEnabled.load()) return info;
+    if (!gProvider.load() && xess_vulkan_provider::ShimInstalled()) SetProvider(true);
+    // xemfglive.1: prepared while XeMFG could start live (Prepared); vkprov.1: also while the provider is wanted.
+    if (!info || !loader || !(Prepared() || gProvider.load())) return info;
     try {
         auto enumerate = reinterpret_cast<PFN_vkEnumerateInstanceVersion>(loader(VK_NULL_HANDLE, "vkEnumerateInstanceVersion"));
         uint32_t loaderVersion = VK_API_VERSION_1_0;
@@ -997,11 +1066,13 @@ public:
     VkPhysicalDeviceAntiLagFeaturesAMD antiLag{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ANTI_LAG_FEATURES_AMD};
     uint32_t family = 0, firstQueue = 0, queueCount = 0;
     bool calibrated = false;
-    bool presentIds = false;   // vkreflex.1
+    bool tensorExtensions = false; uint32_t binaryImportSpec = 0, imageViewHandleSpec = 0;
+    bool presentIds = false;
     bool presentMetering = false;   // MFGAdaUnlock 1.7
     VkPhysicalDevicePresentMeteringFeaturesNV metering{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_METERING_FEATURES_NV};
     uint32_t vendor = 0;
     bool hosted = false;
+    bool featuresOnly = false;   // vkprov.1: the provider's edit (no queues, no swap-chain or latency changes)
     std::vector<std::pair<uint32_t, uint32_t>> gameQueues;   // the game's own queues: family, count (flags 0)
 };
 
@@ -1027,8 +1098,8 @@ constexpr const char* kEmulatedByAddon[] = {"VK_KHR_present_wait", "VK_KHR_prese
 constexpr const char* kEmulatedWhenHosted[] = {"VK_KHR_present_wait", "VK_KHR_present_wait2", "VK_KHR_present_id", "VK_KHR_present_id2",
                                                "VK_NV_low_latency2", "VK_KHR_swapchain_maintenance1", "VK_EXT_swapchain_maintenance1"};
 
-// vkswapext.1: extensions whose swap-chain entry points the host answers for its chains once it declares the routes
-// (MfgXeFGVkApi::SetHostRoutes); before that (older OptiScaler builds) they keep the device native as before.
+// Extensions whose swap-chain entry points the host answers for its chains once it declares the routes
+// (MfgXeFGVkApi::SetHostRoutes); until then (an OptiScaler build without that call) they keep the device native.
 // VK_KHR_display_swapchain needs no route (vkCreateSharedSwapchainsKHR makes the driver's own chains). Swap-chain
 // options none of these can serve are refused per chain (hosted::CreateSwapchain). VK_EXT_present_timing stays native.
 struct RoutedExtension
@@ -1071,14 +1142,19 @@ struct HostedInstance
     uint32_t apiVersion = 0;
 };
 
-DeviceEditPtr PrepareDeviceImpl(VkPhysicalDevice physical, const VkDeviceCreateInfo* info, const HostedInstance* hosted) noexcept;
+DeviceEditPtr PrepareDeviceImpl(VkPhysicalDevice physical, const VkDeviceCreateInfo* info, const HostedInstance* hosted,
+                                bool featuresOnly = false) noexcept;
 } // namespace
 
 DeviceEditPtr PrepareDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo* info) noexcept
 {
     if (!physical || !info) return nullptr;
-    if (!gEnabled.load()) {
+    if (!gProvider.load() && xess_vulkan_provider::ShimInstalled()) SetProvider(true);
+    // vkprov.1 + xemfglive.1: with the standalone switch off, a wanted provider gets its features-only edit (the only
+    // edit it records its device from); otherwise a device is prepared while XeMFG could start live.
+    if (!(gEnabled.load() || (!gProvider.load() && Prepared()))) {
         gDeviceWhileOff = true;
+        if (gProvider.load()) return PrepareDeviceImpl(physical, info, nullptr, true);
         return nullptr;
     }
     return PrepareDeviceImpl(physical, info, nullptr);
@@ -1096,11 +1172,13 @@ bool RuntimeFilesFound() noexcept
 }
 
 namespace {
-DeviceEditPtr PrepareDeviceImpl(VkPhysicalDevice physical, const VkDeviceCreateInfo* info, const HostedInstance* hosted) noexcept
+DeviceEditPtr PrepareDeviceImpl(VkPhysicalDevice physical, const VkDeviceCreateInfo* info, const HostedInstance* hosted,
+                                bool featuresOnly) noexcept
 {
     try {
         auto edit = DeviceEditPtr(new DeviceEdit);
         edit->hosted = hosted != nullptr;
+        edit->featuresOnly = featuresOnly && !hosted;
         if (hosted) {
             // OptiScaler names the instance and the API version it was created with.
             if (hosted->apiVersion < xvk::kRequiredApiVersion) { Refuse("instance_api_version"); return nullptr; }
@@ -1168,8 +1246,9 @@ DeviceEditPtr PrepareDeviceImpl(VkPhysicalDevice physical, const VkDeviceCreateI
                     names += (names.empty() ? "\"" : ",\"") + Escape(info->ppEnabledExtensionNames[i]) + "\"";
             Log("vk_device_extensions", std::string("\"hosted\":") + (hosted ? "true" : "false") + ",\"enabled\":[" + names + "]");
         }
-        if (!enabled(VK_KHR_SWAPCHAIN_EXTENSION_NAME)) { Refuse("no_swapchain_extension"); return nullptr; }
+        if (!edit->featuresOnly && !enabled(VK_KHR_SWAPCHAIN_EXTENSION_NAME)) { Refuse("no_swapchain_extension"); return nullptr; }
         for (const char* name : kSwapchainExtensionsNotEmulated) {
+            if (edit->featuresOnly) break;   // the provider never touches the game's swap chains
             // MFGAdaUnlock 1.7 (plan F): the addon's vulkan-1 wrappers (native_vulkan.cpp) answer present ids, present
             // wait and VK_NV_low_latency2 (Streamline's Reflex) on the host's own chains.
             const bool emulated = (hosted && (std::any_of(std::begin(kEmulatedWhenHosted), std::end(kEmulatedWhenHosted),
@@ -1189,14 +1268,26 @@ DeviceEditPtr PrepareDeviceImpl(VkPhysicalDevice physical, const VkDeviceCreateI
         std::vector<VkQueueFamilyProperties> families(count);
         familiesFn(physical, &count, families.data());
         const VkDeviceQueueCreateInfo* target = nullptr;
-        for (uint32_t i = 0; i < info->queueCreateInfoCount && !target; ++i) {
+        if (edit->featuresOnly) {
+            // The provider records into the game's own command buffers: its graphics family, nothing added.
+            for (uint32_t i = 0; i < info->queueCreateInfoCount && !target; ++i) {
+                const auto& q = info->pQueueCreateInfos[i];
+                if (q.queueFamilyIndex < families.size() && (families[q.queueFamilyIndex].queueFlags & VK_QUEUE_GRAPHICS_BIT)) target = &q;
+            }
+            if (!target) { Refuse("no_graphics_family"); return nullptr; }
+            edit->family = target->queueFamilyIndex;
+            edit->queues.assign(info->pQueueCreateInfos, info->pQueueCreateInfos + info->queueCreateInfoCount);
+            target = nullptr;
+        }
+        for (uint32_t i = 0; i < info->queueCreateInfoCount && !target && !edit->featuresOnly; ++i) {
             const auto& q = info->pQueueCreateInfos[i];
             if (q.queueFamilyIndex < families.size() && (families[q.queueFamilyIndex].queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
                 (families[q.queueFamilyIndex].queueFlags & VK_QUEUE_COMPUTE_BIT) && !q.flags &&
                 presentation(physical, q.queueFamilyIndex))
                 target = &q;
         }
-        if (!target) { Refuse("no_graphics_present_family"); return nullptr; }
+        if (!target && !edit->featuresOnly) { Refuse("no_graphics_present_family"); return nullptr; }
+        if (!edit->featuresOnly) {
         const uint32_t available_ = families[target->queueFamilyIndex].queueCount;
         if (available_ < target->queueCount + 4) { Refuse("family_queue_count"); return nullptr; }
         edit->family = target->queueFamilyIndex;
@@ -1216,16 +1307,35 @@ DeviceEditPtr PrepareDeviceImpl(VkPhysicalDevice physical, const VkDeviceCreateI
             q.queueCount += edit->queueCount;
             q.pQueuePriorities = edit->priorities[i].data();
         }
+        }   // !featuresOnly
         // Extensions
         edit->extensions.assign(info->ppEnabledExtensionNames, info->ppEnabledExtensionNames + info->enabledExtensionCount);
         if (!enabled(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME)) edit->extensions.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+        // NVX entry points can be returned even when disabled: retain explicit enablement.
+        if (edit->vendor == 0x10DE) {
+            for (const auto& extension : available) {
+                if (!strcmp(extension.extensionName, VK_NVX_BINARY_IMPORT_EXTENSION_NAME)) edit->binaryImportSpec = extension.specVersion;
+                if (!strcmp(extension.extensionName, VK_NVX_IMAGE_VIEW_HANDLE_EXTENSION_NAME)) edit->imageViewHandleSpec = extension.specVersion;
+            }
+            std::wstring setting;
+            const bool wanted = optiscaler_host::ReadXefgTensorCores(setting);
+            if (wanted && edit->binaryImportSpec && edit->imageViewHandleSpec) {
+                for (const char* name : {VK_NVX_BINARY_IMPORT_EXTENSION_NAME, VK_NVX_IMAGE_VIEW_HANDLE_EXTENSION_NAME})
+                    if (!enabled(name)) edit->extensions.push_back(name);
+                edit->tensorExtensions = true;
+            }
+            Log("vk_tensor_extensions", "\"offered\":" + std::string(edit->binaryImportSpec && edit->imageViewHandleSpec ? "true" : "false")
+                + ",\"enabled\":" + (edit->tensorExtensions ? "true" : "false")
+                + ",\"binary_import_spec\":" + std::to_string(edit->binaryImportSpec)
+                + ",\"image_view_handle_spec\":" + std::to_string(edit->imageViewHandleSpec));
+        }
         if (enabled(VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) || enabled(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME))
             edit->calibrated = true;
         else if (offered(VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME)) { edit->extensions.push_back(VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME); edit->calibrated = true; }
         else if (offered(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME)) { edit->extensions.push_back(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME); edit->calibrated = true; }
-        // vkreflex.1: the host's low-latency output asked for Reflex or Anti-Lag 2 before this call. Their extensions
+        // The host's low-latency output asked for Reflex or Anti-Lag 2 before this call. Their extensions
         // and features go on the device where the GPU has them (the host's own additions find them enabled).
-        const uint32_t latency = hosted ? gLatencyRequested.load() : 0;
+        const uint32_t latency = hosted && !edit->featuresOnly ? gLatencyRequested.load() : 0;
         bool reflexFeatures = false, antiLagFeatures = false;
         if ((latency & (1u << MFG_XEFG_VK_LATENCY_REFLEX)) && offered(VK_NV_LOW_LATENCY_2_EXTENSION_NAME) &&
             offered(VK_KHR_PRESENT_ID_EXTENSION_NAME)) {
@@ -1311,7 +1421,7 @@ DeviceEditPtr PrepareDeviceImpl(VkPhysicalDevice physical, const VkDeviceCreateI
         }
         edit->info.pNext = head;
         edit->physical = physical;
-        // presentqueue.1: the game's queues (family, count, create flags, family flags, presentation support).
+        // The game's queues (family, count, create flags, family flags, presentation support).
         std::string gameQueues;
         for (uint32_t i = 0; i < info->queueCreateInfoCount && i < 16; ++i) {
             const auto& q = info->pQueueCreateInfos[i];
@@ -1351,6 +1461,15 @@ namespace {
 bool DeviceCreatedImpl(DeviceEditPtr edit, VkDevice device, hosted::OriginalProc originals, void* user) noexcept
 {
     if (!edit || !device) return false;
+    if (edit->featuresOnly) {
+        // vkprov.1: the provider finds this device's instance and family here (ProviderDevice).
+        try {
+            std::lock_guard lock(gProviderMutex);
+            gProviderDevices[device] = {edit->physical, edit->instance, edit->gipa, edit->family, edit->tensorExtensions, edit->binaryImportSpec, edit->imageViewHandleSpec};
+            Log("vk_provider_device", "\"family\":" + std::to_string(edit->family) + ",\"vendor\":" + std::to_string(edit->vendor));
+        } catch (...) {}
+        return true;
+    }
     try {
         auto host = std::make_shared<HostDevice>();
         host->hosted = edit->hosted;
@@ -1367,7 +1486,8 @@ bool DeviceCreatedImpl(DeviceEditPtr edit, VkDevice device, hosted::OriginalProc
         host->family = edit->family;
         host->firstQueue = edit->firstQueue;
         host->queueCount = edit->queueCount;
-        host->calibrated = edit->calibrated;
+        host->tensorExtensions = edit->tensorExtensions;
+        host->binaryImportSpec = edit->binaryImportSpec; host->imageViewHandleSpec = edit->imageViewHandleSpec;
         host->presentIds = edit->presentIds;
         host->presentMetering = edit->presentMetering;
         host->vendor = edit->vendor;
@@ -1614,7 +1734,7 @@ bool GetSwapchainImagesImpl(VkSwapchainKHR swapchain, uint32_t* count, VkImage* 
     return true;
 }
 
-// ---------------------------------------------------------------- vkreflex.1: the host's low-latency output
+// ---------------------------------------------------------------- the host's low-latency output
 constexpr uint64_t kLatencySleepTimeoutNs = 500'000'000ull;
 constexpr const char* kLatencyNames[] = {"xell", "reflex", "antilag2"};
 
@@ -1630,11 +1750,15 @@ void LatencySleep(HostDevice& host, FakeChain& chain, uint32_t frameId)
         latency = gLatency;
     }
     const uint32_t perBase = chain.enabledApplied ? std::max<uint32_t>(chain.framesApplied, 1) : 1;
-    // xemfgsa.5: without OptiScaler's latency output, XeMFG standalone's limit (the menu's FPS limit); xemfgsa.6: or
+    // Without OptiScaler's latency output, XeMFG standalone's limit (the menu's FPS limit), or
     // Dynamic MFG's target with "Use target as cap".
     const double capFps = chain.dynamic.CapFps();
-    const uint32_t standaloneFps = chain.hosted || !gStandalone.load() ? 0
+    uint32_t standaloneFps = chain.hosted || !gStandalone.load() ? 0
         : capFps > 0.0 ? uint32_t(capFps + 0.5) : gStandaloneFpsLimit.load();
+    // pacerfix.2: with neither, while the flip queue presents with V-Sync, just under the display's refresh
+    // (standalone_policy.h AutoCapFps); as the D3D12 host.
+    const bool automatic = !chain.hosted && gStandalone.load() && !standaloneFps && chain.enabledApplied;
+    if (automatic) standaloneFps = xemfg_standalone::AutoCapFps(sdk_pacing::VsyncRefreshNs());
     const float limit = latency.outputFpsLimit > 0.0f ? latency.outputFpsLimit : float(standaloneFps);
     xvk::ReflexMode reflex;
     reflex.on = latency.mode == MFG_XEFG_VK_LATENCY_REFLEX;
@@ -1658,7 +1782,7 @@ void LatencySleep(HostDevice& host, FakeChain& chain, uint32_t frameId)
     bool xellLimited = false;
     if (used == MFG_XEFG_VK_LATENCY_XELL) {
         xess_mod::VulkanHostCallScope scope;
-        // xemfgsa.5: a standalone chain's FPS limit as XeLL's minimum interval, which XeLL holds for the frames XeFG
+        // A standalone chain's FPS limit as XeLL's minimum interval, which XeLL holds for the frames XeFG
         // presents (OptiScaler's chains keep their own XeLL setup).
         if (!chain.hosted) {
             const uint32_t interval = xemfg_standalone::LimitIntervalUs(standaloneFps);
@@ -1669,7 +1793,8 @@ void LatencySleep(HostDevice& host, FakeChain& chain, uint32_t frameId)
                 const auto result = gRuntime.xellSetSleepMode(host.xell, &sleep);
                 if (result == XELL_RESULT_SUCCESS) host.xellIntervalUs = interval;
                 Log("vk_fps_limit", "\"fps\":" + std::to_string(standaloneFps) + ",\"per_base\":" + std::to_string(perBase) +
-                    ",\"interval_us\":" + std::to_string(interval) + ",\"result\":" + std::to_string(int(result)));
+                    ",\"interval_us\":" + std::to_string(interval) + ",\"auto\":" +
+                    (automatic && standaloneFps ? "true" : "false") + ",\"result\":" + std::to_string(int(result)));
             }
             xellLimited = host.xellIntervalUs != 0;
         }
@@ -1714,8 +1839,8 @@ bool AcquireNextImageImpl(VkSwapchainKHR swapchain, uint64_t timeout, VkSemaphor
             return true;
         }
         const uint32_t frameId = chain->frameId + 1;
-        // The frame start's sleep (XeLL, or the host's Reflex / Anti-Lag 2: vkreflex.1), then XeFG's frame-latency
-        // waitable. xemfgsa.6: both timed, as waits Dynamic MFG reads.
+        // The frame start's sleep (XeLL, or the host's Reflex / Anti-Lag 2), then XeFG's frame-latency
+        // waitable. Both timed, as waits Dynamic MFG reads.
         const int64_t sleepStart = Now();
         FakeChain::AcquireWait waiting{*chain};
         bool gameSlept = false;   // MFGAdaUnlock 1.7.1
@@ -1866,7 +1991,7 @@ bool QueuePresentImpl(VkQueue queue, const VkPresentInfoKHR* info, VkResult& res
     bool waitsConsumed = false;   // the bridge batch took the game's semaphores
     auto finish = [&](VkResult value) {
         if (!waitsConsumed && (presentFence || info->waitSemaphoreCount)) {
-            // Like a rejected present: its semaphore waits still execute (presentqueue.1: also without a present
+            // Like a rejected present: its semaphore waits still execute (also without a present
             // fence, so the game's binary semaphores are unsignaled again) and its fence is signaled after them.
             std::vector<VkSemaphoreSubmitInfo> waits;
             for (uint32_t i = 0; i < info->waitSemaphoreCount; ++i)
@@ -1892,10 +2017,9 @@ bool QueuePresentImpl(VkQueue queue, const VkPresentInfoKHR* info, VkResult& res
             chain->broken = true;
             return finish(VK_ERROR_OUT_OF_DATE_KHR);
         }
-        // presentqueue.1: any queue of the device may present (idTech presents from an out-of-band queue of another
-        // family); one the host does not know keeps the game's own chains for the rest of the session. Before, both
-        // only released the chain, which the game recreated and the host took over again at once: a loop with no
-        // frame on screen (Doom: The Dark Ages, 22 Oct).
+        // Any queue of the device may present (idTech presents from an out-of-band queue of another family); one
+        // the host does not know keeps the game's own chains for the rest of the session. Only releasing the chain
+        // would loop with no frame on screen: the game recreates it and the host takes it over again at once.
         uint32_t presentFamily = UINT32_MAX;
         bool knownQueue = false;
         {
@@ -2012,12 +2136,12 @@ bool QueuePresentImpl(VkQueue queue, const VkPresentInfoKHR* info, VkResult& res
                          rt.xefgSwapChainD3D12TagFrameResource(chain->fg, nullptr, frameId, &motion) == XEFG_SWAPCHAIN_RESULT_SUCCESS &&
                          rt.xefgSwapChainTagFrameConstants(chain->fg, frameId, &constants) == XEFG_SWAPCHAIN_RESULT_SUCCESS;
             }
-            // Hosted chains: OptiScaler's FG switch and frame count (0 interpolated frames = off). XeMFG standalone
-            // (xemfgsa.1): the game's own DLSS-G switch, when it drives one.
+            // Hosted chains: OptiScaler's FG switch and frame count (0 interpolated frames = off). XeMFG standalone:
+            // the game's own DLSS-G switch, when it drives one.
             const bool gameSwitch = chain->hosted || !gStandalone.load() || !gDlssgSeen.load() || gGameFrameGeneration.load();
             const bool canGenerate = tagged && gameSwitch && (!chain->hosted || (chain->userEnabled && chain->targetFrames >= 2));
             uint32_t frames = std::clamp<uint32_t>(chain->hosted ? chain->targetFrames : gFrames.load(), 2, 6);
-            // xemfgsa.6: XeMFG standalone's Dynamic MFG picks this frame's count, up to the frames set (1 = generation
+            // XeMFG standalone's Dynamic MFG picks this frame's count, up to the frames set (1 = generation
             // off; hosted chains take OptiScaler's own Dynamic MFG count above). As on the D3D12 host.
             xemfg_standalone::DynamicSettings dynamic;
             {
@@ -2050,9 +2174,13 @@ bool QueuePresentImpl(VkQueue queue, const VkPresentInfoKHR* info, VkResult& res
                 dynamicOff = wanted <= 1;
                 if (!dynamicOff) frames = wanted;
                 chain->dynamicRan = true;
+                // autofps.1: DLSS 5 Auto follows this target while there is one (frame_gen_target.h); 1X counts when allowed.
+                frame_gen_target::Publish(frame_gen_target::Source::eXemfg, chain->dynamic.TargetFps() > 0.0, float(chain->dynamic.TargetFps()),
+                    dynamic.allow1x && !chain->dynamic.CapActive() ? 1u : 2u, dynamic.maxFrames);
             } else {
                 if (!dynamic.enabled && chain->dynamic.Active()) chain->dynamic.Reset();
                 chain->dynamicRan = false;
+                frame_gen_target::Publish(frame_gen_target::Source::eXemfg, false, 0.0f, 0, 0);
             }
             const bool enabled = canGenerate && !dynamicOff;
             // MFGAdaUnlock 1.7: the driver's present metering takes this frame's batch (not under V-Sync, as on D3D12).
@@ -2072,14 +2200,14 @@ bool QueuePresentImpl(VkQueue queue, const VkPresentInfoKHR* info, VkResult& res
                 rt.xefgSwapChainEnableDebugFeature(chain->fg, XEFG_SWAPCHAIN_DEBUG_FEATURE_TAG_INTERPOLATED_FRAMES,
                                                    chain->debugView ? 1 : 0, nullptr) == XEFG_SWAPCHAIN_RESULT_SUCCESS) {
                 chain->debugViewApplied = chain->debugView;
-                // presentqueue.1: in the log, as XeFG's purple bars were taken for a broken output (RDR2, 22 Oct).
+                // In the log, since XeFG's purple debug bars look like a broken output.
                 Log("vk_debug_view", std::string("\"enabled\":") + (chain->debugView ? "true" : "false"));
             }
             rt.xefgSwapChainSetPresentId(chain->fg, frameId);
             rt.xellAddMarkerData(host.xell, frameId, XELL_RENDERSUBMIT_END);
             rt.xellAddMarkerData(host.xell, frameId, XELL_PRESENT_START);
         }
-        // vkreflex.1: the host's output sees the game's present of this frame (XeFG's outputs are its out-of-band presents).
+        // The host's output sees the game's present of this frame (XeFG's outputs are its out-of-band presents).
         if (chain->latencyUsed == MFG_XEFG_VK_LATENCY_REFLEX) {
             xvk::ReflexMarker(chain->window, frameId, VK_LATENCY_MARKER_RENDERSUBMIT_END_NV);
             xvk::ReflexMarker(chain->window, frameId, VK_LATENCY_MARKER_PRESENT_START_NV);
@@ -2093,7 +2221,7 @@ bool QueuePresentImpl(VkQueue queue, const VkPresentInfoKHR* info, VkResult& res
         }
         const int64_t presentStart = Now();
         const HRESULT presented = chain->proxy->Present(chain->vsync ? 1 : 0, chain->vsync ? 0 : DXGI_PRESENT_ALLOW_TEARING);
-        chain->lastPresentMs = Milliseconds(Now() - presentStart);   // xemfgsa.6: a wait Dynamic MFG reads
+        chain->lastPresentMs = Milliseconds(Now() - presentStart);   // a wait Dynamic MFG reads
         if (chain->latencyUsed == MFG_XEFG_VK_LATENCY_REFLEX) xvk::ReflexMarker(chain->window, frameId, VK_LATENCY_MARKER_PRESENT_END_NV);
         {
             xess_mod::VulkanHostCallScope scope;
@@ -2104,7 +2232,7 @@ bool QueuePresentImpl(VkQueue queue, const VkPresentInfoKHR* info, VkResult& res
         chain->presentsDone = chain->presents;   // MFGAdaUnlock 1.7.1
         ++gBasePresents;
         {
-            std::lock_guard fpsLock(gFpsMutex);   // xemfgsa.5
+            std::lock_guard fpsLock(gFpsMutex);
             gFps.Add(GetTickCount64(), gBasePresents.load(), xvk::PresentCount());
         }
         // The game's present id (VK_KHR_present_id/present_id2): its present wait on this chain returns once the
@@ -2585,7 +2713,7 @@ Snapshot ReadSnapshot() noexcept
         snapshot.latencyLimited = gLatencyLimited.load();
         snapshot.fpsLimit = gStandaloneFpsLimit.load();
         {
-            std::lock_guard fpsLock(gFpsMutex);   // xemfgsa.5
+            std::lock_guard fpsLock(gFpsMutex);
             snapshot.baseFpsMilli = gFps.baseMilli;
             snapshot.outputFpsMilli = gFps.outputMilli;
             snapshot.fpsAgeMs = gFps.sampleMs ? GetTickCount64() - gFps.sampleMs : UINT64_MAX;
@@ -2594,7 +2722,7 @@ Snapshot ReadSnapshot() noexcept
         snapshot.deviceReady = !gDevices.empty();
         for (const auto& [handle, chain] : gFakes) {
             snapshot.active = true;
-            snapshot.frames = chain->dynamicOff ? 1 : chain->framesApplied;   // xemfgsa.6: Dynamic MFG's 1X
+            snapshot.frames = chain->dynamicOff ? 1 : chain->framesApplied;   // Dynamic MFG's 1X
             snapshot.dynamic = chain->dynamicRan;
             snapshot.dynamicCap = chain->dynamicRan && chain->dynamic.CapActive();
             snapshot.dynamicTargetMilli = chain->dynamicRan ? uint32_t(chain->dynamic.TargetFps() * 1000.0 + 0.5) : 0;
@@ -2613,6 +2741,13 @@ Snapshot ReadSnapshot() noexcept
             snapshot.runtimeSearch = xess_runtime_search::Utf8(gRuntime.search.recommended.wstring());
             snapshot.runtimeGame = xess_runtime_search::Utf8(gRuntime.search.gameFolder.wstring());
             snapshot.runtimeMisnamed = xess_runtime_search::Utf8(gRuntime.search.misnamed);
+            // oldruntime.1: a searched pair short of exports (OptiScaler's own pair has no search and stays unnamed).
+            if (gRuntime.outdated.file && !gRuntime.search.folders.empty()) {
+                snapshot.runtimeOld = xess_runtime_search::Utf8(gRuntime.folder);
+                snapshot.runtimeOldFile = xess_runtime_search::Utf8(gRuntime.outdated.file);
+                snapshot.runtimeOldVersion = gRuntime.outdated.version;
+                snapshot.runtimeNewer = xess_runtime_search::Utf8(xess_runtime_search::NewerPairFolder(gRuntime.search).wstring());
+            }
         }
     } catch (...) {}
     return snapshot;
@@ -2650,7 +2785,7 @@ VkResult CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR* info, 
                                                         VK_SWAPCHAIN_CREATE_DEFERRED_MEMORY_ALLOCATION_BIT_KHR;
         FormatChoice format;
         std::string reason;
-        // vkswapext.1: chain options of the routed extensions. Full-screen exclusive goes to the real swap chain
+        // Chain options of the routed extensions. Full-screen exclusive goes to the real swap chain
         // (CreateFake); the ones the engine's chain can't serve keep the game's own chain.
         const uint32_t routes = gHostRoutesDeclared.load() ? gHostRoutes.load() : 0;
         const auto* counters = FindStruct<VkSwapchainCounterCreateInfoEXT>(info->pNext, VK_STRUCTURE_TYPE_SWAPCHAIN_COUNTER_CREATE_INFO_EXT);
@@ -2706,7 +2841,7 @@ VkResult CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR* info, 
             host->active = chain;
         }
         NoteReason("active");
-        // vkswapext.1: what the game asked of the chain beyond the basics (the routed extensions' options).
+        // What the game asked of the chain beyond the basics (the routed extensions' options).
         {
             const auto* fse = FindStruct<VkSurfaceFullScreenExclusiveInfoEXT>(info->pNext, VK_STRUCTURE_TYPE_SURFACE_FULL_SCREEN_EXCLUSIVE_INFO_EXT);
             const auto* hdr = FindStruct<VkSwapchainDisplayNativeHdrCreateInfoAMD>(info->pNext, VK_STRUCTURE_TYPE_SWAPCHAIN_DISPLAY_NATIVE_HDR_CREATE_INFO_AMD);

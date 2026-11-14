@@ -1,5 +1,5 @@
 #pragma once
-// xemfgsa.6 (V1.7.0): XeMFG standalone's Dynamic MFG count. Our own controller from the OptiScaler XeFG output's
+// XeMFG standalone's Dynamic MFG count. Our own controller from the OptiScaler XeFG output's
 // Dynamic MFG (fork commit fe47b437, framegen/xefg/XeFG_DynamicCount.h, the optiscaler/OptiScaler#1220 line), kept
 // unchanged below so the two stay one. Where its comments say OptiScaler, read the host that drives it here
 // (xess/xemfg_dynamic.h): the game's waits are its XeLL sleep and XeFG's Present in the XeMFG host, the FPS limit is

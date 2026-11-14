@@ -1,6 +1,6 @@
 #pragma once
-// xemfgsa.6 (V1.7.0): what Dynamic MFG asks of the game's window (xemfg_dynamic.h, both standalone hosts), as our
-// OptiScaler fork's XeFG_DynamicMFG does: whether it is in front, and its display's refresh rate.
+// What Dynamic MFG asks of the game's window (xemfg_dynamic.h, both standalone hosts), as our OptiScaler fork's
+// XeFG_DynamicMFG does: whether it is in front, and its display's refresh rate.
 #include <Windows.h>
 #include <cstdint>
 
