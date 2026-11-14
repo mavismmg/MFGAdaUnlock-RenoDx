@@ -137,6 +137,9 @@ inline std::atomic<int> g_hooks_installed{0}, g_hooks_failed{0};
 inline std::atomic<uint64_t> g_last_evaluate_tick{0};
 inline std::atomic<int> g_idle{0};
 inline std::atomic<uint32_t> g_idle_logged{0};
+// 1.10.0 (plan XMX/VRAM, item 1): what XMX's own copies allocated this session (vram_timeline.hpp).
+inline std::atomic<uint64_t> g_copy_bytes{0};
+inline std::atomic<uint32_t> g_copy_resources{0};
 inline std::atomic<uint32_t> g_frames_limit{0};  // the model's limit once a game asks for more
 // 1.8.3: what the generator saw over the last 10 s, outside Log's cap of 48 lines
 // (Ghost of Tsushima: the first evaluates had 1x1 depth and motion and a reset,
@@ -297,6 +300,8 @@ inline ComPtr<ID3D12Resource> Texture(ID3D12Device* device, D3D12_RESOURCE_DESC 
   ComPtr<ID3D12Resource> resource;
   if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, initial, nullptr, IID_PPV_ARGS(&resource))))
     return nullptr;
+  g_copy_bytes.fetch_add(device->GetResourceAllocationInfo(0, 1, &desc).SizeInBytes, std::memory_order_relaxed);
+  g_copy_resources.fetch_add(1, std::memory_order_relaxed);
   return resource;
 }
 inline void Barrier(ID3D12GraphicsCommandList* list, ID3D12Resource* resource, D3D12_RESOURCE_STATES from,
@@ -537,7 +542,9 @@ inline void Summarize(const NVSDK_NGX_Parameter* params, bool generated, policy:
           Shape(params, "DLSSG.HUDLess") + " backbuffer " + Shape(params, "DLSSG.Backbuffer") + "; mv scale " +
           std::to_string(Value<float>(params, "DLSSG.MvecScaleX", 0.f)) + "," + std::to_string(Value<float>(params, "DLSSG.MvecScaleY", 0.f)) +
           " reset " + std::to_string(Value<unsigned int>(params, "DLSSG.Reset", 0)) + " frames " +
-          std::to_string(Value<unsigned int>(params, "DLSSG.MultiFrameCount", 0));
+          std::to_string(Value<unsigned int>(params, "DLSSG.MultiFrameCount", 0)) + "; copies " +
+          std::to_string((g_copy_bytes.load(std::memory_order_relaxed) + (1u << 19)) >> 20) + " MiB in " +
+          std::to_string(g_copy_resources.load(std::memory_order_relaxed));
   if (summary.lines++ < 60) reshade::log::message(reshade::log::level::info, ("mfgunlock: xmx " + text).c_str());
   const auto lines = summary.lines;
   summary = {};

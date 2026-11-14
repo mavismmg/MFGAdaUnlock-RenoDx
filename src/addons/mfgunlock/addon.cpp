@@ -146,6 +146,7 @@
 #include "advanced_settings.hpp"
 #include "streamline_log.hpp"
 #include "crash_record.hpp"
+#include "vram_timeline.hpp"
 
 #include <deps/imgui/imgui.h>
 #include <include/reshade.hpp>
@@ -823,6 +824,7 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
   UpdateLatencyGuard(swapchain);
   mfgunlock::framecount::PublishLatencyGuardView();
   UpdateVramDiagnostics(swapchain);
+  SampleFrameGenerationVram(swapchain);
   WarnCreateMissingOnce();
   CheckDeviceRemoved(swapchain);
   StartDiscoveryWorker();

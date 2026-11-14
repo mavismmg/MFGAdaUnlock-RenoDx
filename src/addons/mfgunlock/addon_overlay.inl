@@ -518,7 +518,7 @@ std::string FrameGenChainReport() {
          [] {  // 1.10.0 (dashdogy A1): only when NGX's requirements query failed
            const std::string failure = mfgunlock::xmx::preada::RequirementsReport();
            return failure.empty() ? std::string() : "\nchain_ngx_requirements=" + failure;
-         }() + "\nchain_generator=" +
+         }() + "\nchain_vram=" + FrameGenerationVramReport() + "\nchain_generator=" +
          FrameGenChainGenerator() + "\n";
 }
 // 1.10.0 (plan 1.4): what a support report needs to say about this PC and

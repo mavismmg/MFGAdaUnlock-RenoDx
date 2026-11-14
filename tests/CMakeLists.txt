@@ -35,6 +35,10 @@ add_test(NAME i18n COMMAND i18n_tests)
 add_executable(ngx_requirements_tests ngx_requirements_tests.cpp)
 target_compile_features(ngx_requirements_tests PRIVATE cxx_std_20)
 add_test(NAME ngx_requirements COMMAND ngx_requirements_tests)
+# 1.10.0 (plan XMX/VRAM, item 1): the cost of turning frame generation on.
+add_executable(vram_timeline_tests vram_timeline_tests.cpp)
+target_compile_features(vram_timeline_tests PRIVATE cxx_std_20)
+add_test(NAME vram_timeline COMMAND vram_timeline_tests)
 # 1.10.0 (dashdogy B1): the opt-in crash record and dump.
 add_executable(crash_record_tests crash_record_tests.cpp)
 target_compile_definitions(crash_record_tests PRIVATE NOMINMAX UNICODE _UNICODE)

@@ -585,6 +585,55 @@ void UpdateVramDiagnostics(reshade::api::swapchain* swapchain) {
   }
 }
 
+// 1.10.0 (plan XMX/VRAM, item 1): the cost of turning frame generation on,
+// sampled with or without the panel open, until the measurement window ends.
+SRWLOCK g_vram_timeline_lock = SRWLOCK_INIT;
+mfgunlock::vramtimeline::Timeline g_vram_timeline;
+std::string FrameGenerationVramReport();
+void SampleFrameGenerationVram(reshade::api::swapchain* swapchain) {
+  if (swapchain == nullptr || swapchain != g_primary_swapchain.load(std::memory_order_acquire)) return;
+  const ULONGLONG now = GetTickCount64();
+  static ULONGLONG next_sample = 0;
+  if (now < next_sample) return;
+  next_sample = now + 1000;
+  const uint64_t first_on = mfgunlock::xmx::preada::g_first_on_tick.load(std::memory_order_acquire);
+  AcquireSRWLockShared(&g_vram_timeline_lock);
+  const bool done = g_vram_timeline.Done(now, first_on);
+  ReleaseSRWLockShared(&g_vram_timeline_lock);
+  if (done) {
+    // Once, so the log carries it without the panel (tools/measure_fg_vram.py reads it).
+    static std::atomic_bool logged{false};
+    if (!logged.exchange(true)) {
+      const std::string line = "frame generation VRAM: " + FrameGenerationVramReport();
+      reshade::log::message(reshade::log::level::info, ("mfgunlock: " + line).c_str());
+      // The measurement tool only (MFG_VRAM_LOG=1): ReShade drops an early-loaded
+      // add-on's lines in NVIDIA's Streamline Sample, so it also goes to a file.
+      wchar_t wanted[4]{};
+      if (GetEnvironmentVariableW(L"MFG_VRAM_LOG", wanted, 4) != 0 && wanted[0] == L'1')
+        if (FILE* f = _wfopen((mfgunlock::backend::Directory() / L"MFGAdaUnlock-vram.txt").c_str(), L"w")) {
+          fputs((line + "\n").c_str(), f);
+          fclose(f);
+        }
+    }
+    return;
+  }
+  auto* device = swapchain->get_device();
+  if (device == nullptr || device->get_api() == reshade::api::device_api::vulkan) return;
+  DXGI_QUERY_VIDEO_MEMORY_INFO local{};
+  if (!QueryVideoMemory(device, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, local)) return;
+  AcquireSRWLockExclusive(&g_vram_timeline_lock);
+  g_vram_timeline.Sample(now, first_on, local.CurrentUsage);
+  ReleaseSRWLockExclusive(&g_vram_timeline_lock);
+}
+std::string FrameGenerationVramReport() {
+  AcquireSRWLockShared(&g_vram_timeline_lock);
+  const auto timeline = g_vram_timeline;
+  ReleaseSRWLockShared(&g_vram_timeline_lock);
+  return mfgunlock::vramtimeline::Describe(
+      timeline, mfgunlock::xmx::generator::g_copy_bytes.load(std::memory_order_relaxed),
+      mfgunlock::xmx::generator::g_copy_resources.load(std::memory_order_relaxed));
+}
+
 mfgunlock::pacing::MarkerHealth AssessReflexMarkers(
     const mfgunlock::nvapistatus::GuardObservation& observation) {
   using mfgunlock::pacing::MarkerHealth;
