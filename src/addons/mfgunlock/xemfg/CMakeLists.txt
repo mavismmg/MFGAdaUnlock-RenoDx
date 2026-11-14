@@ -638,10 +638,12 @@ if(EXISTS "${XEMFG_VULKAN_HEADERS}/vulkan/vulkan.h" AND EXISTS "${XEMFG_XVK_PROG
   # The Vulkan host (vendor/xvkhost, same release) and the addon's vulkan-1 and
   # NGX Vulkan hooks (native_vulkan.cpp). The program set is embedded as RCDATA
   # 7400+ in the addon itself (vk_host passes its own module to xvk).
-  target_sources(mfgunlock_native_xemfg PRIVATE vendor/xvkhost/vk_host.cpp vendor/xvkhost/xess/host_xell_binding.cpp native_vulkan.cpp
+  target_sources(mfgunlock_native_xemfg PRIVATE vendor/xvkhost/vk_host.cpp vendor/xvkhost/xess/host_xell_binding.cpp
+    vendor/xvkhost/vk_provider.cpp vendor/xvkhost/xefg_internal.cpp vendor/xvkhost/xess/ngx_provider_local.cpp native_vulkan.cpp
     "${XEMFG_XVK_GENERATED}/vk_input_copy_spv.h" "${XEMFG_XVK_GENERATED}/embedded_xvk_programs.rc")
   target_include_directories(mfgunlock_native_xemfg PRIVATE vendor/xvkhost)
-  target_compile_definitions(mfgunlock_native_xemfg PRIVATE MFGUNLOCK_XEMFG_VULKAN)
+  # 1.10.0: the provider headers include vulkan.h before xvk.h could select the Win32 platform.
+  target_compile_definitions(mfgunlock_native_xemfg PRIVATE MFGUNLOCK_XEMFG_VULKAN VK_USE_PLATFORM_WIN32_KHR)
   target_link_libraries(mfgunlock_native_xemfg PRIVATE xemfg_xvk)
   add_executable(xemfg_vulkan_policy_tests "${CMAKE_SOURCE_DIR}/xemfg_vulkan_policy_tests.cpp")
   target_include_directories(xemfg_vulkan_policy_tests PRIVATE "${XEMFG_VULKAN_HEADERS}")

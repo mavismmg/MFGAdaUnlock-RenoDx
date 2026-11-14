@@ -31,6 +31,16 @@ void SetFrames(uint32_t multiplier) noexcept;
 void SetGameFrameGeneration(bool on) noexcept;
 // NVSDK_NGX_VULKAN_* hooks once _nvngx.dll is mapped.
 void DiscoverNgx() noexcept;
+// 1.10.0 (plan XMX/Vulkan/VRAM, item 3): XMX on Vulkan, with the DLSS-G backend selected and
+// [DLSSG] XmxGenerator=1 and XmxVulkan=1. dashdogy's Vulkan DLSS-G provider (vendor/xvkhost/vk_provider.cpp,
+// MIT) replaces NVIDIA's frame generation feature: XeFG's ported model records into each evaluation's command
+// buffer and Streamline's DLSS-G still presents and paces. NVIDIA's feature is never created. The host only
+// adds what the provider needs to the game's device (its features-only edit); it takes no swap chain.
+bool XmxProviderWanted() noexcept;
+// ReShade's create_device for Vulkan in that mode: the vulkan-1 hooks and the Vulkan 1.3 instance.
+bool BeginXmxProvider(uint32_t& apiVersion) noexcept;
+// For the support report: "", or what the provider did (created, refused and why, evaluations).
+std::string XmxProviderReport() noexcept;
 // The panel's view of the Vulkan host (vk_host ReadSnapshot).
 struct PanelStatus {
   bool game{};        // a Vulkan game with the host enabled

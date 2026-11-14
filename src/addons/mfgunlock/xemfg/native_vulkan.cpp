@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 #include "native_vulkan.hpp"
 #include "vendor/xvkhost/vk_host.h"
+#include "vendor/xvkhost/vk_provider.h"
+#include "vendor/xvkhost/xess/ngx_provider.h"
+#include "backend_api.hpp"
 #include "vulkan_policy.hpp"
 #include "display_cap.hpp"
 #include "vendor/xvk/single_module.h"
@@ -46,6 +49,8 @@ HMODULE Self() noexcept { return xess_mod::Self(); }
 namespace mfgunlock::xemfg::native::vulkan {
 namespace {
 std::atomic<bool> installed{},gameVulkan{};
+// 1.10.0 (item 3): XMX on Vulkan. The host never takes a chain over in this mode (HostPrepared answers false).
+std::atomic<bool> providerMode{};
 std::atomic<uint32_t> frames{4};
 std::atomic<uint32_t> instanceApi{0}; // 0: the instance creation was not seen
 thread_local int internalDepth{};
@@ -119,6 +124,9 @@ template<class F> F Extension(VkDevice device,F Extensions::*member) {
 // A device the host prepared: its chains can be taken over. Any other device
 // stays native and keeps what the game asked for.
 bool HostPrepared(VkDevice device) {
+  // XMX on Vulkan: the device carries the provider's features only; its chains, presents and extension
+  // commands stay the game's and the driver's.
+  if(providerMode.load()) return false;
   std::lock_guard guard(extensionLock);
   const auto found=deviceExtensions.find(device);
   return found!=deviceExtensions.end() && found->second.vkSignalSemaphore;
@@ -667,6 +675,51 @@ CreateFn ngxCreate{}; Create1Fn ngxCreate1{}; EvaluateFn ngxEvaluate{}; ReleaseF
 std::mutex featureLock;
 std::map<const NVSDK_NGX_Handle*,NVSDK_NGX_Feature> features;
 std::atomic<uint32_t> evaluateLog{};
+
+// ---- 1.10.0 (plan XMX/Vulkan/VRAM, item 3): XMX on Vulkan through dashdogy's provider (native_vulkan.hpp).
+// NVSDK_NGX_Handle is opaque to callers (Streamline only passes it back): the address of this record is the handle.
+struct ProviderFeature { unsigned int id{}; void* feature{}; };
+NVSDK_NGX_Handle* AsHandle(ProviderFeature* f) { return reinterpret_cast<NVSDK_NGX_Handle*>(f); }
+std::map<const NVSDK_NGX_Handle*,ProviderFeature*> providerFeatures;  // under featureLock
+std::atomic<unsigned int> providerIds{0x7f000000u};
+std::atomic<uint64_t> providerEvaluations{};
+std::atomic<int32_t> providerCreateResult{1};
+std::mutex providerTextLock; std::string providerText;
+void NoteProvider(const std::string& text) {
+  { std::lock_guard guard(providerTextLock); providerText=text; }
+  xess_mod::WriteLog("xmx_vulkan","\"state\":\""+text+"\"");
+}
+// The provider's feature for DLSS-G, or nullptr to let NVIDIA create its own (a refusal falls back).
+NVSDK_NGX_Handle* ProviderCreate(VkDevice device,VkCommandBuffer command,NVSDK_NGX_Parameter* params,NVSDK_NGX_Result& result) {
+  if(!providerMode.load() || !device) return nullptr;
+  static std::once_flag init;
+  std::call_once(init,[&] {
+    xess_vulkan::ProviderDevice record{};
+    if(!xess_vulkan::FindProviderDevice(device,record)) { NoteProvider("refused: the game's device was not prepared for it"); return; }
+    xess_vulkan_provider::VulkanInit(record.instance,record.physical,device,record.gipa,nullptr);
+  });
+  void* feature{};
+  const auto created=static_cast<NVSDK_NGX_Result>(xess_vulkan_provider::VulkanCreateFeature(device,command,params,&feature));
+  providerCreateResult.store(int32_t(created));
+  if(!NVSDK_NGX_SUCCEED(created) || !feature) {
+    char reason[96]{};
+    ngx_provider::Refused(reason,sizeof(reason));
+    NoteProvider(std::string("refused (")+(reason[0]?reason:"no reason")+"); NVIDIA's frame generation runs instead");
+    return nullptr;
+  }
+  auto* wrapped=new ProviderFeature;
+  wrapped->id=providerIds.fetch_add(1);
+  wrapped->feature=feature;
+  { std::lock_guard guard(featureLock); providerFeatures[AsHandle(wrapped)]=wrapped; features[AsHandle(wrapped)]=NVSDK_NGX_Feature_FrameGeneration; }
+  NoteProvider("created; XMX generates DLSS frame generation's frames");
+  result=NVSDK_NGX_Result_Success;
+  return AsHandle(wrapped);
+}
+ProviderFeature* FindProvider(const NVSDK_NGX_Handle* handle) {
+  std::lock_guard guard(featureLock);
+  const auto found=providerFeatures.find(handle);
+  return found==providerFeatures.end()?nullptr:found->second;
+}
 bool InputFeature(NVSDK_NGX_Feature feature) {
   return feature==NVSDK_NGX_Feature_SuperSampling || feature==NVSDK_NGX_Feature_RayReconstruction;
 }
@@ -676,16 +729,27 @@ void Remember(NVSDK_NGX_Result result,NVSDK_NGX_Feature feature,NVSDK_NGX_Handle
   xess_mod::WriteLog("vk_ngx_feature","\"feature\":"+std::to_string(int(feature))+",\"handle\":"+std::to_string(uintptr_t(*out)));
 }
 NVSDK_NGX_Result NVSDK_CONV NgxCreate(VkCommandBuffer command,NVSDK_NGX_Feature feature,NVSDK_NGX_Parameter* params,NVSDK_NGX_Handle** out) {
+  if(providerMode.load() && feature==NVSDK_NGX_Feature_FrameGeneration)
+    NoteProvider("not used: the game created frame generation without naming its device");
   const auto result=ngxCreate(command,feature,params,out);
   Remember(result,feature,out); return result;
 }
 NVSDK_NGX_Result NVSDK_CONV NgxCreate1(VkDevice device,VkCommandBuffer command,NVSDK_NGX_Feature feature,NVSDK_NGX_Parameter* params,
     NVSDK_NGX_Handle** out) {
+  if(feature==NVSDK_NGX_Feature_FrameGeneration && out) {
+    NVSDK_NGX_Result provided=NVSDK_NGX_Result_Fail;
+    if(auto* handle=ProviderCreate(device,command,params,provided)) { *out=handle; return provided; }
+  }
   const auto result=ngxCreate1(device,command,feature,params,out);
   Remember(result,feature,out); return result;
 }
 NVSDK_NGX_Result NVSDK_CONV NgxEvaluate(VkCommandBuffer command,const NVSDK_NGX_Handle* handle,const NVSDK_NGX_Parameter* params,
     PFN_NVSDK_NGX_ProgressCallback callback) {
+  if(auto* provided=handle?FindProvider(handle):nullptr) {
+    providerEvaluations.fetch_add(1,std::memory_order_relaxed);
+    return static_cast<NVSDK_NGX_Result>(xess_vulkan_provider::VulkanEvaluate(command,provided->feature,
+        const_cast<NVSDK_NGX_Parameter*>(params)));
+  }
   if(command && handle && params) {
     int feature=-1;
     {
@@ -737,6 +801,12 @@ NVSDK_NGX_Result NVSDK_CONV NgxEvaluate(VkCommandBuffer command,const NVSDK_NGX_
   return ngxEvaluate(command,handle,params,callback);
 }
 NVSDK_NGX_Result NVSDK_CONV NgxRelease(NVSDK_NGX_Handle* handle) {
+  if(auto* provided=handle?FindProvider(handle):nullptr) {
+    { std::lock_guard guard(featureLock); providerFeatures.erase(handle); features.erase(handle); }
+    const auto released=static_cast<NVSDK_NGX_Result>(xess_vulkan_provider::ReleaseFeature(provided->feature));
+    delete provided;
+    return released;
+  }
   if(handle) { std::lock_guard guard(featureLock); features.erase(handle); }
   return ngxRelease(handle);
 }
@@ -849,6 +919,39 @@ bool BeforeInstance(uint32_t& apiVersion) noexcept {
   return raised;
 }
 
+bool XmxProviderWanted() noexcept {
+  static const bool wanted=[] {
+    if(backend::Read()!=backend::Kind::DlssG) return false;
+    const auto ini=backend::Directory()/L"MFGAdaUnlock.ini";
+    return GetPrivateProfileIntW(L"DLSSG",L"XmxGenerator",0,ini.c_str())!=0
+        && GetPrivateProfileIntW(L"DLSSG",L"XmxVulkan",0,ini.c_str())!=0;
+  }();
+  return wanted;
+}
+
+bool BeginXmxProvider(uint32_t& apiVersion) noexcept {
+  if(!XmxProviderWanted()) return false;
+  providerMode=true;
+  // The host stays off (no chain is taken over); a wanted provider gets the features-only device edit.
+  xess_vulkan::Configure(false,false,frames.load());
+  xess_vulkan::SetProvider(true);
+  Install();
+  const auto [major,minor,raised]=policy::ReadInstanceVersion(apiVersion);
+  if(raised) apiVersion=0x1300;
+  instanceApi=VK_MAKE_API_VERSION(0,raised?1:major,raised?3:minor,0);
+  xess_mod::WriteLog("xmx_vulkan","\"state\":\"wanted\",\"instance_raised\":"+std::string(raised?"true":"false"));
+  NoteProvider("waiting for the game's frame generation");
+  return raised;
+}
+
+std::string XmxProviderReport() noexcept {
+  if(!providerMode.load()) return {};
+  try {
+    std::lock_guard guard(providerTextLock);
+    return providerText+"; evaluations "+std::to_string(providerEvaluations.load());
+  } catch(...) { return {}; }
+}
+
 bool GameUsesVulkan() noexcept { return gameVulkan.load(); }
 bool InstanceSeen() noexcept { return instanceApi.load()!=0; }
 
@@ -877,6 +980,32 @@ void SetGameFrameGeneration(bool on) noexcept {
   if(installed) xess_vulkan::SetGameFrameGeneration(on);
 }
 
+}  // namespace mfgunlock::xemfg::native::vulkan
+
+// 1.10.0 (item 3): the host-module calls dashdogy's provider makes (upstream's xess_mod, here on the XMX path).
+namespace xess_mod {
+namespace { std::atomic<bool> gProviderPort{}; std::atomic<uint64_t> gProviderBatches{}, gProviderMissed{}; }
+HMODULE PrepareProvider(ID3D12Device*, std::string& reason) noexcept {
+  try {
+    std::string why;
+    const HMODULE fg=xess_vulkan::ProviderRuntime(why);
+    if(!fg) { reason="runtime_"+why; return nullptr; }
+    wchar_t path[MAX_PATH]{};
+    if(!GetModuleFileNameW(fg,path,MAX_PATH)) { reason="runtime_path"; return nullptr; }
+    const auto xell=std::filesystem::path(path).parent_path()/L"libxell.dll";
+    const HMODULE ll=GetModuleHandleW(xell.c_str());
+    if(!ll) { reason="xell_not_loaded"; return nullptr; }
+    // The same ported model and frame-count unlock as XMX on Direct3D 12 (backend.cpp).
+    if(!mfgunlock::xemfg::PublishMultiFrameModel(fg,ll,Self(),why)) { reason="model_"+why; return nullptr; }
+    gProviderPort=true;
+    return fg;
+  } catch(...) { reason="exception"; return nullptr; }
+}
+const char* ProviderModelName() noexcept { return gProviderPort.load()?"port":"stock"; }
+void NoteProviderBatch(bool generated) noexcept { (generated?gProviderBatches:gProviderMissed).fetch_add(1); }
+}
+
+namespace mfgunlock::xemfg::native::vulkan {
 void DiscoverNgx() noexcept {
   if(!installed) return;
   static std::mutex once; std::lock_guard guard(once);

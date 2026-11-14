@@ -68,7 +68,8 @@ for name, ini in configs:
     for src, dst in ((a.addon, 'renodx-mfgunlock-native.addon64'), (a.reshade, 'dxgi.dll'),
                      (a.sdk_fg, 'libxess_fg.dll'), (a.sdk_ll, 'libxell.dll')):
         shutil.copy2(src, d / dst)
-    for old in ('ReShade.log', 'MFGAdaUnlock-XeMFG.log'):
+    # Killed runs count as unclean sessions; after 3 the addon's safe mode turns XMX off.
+    for old in ('ReShade.log', 'MFGAdaUnlock-XeMFG.log', 'MFGAdaUnlock.session'):
         if (d / old).exists():
             (d / old).unlink()
     (d / 'MFGAdaUnlock.ini').write_text(ini, encoding='ascii')

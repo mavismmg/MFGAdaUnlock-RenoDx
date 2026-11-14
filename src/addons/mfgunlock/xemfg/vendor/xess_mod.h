@@ -27,4 +27,10 @@ bool VulkanHostDevice(const ID3D12Device* device) noexcept;
 // runs (xvk::InstallTensorCores); the same embedded, verified fatbin as the D3D12
 // route. Empty when it cannot be read.
 std::span<const unsigned char> TensorCoreFatbin();
+// 1.10.0 (plan XMX/Vulkan/VRAM, item 3): what dashdogy's Vulkan DLSS-G provider asks of its host module
+// (implemented in native_vulkan.cpp, on the XMX path). PrepareProvider publishes the ported multi-frame model and
+// the frame-count unlock on the Vulkan host's XeSS pair and returns its libxess_fg, or null with `reason`.
+HMODULE PrepareProvider(ID3D12Device* device, std::string& reason) noexcept;
+const char* ProviderModelName() noexcept;
+void NoteProviderBatch(bool generated) noexcept;
 }

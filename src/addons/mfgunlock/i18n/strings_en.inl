@@ -926,3 +926,5 @@
 /* kStandardLevel_d4m2 */ "Standard",
 /* kForceDlssFrameGeneration_f4g1 */ "DLSS frame generation in games without it",
 /* kForStreamlineGamesWith_f4g2 */ "Experimental. For games that use Streamline for DLSS Super Resolution but have no frame generation: the addon asks Streamline for DLSS frame generation and turns it on at the panel's multiplier (XMX too, when selected). Needs the game's Reflex and the addon loaded early; games with their own frame generation are never touched. Without a HUD-less image from the game the HUD is interpolated. Restart to apply.",
+/* kXmxInVulkanGames_x3v1 */ "XMX in Vulkan games",
+/* kExperimentalXmxInVulkan_x3v2 */ "Experimental, untested in games. With XMX selected, Vulkan games with DLSS frame generation (Indiana Jones and the Great Circle, DOOM: The Dark Ages) use XMX too: Intel's ported model generates the frames inside DLSS frame generation, which still presents and paces them, and NVIDIA's own frame generation is not created, which saves its video memory. Needs Intel's XeSS files beside the game, as XMX does. Restart to apply.",

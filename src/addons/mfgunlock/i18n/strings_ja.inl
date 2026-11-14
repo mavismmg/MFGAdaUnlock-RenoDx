@@ -928,3 +928,5 @@
 /* kStandardLevel_d4m2 */ "標準",
 /* kForceDlssFrameGeneration_f4g1 */ "フレーム生成のないゲームでの DLSS フレーム生成",
 /* kForStreamlineGamesWith_f4g2 */ "実験的。DLSS Super Resolution に Streamline を使っているがフレーム生成がないゲーム向け: アドオンが Streamline に DLSS フレーム生成を要求し、パネルの倍率で有効にします (選択時は XMX も)。ゲームの Reflex と、アドオンの早期読み込みが必要です。独自のフレーム生成を持つゲームは変更しません。ゲームが HUD なし画像を提供しない場合、HUD は補間されます。適用するには再起動してください。",
+/* kXmxInVulkanGames_x3v1 */ "Vulkan ゲームでの XMX",
+/* kExperimentalXmxInVulkan_x3v2 */ "実験的、ゲームでは未テスト。XMX を選択すると、DLSS フレーム生成のある Vulkan ゲーム (Indiana Jones and the Great Circle、DOOM: The Dark Ages) でも XMX を使います。Intel の移植モデルが DLSS フレーム生成の中でフレームを生成し、表示とペーシングは DLSS フレーム生成が引き続き行います。NVIDIA 自身のフレーム生成は作成されないため、そのビデオメモリを節約できます。XMX と同じく、ゲームの横に Intel の XeSS ファイルが必要です。適用するには再起動してください。",

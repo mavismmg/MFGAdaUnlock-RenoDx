@@ -113,6 +113,9 @@
 #include "xemfg/backend_api.hpp"
 #ifdef MFGUNLOCK_NATIVE_XEMFG
 #include "xemfg/native_bridge.hpp"
+#ifdef MFGUNLOCK_XEMFG_VULKAN
+#include "xemfg/native_vulkan.hpp"
+#endif
 #include "xemfg/dependency_manager.hpp"
 #include "dlssg_display.hpp"
 #include "dlssg_latency.hpp"
@@ -762,6 +765,15 @@ bool PinResident(const char* when) {
   return true;
 }
 
+#if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
+// 1.10.0 (plan XMX/Vulkan/VRAM, item 3): XMX on Vulkan with the DLSS-G backend (native_vulkan.hpp). ReShade's
+// create_device for Vulkan comes before vkCreateInstance: the vulkan-1 hooks and the provider mode go in there.
+bool OnCreateDeviceXmxVulkan(reshade::api::device_api api, uint32_t& version) {
+  if (api != reshade::api::device_api::vulkan) return false;
+  return mfgunlock::xemfg::native::vulkan::BeginXmxProvider(version);
+}
+#endif
+
 void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
                              reshade::api::swapchain* swapchain,
                              const reshade::api::rect* /*source_rect*/,
@@ -825,6 +837,10 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
   mfgunlock::framecount::PublishLatencyGuardView();
   UpdateVramDiagnostics(swapchain);
   SampleFrameGenerationVram(swapchain);
+#if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
+  // 1.10.0 (item 3): NGX's Vulkan entry points, once _nvngx.dll is mapped (returns at once after that).
+  if (mfgunlock::xemfg::native::vulkan::XmxProviderWanted()) mfgunlock::xemfg::native::vulkan::DiscoverNgx();
+#endif
   WarnCreateMissingOnce();
   CheckDeviceRemoved(swapchain);
   StartDiscoveryWorker();
@@ -1630,6 +1646,10 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
 
       reshade::register_overlay("MFG Unlock", OnRegisterOverlay);
       reshade::register_event<reshade::addon_event::init_device>(OnInitDevice);
+#if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
+      if (mfgunlock::xemfg::native::vulkan::XmxProviderWanted())
+        reshade::register_event<reshade::addon_event::create_device>(OnCreateDeviceXmxVulkan);
+#endif
       reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
       reshade::register_event<reshade::addon_event::destroy_swapchain>(OnDestroySwapchain);
       reshade::register_event<reshade::addon_event::init_command_queue>(OnInitCommandQueue);

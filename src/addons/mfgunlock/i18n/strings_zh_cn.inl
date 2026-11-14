@@ -928,3 +928,5 @@
 /* kStandardLevel_d4m2 */ "标准",
 /* kForceDlssFrameGeneration_f4g1 */ "在没有帧生成的游戏中使用 DLSS 帧生成",
 /* kForStreamlineGamesWith_f4g2 */ "实验性。适用于使用 Streamline 进行 DLSS 超分辨率但没有帧生成的游戏：插件向 Streamline 请求 DLSS 帧生成，并以面板的倍数开启（选择 XMX 时也适用）。需要游戏的 Reflex 和插件提前加载；自带帧生成的游戏不会被更改。游戏未提供无 HUD 图像时，HUD 会被插值。重启后生效。",
+/* kXmxInVulkanGames_x3v1 */ "Vulkan 游戏中的 XMX",
+/* kExperimentalXmxInVulkan_x3v2 */ "实验性，尚未在游戏中测试。选择 XMX 后，带有 DLSS 帧生成的 Vulkan 游戏（Indiana Jones and the Great Circle、DOOM: The Dark Ages）也使用 XMX：Intel 的移植模型在 DLSS 帧生成内部生成帧，呈现和节奏仍由 DLSS 帧生成负责，且不会创建 NVIDIA 自身的帧生成，从而节省其显存。与 XMX 一样，需要游戏旁边有 Intel 的 XeSS 文件。重启后生效。",

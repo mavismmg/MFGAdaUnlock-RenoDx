@@ -931,6 +931,8 @@ enum class Str : unsigned {
   kStandardLevel_d4m2,
   kForceDlssFrameGeneration_f4g1,
   kForStreamlineGamesWith_f4g2,
+  kXmxInVulkanGames_x3v1,
+  kExperimentalXmxInVulkan_x3v2,
   kCount
 };
 }  // namespace mfgunlock::i18n

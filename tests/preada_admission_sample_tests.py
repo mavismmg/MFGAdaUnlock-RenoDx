@@ -35,6 +35,14 @@ if not a.reshade.is_file():
 
 REFUSAL = 'Disabling DLSS-G since it is not supported on current hardware'
 
+# The sample loads its scene from <exe folder>/../media. The copies live in --work, so a junction there to the
+# sample's media keeps it from stopping on "Couldn't read file /media/sponza-plus.scene.json".
+media = (a.work / 'media')
+if not media.exists() and (a.bin.parent / 'media').is_dir():
+    a.work.mkdir(parents=True, exist_ok=True)
+    subprocess.run(['cmd', '/c', 'mklink', '/J', str(media.resolve()), str((a.bin.parent / 'media').resolve())],
+                   capture_output=True)
+
 def run(name, admission, requirements_failure=0, answer=True):
     d = (a.work / (name + '-' + time.strftime('%Y%m%d-%H%M%S'))).resolve()
     shutil.copytree(a.bin, d, ignore=shutil.ignore_patterns('*.log', 'MFG-Support-*', 'MFGAdaUnlock*', 'ReShade.ini',

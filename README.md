@@ -1120,6 +1120,28 @@ How to read these numbers:
 - A newer `nvngx_dlssg.dll` might change how the module reacts to XMX's hook. It ran
   with 310.9.1 in Cyberpunk 2077 and 310.9.16 in the Streamline Sample.
 
+### XMX in Vulkan games (experimental)
+
+1.10.0. Off by default: `[DLSSG] XmxVulkan=1` with `XmxGenerator=1` and the
+DLSS-G backend (also in the panel's advanced settings). For Vulkan games with
+DLSS frame generation, such as Indiana Jones and the Great Circle and DOOM: The
+Dark Ages.
+
+- XMX runs inside DLSS frame generation on the game's own Vulkan device: Intel's
+  ported multi-frame model records into each frame generation call, and
+  Streamline's DLSS-G still presents and paces the frames (ReShade, HDR and the
+  panel stay as they are).
+- NVIDIA's own frame generation feature is not created, so its video memory is
+  not spent: on Direct3D 12, XMX still pays for both (see the 1.10.0 notes).
+- The engine is dashdogy's Vulkan DLSS-G provider from MFG Unlocker v1.7.1 (MIT),
+  called from this addon's NGX Vulkan hooks. The addon only adds what it needs
+  to the game's device; it never takes the game's swap chain.
+- If the provider cannot run (no Intel files, an unknown XeSS build, a device it
+  could not prepare), NVIDIA's frame generation runs as before. The support
+  report's `chain_xmx_vulkan` line says which happened.
+- **Not tested in a game yet.** This PC has no Vulkan build of NVIDIA's sample
+  to test it on; please report how it goes.
+
 ## Using with RenoDX DLSS5
 
 MFG Unlock and the RenoDX DLSS5 addon can work together, but compatibility may

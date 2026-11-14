@@ -928,3 +928,5 @@
 /* kStandardLevel_d4m2 */ "표준",
 /* kForceDlssFrameGeneration_f4g1 */ "프레임 생성이 없는 게임의 DLSS 프레임 생성",
 /* kForStreamlineGamesWith_f4g2 */ "실험적. DLSS Super Resolution에 Streamline을 쓰지만 프레임 생성이 없는 게임용: 애드온이 Streamline에 DLSS 프레임 생성을 요청하고 패널의 배수로 켭니다(선택한 경우 XMX도). 게임의 Reflex와 애드온 조기 로드가 필요하며, 자체 프레임 생성이 있는 게임은 변경하지 않습니다. 게임이 HUD 없는 이미지를 주지 않으면 HUD는 보간됩니다. 적용하려면 재시작하세요.",
+/* kXmxInVulkanGames_x3v1 */ "Vulkan 게임의 XMX",
+/* kExperimentalXmxInVulkan_x3v2 */ "실험적, 게임에서 아직 테스트되지 않음. XMX를 선택하면 DLSS 프레임 생성이 있는 Vulkan 게임(Indiana Jones and the Great Circle, DOOM: The Dark Ages)에서도 XMX를 사용합니다. Intel의 이식 모델이 DLSS 프레임 생성 안에서 프레임을 만들고, 표시와 페이싱은 계속 DLSS 프레임 생성이 맡습니다. NVIDIA 자체 프레임 생성은 만들어지지 않아 그 비디오 메모리를 절약합니다. XMX처럼 게임 옆에 Intel XeSS 파일이 필요합니다. 적용하려면 재시작하세요.",

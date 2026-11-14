@@ -928,3 +928,5 @@
 /* kStandardLevel_d4m2 */ "Padrão",
 /* kForceDlssFrameGeneration_f4g1 */ "Geração de quadros DLSS em jogos sem ela",
 /* kForStreamlineGamesWith_f4g2 */ "Experimental. Para jogos que usam o Streamline para o DLSS Super Resolution mas não têm geração de quadros: o addon pede ao Streamline a geração de quadros DLSS e a liga no multiplicador do painel (também com XMX, se selecionado). Precisa do Reflex do jogo e do addon carregado cedo; jogos com geração de quadros própria nunca são alterados. Sem uma imagem sem HUD do jogo, o HUD é interpolado. Reinicie para aplicar.",
+/* kXmxInVulkanGames_x3v1 */ "XMX em jogos Vulkan",
+/* kExperimentalXmxInVulkan_x3v2 */ "Experimental, ainda sem teste em jogos. Com o XMX selecionado, jogos Vulkan com geração de quadros DLSS (Indiana Jones and the Great Circle, DOOM: The Dark Ages) também usam o XMX: o modelo portado da Intel gera os quadros dentro da geração de quadros DLSS, que continua apresentando e cadenciando, e a geração de quadros da NVIDIA nem é criada, o que economiza a memória de vídeo dela. Precisa dos arquivos XeSS da Intel ao lado do jogo, como o XMX. Reinicie para aplicar.",

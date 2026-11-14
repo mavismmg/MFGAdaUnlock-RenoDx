@@ -519,6 +519,12 @@ std::string FrameGenChainReport() {
            const std::string failure = mfgunlock::xmx::preada::RequirementsReport();
            return failure.empty() ? std::string() : "\nchain_ngx_requirements=" + failure;
          }() + "\nchain_vram=" + FrameGenerationVramReport() +
+#if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
+         [] {  // 1.10.0 (item 3): XMX on Vulkan, only when wanted
+           const std::string text = mfgunlock::xemfg::native::vulkan::XmxProviderReport();
+           return text.empty() ? std::string() : "\nchain_xmx_vulkan=" + text;
+         }() +
+#endif
          [] {  // 1.10.0 (force_fg.hpp): only when [DLSSG] ForceFrameGeneration=1
            if (!mfgunlock::framecount::g_force_fg_enabled.load(std::memory_order_relaxed)) return std::string();
            const auto decision = static_cast<mfgunlock::forcefg::Decision>(
