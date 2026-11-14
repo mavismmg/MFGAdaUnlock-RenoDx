@@ -109,7 +109,10 @@ inline bool IsSupportFile(std::wstring name) {
   std::transform(name.begin(), name.end(), name.begin(), [](wchar_t c) { return wchar_t(std::towlower(c)); });
   const bool log = name.find(L".log") != std::wstring::npos;
   if (name.rfind(L"reshade", 0) == 0) return log;
-  if (name.rfind(L"mfgadaunlock", 0) == 0) return log || name.ends_with(L".ini");
+  // 1.10.0: also the crash record and its dump ([Diagnostics] CrashDump=1).
+  if (name.rfind(L"mfgadaunlock", 0) == 0)
+    return log || name.ends_with(L".ini") || name == L"mfgadaunlock-crash.txt" ||
+           (name.rfind(L"mfgadaunlock-crash-", 0) == 0 && name.ends_with(L".dmp"));
   // 1.10.0: Streamline's own log (sl.log), written when [DLSSG] StreamlineLog=1.
   if (name.rfind(L"sl.", 0) == 0) return log;
   return false;

@@ -1145,6 +1145,14 @@ FrameGenChain DescribeFrameGenChain() {
   } else if (!providers.empty()) {
     chain.gate = "not open (2x at most)";
     chain.gate_health = ChainHealth::kFail;
+    // 1.10.0 (dashdogy A4): say why when every provider predates multi-frame.
+    bool all_old = true;
+    for (HMODULE module : providers)
+      all_old = all_old && mfgunlock::runtimeversion::PredatesMultiFrameDlssg(
+                               mfgunlock::runtimeversion::Pack(mfgunlock::runtimeversion::FromModule(module)));
+    if (all_old)
+      chain.gate += "; this DLSS-G version predates multi-frame generation (310.7 or newer is needed: "
+                    "the NVIDIA app's DLSS override, or a newer nvngx_dlssg.dll)";
   } else {
     chain.gate = "unknown";
   }
@@ -1184,6 +1192,10 @@ FrameGenChain DescribeFrameGenChain() {
     if (created >= 0 && NVSDK_NGX_FAILED(static_cast<NVSDK_NGX_Result>(created))) {
       std::ostringstream text;
       text << "could not be created (0x" << std::hex << static_cast<uint32_t>(created) << ")";
+      // 1.10.0 (dashdogy A3): the SetOptions hook now sends Off.
+      if (mfgunlock::xmx::preada::HoldOff())
+        text << std::dec << "; held off after " << mfgunlock::xmx::preada::kHoldOffAfter
+             << " refusals so Streamline stops retrying";
       chain.ngx_feature = text.str();
       chain.ngx_feature_health = ChainHealth::kFail;
     } else if (created >= 0) {

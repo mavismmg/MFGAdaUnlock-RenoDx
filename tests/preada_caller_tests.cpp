@@ -44,6 +44,10 @@ int main() {
   CHECK(!CallerIsRuntime(reinterpret_cast<const void*>(&main)));
   CHECK(!CallerIsRuntime(reinterpret_cast<const void*>(&GetTickCount64)));
   CHECK(!CallerIsRuntime(nullptr));
+  // 1.10.0 (dashdogy A3): Off only on an admitted GPU, after three refusals in a row.
+  CHECK(!HoldOffDecision(true, 0) && !HoldOffDecision(true, kHoldOffAfter - 1));
+  CHECK(HoldOffDecision(true, kHoldOffAfter) && HoldOffDecision(true, kHoldOffAfter + 10));
+  CHECK(!HoldOffDecision(false, kHoldOffAfter + 10));  // RTX 40/50, or the admission off
   std::cout << "preada_caller tests passed\n";
   return 0;
 }

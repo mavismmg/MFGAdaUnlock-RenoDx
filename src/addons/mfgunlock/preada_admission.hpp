@@ -44,6 +44,7 @@
 #include "./gpu_arch.hpp"
 #include "./module_session.hpp"
 #include "./ngx_hook.hpp"
+#include "./ngx_requirements.hpp"
 #include "./patch_transaction.hpp"
 #include "./xmx_generator.hpp"
 #include "./xmx_preada.hpp"
@@ -299,6 +300,92 @@ inline RequirementsFn g_real_requirements = nullptr;
 inline std::atomic_bool g_requirements_hooked{false};
 inline std::atomic_bool g_requirements_relaxed{false};
 
+// 1.10.0 (dashdogy A1, ngx_requirements.hpp): the last failure of the query
+// for frame generation, for the report; 0 when none was seen.
+inline std::atomic<uint32_t> g_requirements_failure{0};
+inline SRWLOCK g_requirements_text_lock = SRWLOCK_INIT;
+inline std::string g_requirements_text;
+inline std::string RequirementsReport() {
+  AcquireSRWLockShared(&g_requirements_text_lock);
+  std::string text = g_requirements_text;
+  ReleaseSRWLockShared(&g_requirements_text_lock);
+  return text;
+}
+// Test only (SimulatePreAda=2): [DLSSG] SimulateRequirementsFailure=1, 2 or 3
+// makes the query fail as FeatureNotFound, InvalidParameter or
+// FeatureNotSupported, the two field cases dashdogy documented.
+inline uint32_t SimulatedRequirementsFailure() {
+  static const uint32_t value = [] {
+    if (!SimulatedStrict()) return 0u;
+    switch (GetPrivateProfileIntW(L"DLSSG", L"SimulateRequirementsFailure", 0,
+                                  (backend::Directory() / L"MFGAdaUnlock.ini").c_str())) {
+      case 1: return ngxreq::kFeatureNotFound;
+      case 2: return ngxreq::kInvalidParameter;
+      case 3: return ngxreq::kFeatureNotSupported;
+      default: return 0u;
+    }
+  }();
+  return value;
+}
+inline std::atomic_bool g_requirements_answered{false};
+inline std::atomic_bool g_requirements_answer_logged{false};
+inline bool RequirementsAnswerEnabled() {
+  static const bool value = GetPrivateProfileIntW(L"DLSSG", L"PreAdaRequirementsAnswer", 1,
+                                                  (backend::Directory() / L"MFGAdaUnlock.ini").c_str()) != 0;
+  return value;
+}
+// ngxreq::ProviderPath over what is mapped, the game's folder and NGX's dlssg
+// model folder. Called only after a failed query, a handful of times.
+inline bool RequirementsProviderPresent() {
+  auto lower = [](std::wstring text) {
+    for (auto& c : text) c = static_cast<wchar_t>(towlower(c));
+    return text;
+  };
+  for (const wchar_t* name : {L"nvngx_dlssg.dll"})
+    if (GetModuleHandleW(name) != nullptr) return true;
+  wchar_t exe[MAX_PATH]{};
+  const DWORD length = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+  std::error_code error;
+  if (length != 0 && length < MAX_PATH &&
+      std::filesystem::exists(std::filesystem::path(exe).parent_path() / L"nvngx_dlssg.dll", error))
+    return true;
+  wchar_t data[MAX_PATH]{};
+  const DWORD data_length = GetEnvironmentVariableW(L"ProgramData", data, MAX_PATH);
+  if (data_length == 0 || data_length >= MAX_PATH) return false;
+  const auto models = std::filesystem::path(data) / L"NVIDIA" / L"NGX" / L"models" / L"dlssg" / L"versions";
+  for (std::filesystem::recursive_directory_iterator it(models, error), end; !error && it != end; it.increment(error)) {
+    if (it.depth() > 2) {
+      it.disable_recursion_pending();
+      continue;
+    }
+    if (it->is_regular_file(error) && ngxreq::ProviderPath(lower(it->path().wstring()))) return true;
+  }
+  return false;
+}
+inline void NoteRequirementsFailure(uint32_t result, const NVSDK_NGX_FeatureDiscoveryInfo* info) {
+  const bool project = info->Identifier.IdentifierType == NVSDK_NGX_Application_Identifier_Type_Project_Id;
+  const std::string text =
+      ngxreq::Describe(result, project, project ? info->Identifier.v.ProjectDesc.ProjectId : nullptr,
+                       project ? static_cast<int>(info->Identifier.v.ProjectDesc.EngineType) : 0) +
+      (g_in_admission ? "; inside slInit" : "");
+  if (g_requirements_failure.exchange(result) != result) {
+    AcquireSRWLockExclusive(&g_requirements_text_lock);
+    g_requirements_text = text;
+    ReleaseSRWLockExclusive(&g_requirements_text_lock);
+    Log("NGX frame generation requirements: " + text +
+        ". Streamline then compares its default minimum (Ada) with the architecture this addon answers.");
+  }
+  // ReShade drops add-on log lines written while Streamline starts (see the
+  // architecture trace), so the strict simulation also writes it beside the game.
+  if (SimulatedStrict()) {
+    const auto file = backend::Directory() / L"MFGAdaUnlock-archtrace.txt";
+    if (FILE* f = _wfopen(file.c_str(), L"a")) {
+      fputs(("requirements " + text + "\n").c_str(), f);
+      fclose(f);
+    }
+  }
+}
+
 inline NVSDK_NGX_Result NVSDK_CONV HookedRequirements(IDXGIAdapter* adapter, const NVSDK_NGX_FeatureDiscoveryInfo* info,
                                                        NVSDK_NGX_FeatureRequirement* out) {
   if (g_real_requirements == nullptr) return NVSDK_NGX_Result_FAIL_InvalidParameter;
@@ -309,6 +396,38 @@ inline NVSDK_NGX_Result NVSDK_CONV HookedRequirements(IDXGIAdapter* adapter, con
   {
     AdmissionScope scope;
     result = g_real_requirements(adapter, info, out);
+  }
+  if (const uint32_t forced = SimulatedRequirementsFailure(); forced != 0) {
+    if (out != nullptr) *out = {};
+    result = static_cast<NVSDK_NGX_Result>(forced);
+  }
+  if (NVSDK_NGX_FAILED(result)) {
+    NoteRequirementsFailure(static_cast<uint32_t>(result), info);
+    const bool start = g_in_admission || CallerIsRuntime(_ReturnAddress());
+    if (out == nullptr ||
+        !ngxreq::Decide(ngxreq::Classify(static_cast<uint32_t>(result)), start, RequirementsProviderPresent(),
+                        RequirementsAnswerEnabled()))
+      return result;
+    *out = {};
+    out->FeatureSupported = NVSDK_NGX_FeatureSupportResult_Supported;
+    out->MinHWArchitecture = kLoweredMinimum;
+    strcpy_s(out->MinOSVersion, "10.0.0");  // what NGX reports for its other features (sl.log)
+    if (!g_requirements_answered.exchange(true)) {
+      AcquireSRWLockExclusive(&g_requirements_text_lock);
+      g_requirements_text += "; answered supported (a DLSS-G provider is present)";
+      ReleaseSRWLockExclusive(&g_requirements_text_lock);
+    }
+    if (g_requirements_answered.load(std::memory_order_relaxed) && !g_requirements_answer_logged.exchange(true))
+      Log("NGX frame generation requirements answered: supported, minimum Turing, since a DLSS-G provider is present "
+          "([DLSSG] PreAdaRequirementsAnswer=0 turns this off)");
+    if (SimulatedStrict()) {
+      const auto file = backend::Directory() / L"MFGAdaUnlock-archtrace.txt";
+      if (FILE* f = _wfopen(file.c_str(), L"a")) {
+        fputs("requirements answered supported\n", f);
+        fclose(f);
+      }
+    }
+    return NVSDK_NGX_Result_Success;
   }
   // FeatureSupported is a bit mask. Only the adapter bit is cleared; a driver
   // or OS refusal stays and keeps the feature unsupported.
@@ -509,6 +628,27 @@ inline void LowerProviderMinimum(HMODULE module) {
   if (session == nullptr) return;
   const uint32_t lowered = kLoweredMinimum;
   std::vector<patching::Write> writes{patching::Bytes(entry + 1, &lowered, sizeof(lowered))};
+  // 1.10.0 (dashdogy A2): the same minimum in the provider's requirements
+  // records, which NGX reports to Streamline. A record of another shape is
+  // left alone; the export above and the NGX core answer still apply.
+  int records = 0;
+  for (const char* name : {"NVSDK_NGX_D3D11_GetFeatureRequirements", "NVSDK_NGX_D3D12_GetFeatureRequirements",
+                           "NVSDK_NGX_VULKAN_GetFeatureRequirements"}) {
+    auto* code = reinterpret_cast<uint8_t*>(GetProcAddress(module, name));
+    DWORD64 image = 0;
+    const auto* function = code ? RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(code), &image, nullptr) : nullptr;
+    if (function == nullptr || image != reinterpret_cast<DWORD64>(module)) continue;
+    const size_t size = std::min<size_t>(function->EndAddress - (reinterpret_cast<DWORD64>(code) - image),
+                                         ngxreq::kRequirementsWindow);
+    if (!patching::Readable(code, size)) continue;
+    const size_t at = ngxreq::FindRequirementsArchitecture(code, size);
+    if (at == SIZE_MAX) continue;
+    uint32_t record = 0;
+    std::memcpy(&record, code + at, sizeof(record));
+    if (record != kAdaArchitecture) continue;
+    writes.push_back(patching::Bytes(code + at, &lowered, sizeof(lowered)));
+    ++records;
+  }
   if (!patching::Apply(writes, true)) {
     Log("could not lower the provider's minimum architecture", true);
     return;
@@ -519,7 +659,17 @@ inline void LowerProviderMinimum(HMODULE module) {
   ReleaseSRWLockExclusive(&g_minimum_lock);
   wchar_t path[MAX_PATH]{};
   GetModuleFileNameW(module, path, MAX_PATH);
-  Log("provider minimum architecture 0x190 -> 0x160 in " + std::filesystem::path(path).filename().string());
+  const std::string message = "provider minimum architecture 0x190 -> 0x160 in " +
+                              std::filesystem::path(path).filename().string() + " (export and " +
+                              std::to_string(records) + " requirements record(s))";
+  Log(message);
+  if (SimulatedStrict()) {
+    const auto file = backend::Directory() / L"MFGAdaUnlock-archtrace.txt";
+    if (FILE* f = _wfopen(file.c_str(), L"a")) {
+      fputs((message + "\n").c_str(), f);
+      fclose(f);
+    }
+  }
 }
 
 // The multi-frame gate (cmp against 0x1b0, Blackwell) is rewritten to Turing
@@ -536,7 +686,29 @@ inline void LowerGateWrites(std::vector<patching::Write>& writes) {
 // --------------------------------------------------- what the panel reports
 // NGX CreateFeature for frame generation, seen by the NGX preset hook.
 inline std::atomic<int64_t> g_create_result{-1};  // -1: not seen yet
+// 1.10.0 (dashdogy item A3): Streamline creates frame generation again on
+// every frame after NVIDIA's runtime refused it, and dashdogy saw video
+// memory grow until Doom: The Dark Ages crashed. After kHoldOffAfter refusals
+// in a row on an admitted RTX 20/30, the SetOptions hook (framecount.hpp)
+// sends Off instead of the game's mode for the rest of the session; the
+// panel's card and the report already name the refusal.
+constexpr uint32_t kHoldOffAfter = 3;
+inline std::atomic<uint32_t> g_create_failures{0};  // in a row
+constexpr bool HoldOffDecision(bool admitted, uint32_t failures_in_a_row) {
+  return admitted && failures_in_a_row >= kHoldOffAfter;
+}
+inline bool HoldOff() {
+  return HoldOffDecision(Admitted(), g_create_failures.load(std::memory_order_acquire));
+}
 inline void ObserveCreate(NVSDK_NGX_Result result) {
+  if (NVSDK_NGX_FAILED(result)) {
+    if (g_create_failures.fetch_add(1, std::memory_order_acq_rel) + 1 == kHoldOffAfter)
+      Log("NVIDIA's runtime refused frame generation " + std::to_string(kHoldOffAfter) +
+              " times in a row; frame generation is held off for this session so Streamline stops retrying",
+          true);
+  } else {
+    g_create_failures.store(0, std::memory_order_release);
+  }
   const auto previous = g_create_result.exchange(static_cast<int64_t>(static_cast<uint32_t>(result)));
   if (previous == static_cast<int64_t>(static_cast<uint32_t>(result))) return;
   if (NVSDK_NGX_FAILED(result)) {

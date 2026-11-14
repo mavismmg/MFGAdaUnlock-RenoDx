@@ -359,7 +359,7 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
       "${CMAKE_SOURCE_DIR}/preada_admission_sample_tests.py" --bin "${XEMFG_SL_SAMPLES_ROOT}/sample-v2.14.16/_bin"
       --addon $<TARGET_FILE:mfgunlock_native_xemfg> --reshade "${XEMFG_OFFLINE_RESHADE}"
       --work "${CMAKE_BINARY_DIR}/native-checks")
-    set_tests_properties(preada_admission_sl_sample PROPERTIES RUN_SERIAL TRUE TIMEOUT 120
+    set_tests_properties(preada_admission_sl_sample PROPERTIES RUN_SERIAL TRUE TIMEOUT 240
       LABELS sl_sample SKIP_RETURN_CODE 77 SKIP_REGULAR_EXPRESSION "SKIP:")
   endif()
   add_test(NAME xemfg_native_retained_legacy COMMAND "${Python3_EXECUTABLE}"

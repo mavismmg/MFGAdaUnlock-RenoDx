@@ -52,6 +52,15 @@ inline constexpr bool IsDynamicDlssgVersion(uint64_t packed) {
   return packed != 0 && packed >= kDynamicDlssgMinimum && (packed >> 48u) == 310;
 }
 
+// 1.10.0 (dashdogy item A4): DLSS-G providers before 310.7 carry no
+// generated-frame count check to unlock (dashdogy's ngx_mfg_gate::Missing, AION 2
+// with 310.6.0.0), and the 3.x line predates multi-frame generation, so a
+// game whose only provider is one of those stays at 2x.
+inline constexpr uint64_t kMultiFrameDlssgMinimum = Pack(310, 7, 0, 0);
+inline constexpr bool PredatesMultiFrameDlssg(uint64_t packed) {
+  return packed != 0 && packed < kMultiFrameDlssgMinimum;
+}
+
 inline constexpr bool IsDynamicStreamlineVersion(uint64_t packed) {
   return packed != 0 && packed >= kDynamicStreamlineMinimum && (packed >> 48u) == 2;
 }

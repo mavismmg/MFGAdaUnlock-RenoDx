@@ -10,7 +10,9 @@ text = ''.join(p.read_text(encoding='utf-8', errors='ignore') for p in root.rglo
 # Not settings: written by the addon itself, or replaced by a key that has a control.
 INI_EXEMPT = {('XeFG.Learned', 'Executable'),
               # Test only (1.8.3): simulates an RTX 20/30 for XMX's pre-Ada path.
-              ('DLSSG', 'SimulatePreAda')}
+              ('DLSSG', 'SimulatePreAda'),
+              # Test only (1.10.0): fails NGX's requirements query under SimulatePreAda=2.
+              ('DLSSG', 'SimulateRequirementsFailure')}
 RESHADE_EXEMPT = {
     'DisocclusionGuardLevel',   # migrated to DepthEdgeGuardLevel
     'DynamicReflexSourceCap',   # migrated to ReflexSourceFpsCap

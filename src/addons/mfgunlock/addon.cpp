@@ -145,6 +145,7 @@
 #include "drs_report.hpp"
 #include "advanced_settings.hpp"
 #include "streamline_log.hpp"
+#include "crash_record.hpp"
 
 #include <deps/imgui/imgui.h>
 #include <include/reshade.hpp>
@@ -1467,10 +1468,13 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       g_self_module = h_module;
       if (!reshade::register_addon(h_module)) return FALSE;
       mfgunlock::support::BeginSession(mfgunlock::backend::Directory());
+      // 1.10.0 (dashdogy B1): opt-in crash record and dump (crash_record.hpp).
+      if (mfgunlock::crash::Enabled(mfgunlock::backend::Directory() / L"MFGAdaUnlock.ini"))
+        mfgunlock::crash::Install(mfgunlock::backend::Directory());
       // 1.10.0: Streamline's own log, before the game can call slInit. Every
       // ReShade startup copy runs this; the second finds the variables set.
       if (mfgunlock::streamlinelog::Requested()) {
-        const auto state = mfgunlock::streamlinelog::Apply(mfgunlock::backend::Directory());
+        const auto state = mfgunlock::streamlinelog::Apply(mfgunlock::backend::Directory(), mfgunlock::streamlinelog::Configured());
         if (state == mfgunlock::streamlinelog::State::kSet || state == mfgunlock::streamlinelog::State::kFailed)
           reshade::log::message(state == mfgunlock::streamlinelog::State::kFailed ? reshade::log::level::warning
                                                                                    : reshade::log::level::info,
@@ -1581,6 +1585,8 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       };
       mfgunlock::loadhook::g_on_dlssg_loaded = ProcessLoadedDlssgModule;
       mfgunlock::framecount::internal::g_before_frame_generation.store(BeforeFrameGeneration, std::memory_order_release);
+      // 1.10.0 (dashdogy A3): Off once NVIDIA's runtime keeps refusing on RTX 20/30.
+      mfgunlock::framecount::internal::g_hold_off.store(&mfgunlock::xmx::preada::HoldOff, std::memory_order_release);
       // 1.8.5: RTX 20/30 with XMX. Streamline keeps or drops sl.dlss_g inside
       // slInit, so the admission must cover that call.
       // The Dynamic MFG ceiling also needs slInit: Streamline may read the
@@ -1626,6 +1632,8 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       // Only the game's exit ends the session: ReShade unloading a startup
       // copy is not one, and the marker's count must survive it.
       if (lpv_reserved != nullptr) mfgunlock::support::EndSession(mfgunlock::backend::Directory());
+      // 1.10.0 (dashdogy B1): an unloading copy takes its crash filter with it.
+      else mfgunlock::crash::Uninstall();
       // During process termination Windows is already reclaiming every mapped
       // image. Avoid detour transactions and stale provider-memory restores
       // under the loader lock; explicit addon unload still performs cleanup.

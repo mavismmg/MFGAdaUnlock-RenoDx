@@ -2068,14 +2068,30 @@ inline sl::Result InitWithPolicy(const sl::Preferences& pref, uint64_t sdk_versi
 // 1.8.3: run before the game turns DLSS-G on, ahead of Streamline creating the
 // frame generation feature (addon.cpp: XMX's hooks go in there).
 inline std::atomic<void (*)()> g_before_frame_generation{nullptr};
+// 1.10.0 (dashdogy A3): true once NVIDIA's runtime refused frame generation
+// repeatedly on an admitted RTX 20/30 (preada::HoldOff, set by addon.cpp).
+inline std::atomic<bool (*)()> g_hold_off{nullptr};
 
 inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
                                    const sl::DLSSGOptions& options) {
   const auto real = g_real_set_options.load(std::memory_order_acquire);
   if (real == nullptr)
     return sl::Result::eErrorNotInitialized;
-  if (options.mode != sl::DLSSGMode::eOff)
+  if (options.mode != sl::DLSSGMode::eOff) {
+    const auto hold_off = g_hold_off.load(std::memory_order_acquire);
+    if (hold_off != nullptr && hold_off()) {
+      // The SDK's own struct, so no field of an older game struct is read.
+      sl::DLSSGOptions off{};
+      off.mode = sl::DLSSGMode::eOff;
+      static std::atomic_bool logged{false};
+      if (!logged.exchange(true, std::memory_order_relaxed))
+        reshade::log::message(reshade::log::level::warning,
+                              "mfgunlock: the game turned DLSS Frame Generation on; sent Off, since NVIDIA's runtime "
+                              "refused it repeatedly on this GPU (see the RTX 20/30 card).");
+      return real(viewport, off);
+    }
     if (const auto before = g_before_frame_generation.load(std::memory_order_acquire)) before();
+  }
   if (options.mode == sl::DLSSGMode::eDynamic &&
       g_game_dynamic_blocked.load(std::memory_order_relaxed)) {
     // eDynamic exists only in the current struct version, so this copy is complete.

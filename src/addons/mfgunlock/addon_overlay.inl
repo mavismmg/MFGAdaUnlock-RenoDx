@@ -514,7 +514,11 @@ std::string FrameGenChainReport() {
   if (chain.streamline.empty()) return std::string();
   return "chain_streamline=" + chain.streamline + "\nchain_provider=" + chain.provider + "\nchain_gate=" + chain.gate +
          "\nchain_slinit=" + chain.slinit + "\nchain_dynamic=" + chain.dynamic +
-         (chain.ngx_feature.empty() ? std::string() : "\nchain_ngx_feature=" + chain.ngx_feature) + "\nchain_generator=" +
+         (chain.ngx_feature.empty() ? std::string() : "\nchain_ngx_feature=" + chain.ngx_feature) +
+         [] {  // 1.10.0 (dashdogy A1): only when NGX's requirements query failed
+           const std::string failure = mfgunlock::xmx::preada::RequirementsReport();
+           return failure.empty() ? std::string() : "\nchain_ngx_requirements=" + failure;
+         }() + "\nchain_generator=" +
          FrameGenChainGenerator() + "\n";
 }
 // 1.10.0 (plan 1.4): what a support report needs to say about this PC and

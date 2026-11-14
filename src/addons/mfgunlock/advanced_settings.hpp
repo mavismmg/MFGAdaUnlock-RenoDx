@@ -24,6 +24,8 @@ inline constexpr Choice kOnOff[]{{Str::kOff_b4aa,L"0"},{Str::kOn_7df0,L"1"}};
 // -1 means no explicit value: the profile or the learned convention decides.
 inline constexpr Choice kAutomatic[]{{Str::kAutomatic_6784,L"-1"},{Str::kOff_b4aa,L"0"},{Str::kOn_7df0,L"1"}};
 inline constexpr Choice kFirstFrame[]{{Str::kReady_3294,L"ready"},{Str::kBuffer_a49b,L"buffer"}};
+// 1.10.0 (D4): [DLSSG] StreamlineLog modes (streamline_log.hpp).
+inline constexpr Choice kStreamlineLog[]{{Str::kNvidiaSSetting_d4m0,L"0"},{Str::kVerbose_d4m1,L"1"},{Str::kStandardLevel_d4m2,L"2"},{Str::kOff_b4aa,L"3"}};
 inline constexpr Choice kRounding[]{{Str::kDown_5035,L"0"},{Str::kNearest_e6b9,L"1"},{Str::kUp_5940,L"2"}};
 inline constexpr Choice kInputCopy[]{{Str::kOff_b4aa,L"0"},{Str::kCopy_3664,L"1"},{Str::kNoDispatchTest_6017,L"2"},{Str::kSlotsOnlyTest_9663,L"3"}};
 #define MFGUNLOCK_CHOICES(list) list,int(std::size(list)),0,0
@@ -58,6 +60,8 @@ inline constexpr Option kDiagnostics[]{
   {L"Diagnostics",L"StallTrace",Str::kStallTrace_7190,Str::kLogsLongWaitsAddsOverhead_8c2a,L"0",MFGUNLOCK_CHOICES(kOnOff)},
   {L"Diagnostics",L"GpuTiming",Str::kGpuTiming_5189,Str::kLogsGpuTimingAddsOverhead_1c0a,L"0",MFGUNLOCK_CHOICES(kOnOff)},
   {L"Diagnostics",L"SummaryIntervalMs",Str::kLogSummaryIntervalMs_0045,Str::kHowOftenTheLogReceives_da5d,L"10000",MFGUNLOCK_NUMBER(100,600000)},
+  // 1.10.0 (dashdogy B1, crash_record.hpp).
+  {L"Diagnostics",L"CrashDump",Str::kCrashRecord_b1c1,Str::kWhenTheGameCrashes_b1c2,L"0",MFGUNLOCK_CHOICES(kOnOff)},
   {L"Diagnostics",L"ForceDRED",Str::kForceDred_693f,Str::kRecordsDirectxCrashDataAdds_ed3f,L"0",MFGUNLOCK_CHOICES(kOnOff)},
   {L"Diagnostics",L"D3D12DebugLayer",Str::kD3d12DebugLayer_a465,Str::kRequiresTheGraphicsToolsWindows_c732,L"0",MFGUNLOCK_CHOICES(kOnOff)},
   {L"Diagnostics",L"VulkanFaults",Str::kVulkanFaultWatch_f2ed,Str::kWatchesTheVulkanHostFor_cd42,L"0",MFGUNLOCK_CHOICES(kOnOff)},
@@ -66,10 +70,12 @@ inline constexpr Option kDlssG[]{
   {L"DLSSG",L"GenericGate",Str::kGenericProviderGate_0296,Str::kUnlocksMfgOnADlss_eb88,L"1",MFGUNLOCK_CHOICES(kOnOff)},
   // 1.9.0: RTX 20/30.
   {L"DLSSG",L"PreAdaAdmission",Str::kRtx2030FrameGeneration_6d86,Str::kRtx2030OnlyAdmits_076f,L"1",MFGUNLOCK_CHOICES(kOnOff)},
+  // 1.10.0 (dashdogy A1, ngx_requirements.hpp).
+  {L"DLSSG",L"PreAdaRequirementsAnswer",Str::kRtx2030StreamlineStartAnswer_a1r1,Str::kRtx2030OnlyWhenNgxs_a1r2,L"1",MFGUNLOCK_CHOICES(kOnOff)},
   {L"DLSSG",L"AutoEarlyLoad",Str::kRtx2030AutomaticEarly_ece5,Str::kRtx2030OnlyThe_996e,L"1",MFGUNLOCK_CHOICES(kOnOff)},
   {L"DLSSG",L"XmxJitter",Str::kXmxMultiFrameWithJittered_cab2,Str::kXmxGamesWithJitteredMotion_3256,L"1",MFGUNLOCK_CHOICES(kOnOff)},
   // 1.10.0: Streamline's own log, for support (streamline_log.hpp).
-  {L"DLSSG",L"StreamlineLog",Str::kStreamlineLogSlLog_55a1,Str::kWritesStreamlineSOwnLog_531a,L"0",MFGUNLOCK_CHOICES(kOnOff)},
+  {L"DLSSG",L"StreamlineLog",Str::kStreamlineLogSlLog_55a1,Str::kWritesStreamlineSOwnLog_531a,L"0",MFGUNLOCK_CHOICES(kStreamlineLog)},
   {L"DLSSG",L"ForceBorderless",Str::kForceBorderless_315b,Str::kServesTheGameAsA_53d5,L"0",MFGUNLOCK_CHOICES(kOnOff)},
 };
 #undef MFGUNLOCK_CHOICES

@@ -13,6 +13,12 @@
 // environment too early; there the registry route the panel shows is the only
 // way: HKCU\SOFTWARE\NVIDIA Corporation\Global\Streamline, LogLevel and LogPath.
 // Variables the player set already are kept.
+//
+// 1.10.0 (dashdogy item D4, after JavieEm's streamlineLogMode): the value is a
+// mode. 0 leaves NVIDIA's own settings alone (the default), 1 is the verbose
+// log (the original StreamlineLog=1), 2 the default level, 3 turns
+// Streamline's log off for this game (SL_LOG_LEVEL=0 only). The registry is
+// never changed by the addon.
 #include <windows.h>
 
 #include <atomic>
@@ -30,10 +36,18 @@ constexpr const wchar_t* kVerbose = L"2";
 constexpr const wchar_t* kLogFile = L"sl.log";
 constexpr const wchar_t* kRegistryKey = L"HKCU\\SOFTWARE\\NVIDIA Corporation\\Global\\Streamline";
 
-inline bool Requested() {
-  return GetPrivateProfileIntW(L"DLSSG", L"StreamlineLog", 0,
-                               (backend::Directory() / L"MFGAdaUnlock.ini").c_str()) != 0;
+enum class Mode : int { kInherit = 0, kVerbose = 1, kDefault = 2, kOff = 3 };
+constexpr Mode ModeFromValue(int value) {
+  return value >= 1 && value <= 3 ? static_cast<Mode>(value) : Mode::kInherit;
 }
+constexpr const wchar_t* LevelFor(Mode mode) {
+  return mode == Mode::kOff ? L"0" : mode == Mode::kDefault ? L"1" : kVerbose;
+}
+inline Mode Configured() {
+  return ModeFromValue(GetPrivateProfileIntW(L"DLSSG", L"StreamlineLog", 0,
+                                             (backend::Directory() / L"MFGAdaUnlock.ini").c_str()));
+}
+inline bool Requested() { return Configured() != Mode::kInherit; }
 
 struct Variable {
   const wchar_t* name;
@@ -42,9 +56,12 @@ struct Variable {
 // Which variables to set for a log in `folder`, skipping the ones `already_set`
 // says exist. Pure, so the test needs no environment.
 template <class AlreadySet>
-inline std::vector<Variable> Plan(const std::filesystem::path& folder, AlreadySet already_set) {
+inline std::vector<Variable> Plan(const std::filesystem::path& folder, AlreadySet already_set,
+                                  Mode mode = Mode::kVerbose) {
   std::vector<Variable> plan;
-  if (!already_set(kLevelName)) plan.push_back({kLevelName, kVerbose});
+  if (mode == Mode::kInherit) return plan;
+  if (!already_set(kLevelName)) plan.push_back({kLevelName, LevelFor(mode)});
+  if (mode == Mode::kOff) return plan;  // no file to name
   if (!already_set(kPathName)) plan.push_back({kPathName, folder.wstring()});
   if (!already_set(kFileName)) plan.push_back({kFileName, kLogFile});
   return plan;
@@ -59,9 +76,9 @@ inline bool EnvironmentHas(const wchar_t* name) {
 }
 
 // Sets the variables for this process. Returns the state for the log line.
-inline State Apply(const std::filesystem::path& folder) {
-  const auto plan = Plan(folder, EnvironmentHas);
-  State state = plan.size() == 3 ? State::kSet : State::kKept;
+inline State Apply(const std::filesystem::path& folder, Mode mode) {
+  const auto plan = Plan(folder, EnvironmentHas, mode);
+  State state = plan.size() == (mode == Mode::kOff ? 1u : 3u) ? State::kSet : State::kKept;
   for (const auto& variable : plan)
     if (!SetEnvironmentVariableW(variable.name, variable.value.c_str())) state = State::kFailed;
   g_state.store(static_cast<int>(state), std::memory_order_release);
@@ -71,7 +88,10 @@ inline State Apply(const std::filesystem::path& folder) {
 // One line for the log and the support report.
 inline std::string Describe(State state) {
   switch (state) {
-    case State::kSet: return "environment set for this process; sl.log goes to the game folder once the game starts Streamline";
+    case State::kSet:
+      return Configured() == Mode::kOff
+                 ? "turned off for this game (SL_LOG_LEVEL=0)"
+                 : "environment set for this process; sl.log goes to the game folder once the game starts Streamline";
     case State::kKept: return "some SL_LOG_* variables were already set; they were kept";
     case State::kFailed: return "could not set the environment variables";
     default: return "off";

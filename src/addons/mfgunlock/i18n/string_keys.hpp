@@ -922,6 +922,13 @@ enum class Str : unsigned {
   kXellUnavailable_922b,
   kNoSafeModeSwitchQuiescence_5f62,
   kTheLatencyPreferenceCouldNot_92c5,
+  kRtx2030StreamlineStartAnswer_a1r1,
+  kRtx2030OnlyWhenNgxs_a1r2,
+  kCrashRecord_b1c1,
+  kWhenTheGameCrashes_b1c2,
+  kNvidiaSSetting_d4m0,
+  kVerbose_d4m1,
+  kStandardLevel_d4m2,
   kCount
 };
 }  // namespace mfgunlock::i18n

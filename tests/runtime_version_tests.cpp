@@ -26,6 +26,11 @@ int wmain(int argc, wchar_t** argv) {
 
   CHECK(IsDynamicDlssgVersion(dlssg));
   CHECK(IsDynamicDlssgVersion(Pack(310, 9, 16, 0)));
+  // 1.10.0 (dashdogy A4): no multi-frame count check before 310.7.
+  CHECK(PredatesMultiFrameDlssg(Pack(310, 6, 0, 0)) && PredatesMultiFrameDlssg(Pack(310, 1, 0, 0)));
+  CHECK(PredatesMultiFrameDlssg(Pack(3, 8, 10, 0)));
+  CHECK(!PredatesMultiFrameDlssg(Pack(310, 7, 0, 0)) && !PredatesMultiFrameDlssg(Pack(310, 9, 16, 0)));
+  CHECK(!PredatesMultiFrameDlssg(0));  // unknown version: say nothing
   CHECK(IsDynamicStreamlineVersion(streamline));
   CHECK(IsDynamicStreamlineVersion(Pack(2, 14, 16, 0)));
   // 1.8.5: a minimum (DLSS-G 310.9.1, Streamline 2.14.0), not an exact list.
