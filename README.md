@@ -1910,9 +1910,13 @@ Settings in `MFGAdaUnlock.ini` (next to the game), under `[DLSSG]`:
 | Key | Default | Effect |
 |---|---|---|
 | `PreAdaAdmission` | `1` | `0` turns the whole RTX 20/30 path off |
+| `PreAdaRequirementsAnswer` | `1` | When NGX's frame generation check fails while the game starts Streamline (no DLSS-G file loaded yet, or the driver refuses the game's project ID), the addon answers "supported" if a DLSS-G file is present (the game's `nvngx_dlssg.dll` or the NVIDIA app's copy); otherwise Streamline turns DLSS-G off for the session. `0` leaves NGX's failure as it is. The support report's `chain_ngx_requirements` line names the failure (1.10.0) |
 | `AutoEarlyLoad` | `1` | `0` stops the addon from adding itself to `LoadFromDllMain` |
 | `SimulatePreAda` | `0` | Test only. `1` takes the RTX 20/30 path on an RTX 40/50; `2` also makes NVAPI answer Ampere there, so Streamline refuses DLSS-G as on an RTX 30 unless the admission works (1.10.0) |
-| `StreamlineLog` | `0` | `1` makes the addon set `SL_LOG_LEVEL=2`, `SL_LOG_PATH` (the game folder) and `SL_LOG_NAME=sl.log` in the game's environment before it starts Streamline, so Streamline writes its own `sl.log` beside the game; **Save support files** copies it (1.10.0) |
+| `SimulateRequirementsFailure` | `0` | Test only, with `SimulatePreAda=2`: `1`, `2` or `3` makes NGX's frame generation check fail as FeatureNotFound, InvalidParameter or FeatureNotSupported (1.10.0) |
+| `StreamlineLog` | `0` | `0` leaves Streamline's log as NVIDIA configured it. `1` (verbose) or `2` (standard level) makes the addon set `SL_LOG_LEVEL`, `SL_LOG_PATH` (the game folder) and `SL_LOG_NAME=sl.log` in the game's environment before it starts Streamline, so Streamline writes its own `sl.log` beside the game; **Save support files** copies it. `3` sets only `SL_LOG_LEVEL=0`: no Streamline log for this game. Variables already set are kept, and the registry is never changed (1.10.0) |
+
+Under `[Diagnostics]`, `CrashDump=1` (off by default) writes `MFGAdaUnlock-crash.txt` (exception code, the module and offset where it happened) and a small `MFGAdaUnlock-crash-<pid>.dmp` beside the game when the game crashes; **Save support files** copies both. It is an unhandled-exception filter: it runs only when the process is about to end, after the game's own handlers, and then calls the game's previous filter (1.10.0).
 
 Nothing changes on RTX 40 or 50. When something fails, the panel's
 **Frame generation chain** card (with its **NGX feature** line: whether NVIDIA's

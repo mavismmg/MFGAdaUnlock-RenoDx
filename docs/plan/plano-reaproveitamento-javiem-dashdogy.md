@@ -141,3 +141,31 @@ O que o código dele faz (lido em `source/native`, sem executar nada):
   3. DLSS-G forçado em jogos com Streamline SR, só com o addon carregado cedo; sem sessão Streamline própria.
   4. Sessão Streamline própria (jogos só-NGX): só se 1 a 3 derem certo em campo.
 - Teste de aceitação de cada etapa: gate completo verde, **nenhuma mudança** nos jogos da matriz com o recurso desligado, e pelo menos dois jogos de campo com ele ligado.
+
+## 7. Andamento (2026-11-14)
+
+| Item | Estado | Evidência |
+|---|---|---|
+| A1 | Feito | O oráculo do SL Sample ganhou 3 casos. FeatureNotFound **sem** a resposta: DLSS-G desligado (mask 0x0), mesmo com a arquitetura respondida como Ada. Com a resposta: mask 0x1 e multi-frame 5, para FeatureNotFound e para InvalidParameter. Chave `[DLSSG] PreAdaRequirementsAnswer` |
+| A2 | Feito | Registro `{0x0B, 0x190}` encontrado nos exports D3D11, D3D12 e Vulkan do provider do Sample e de duas versões do app NVIDIA; o oráculo mostra os 3 registros reescritos nos dois arquivos |
+| A3 | Feito, sem teste de ponta a ponta | Política testada (`preada_caller`). O Sample não liga FG neste modo |
+| A4 | Feito | Teste de versão (`runtime_version_tests`); mensagem no card da cadeia |
+| A5 | Investigado, sem mudança | Não dá para reproduzir aqui: o override do app NVIDIA carrega o `sl.dlss_g` 2.14.16 até no Sample 2.11.1. Não há relato de Darktide em RTX 30 |
+| B1 | Feito | `crash_record_tests`: um processo filho dá access violation; o teste confere o `.txt` (exceção, módulo+offset, endereço) e o `.dmp` |
+| D4 | Feito | `StreamlineLog` = 0 NVIDIA, 1 detalhado, 2 padrão, 3 desligado |
+| C | **Parado, decisão do usuário** | Ver abaixo |
+
+### C: o tamanho real do merge para a v1.7.1
+
+Merge de três vias, num rascunho, dos 31 arquivos vendorizados que mudaram upstream (base `b97deee`):
+- 25 entram sem conflito.
+- 6 têm conflito, 22 no total: `sdk_pacing.cpp` 11 (o arquivo cresce de 134 KB para 230 KB), `vk_host.cpp` 5, `xvk.h` 2, `cuda_route.cpp` 2, `xvk_dxgi.cpp` 1, `sdk_pacing.h` 1. É justamente onde estão as nossas mudanças locais (traces, flip metering, queue-ahead, as correções "MFGAdaUnlock 1.7" do Vulkan).
+- As versões novas incluem cabeçalhos que não temos: `latency_pacing.h`, `latency_probe.h`, `pacing_diag.h`, `pacing_trace.h`, `frame_gen_target.h`, `diagnostic_paths.h`, `cuda_layers.h`, `xvk_tensor.h`, `host_xell_binding.h`, `xemfg_host_common.h`, e `vk_provider.h` (este é da rota do OptiScaler).
+- **Mudou o formato dos payloads:** os programas da Intel, os SPIR-V e o fatbin CUDA agora vêm compactados em LZMA (`xess_programs.packed.h`, `xvk_programs.packed.h`, `xefg_cuda.packed.h`). Os programas também mudaram (tensor no Vulkan, camadas CUDA novas). Precisaríamos de um extrator novo, lendo o DLL da v1.7.1 com os novos hashes, mais o descompressor LZMA.
+- Não há como validar aqui o ganho principal, a rota de tensor na RTX 30/20: precisa de uma placa dessas.
+
+Recomendação: **não** pôr o C na 1.10.0. Fazer o C como release própria (1.10.1 ou 1.11.0), com os testes de campo de XMX que ele pede. Alternativa menor para a 1.10.0: trazer só correções pontuais, sem payload novo (por exemplo, o flip metering da NVIDIA só onde o driver diz que suporta), cada uma com seu teste.
+
+### Correção na seção 6 (JaviEM)
+
+O passo 1 recomendado (XMX com a entrada DLSS-SR em DX12) contraria uma decisão sua de 2026-11-02: "XMX with DLSS-SR-only games was dropped: latency is XMX's main pillar and an own presenter risks losing it". Esse passo sai da recomendação, a menos que você reabra a decisão. Os passos 2 a 4 continuam valendo como estavam.
