@@ -13,6 +13,67 @@
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
     mfgunlock::dlssgdisplay::Draw();
 #endif
+    // 1.10.0: frame generation in more games (force_fg.hpp, native_vulkan.hpp), next to the method.
+    if (mfgunlock::backend::active == mfgunlock::backend::Kind::DlssG) {
+      ImGui::Spacing();
+      ImGui::TextDisabled("%s", T(Str::kMoreGamesExperimental_r1a));
+      namespace adv = mfgunlock::ui::advanced;
+      adv::DrawOption(adv::kRoutes[0]);
+      const bool force_wanted = adv::Current(adv::kRoutes[0]) == L"1";
+      const bool force_running = mfgunlock::framecount::g_force_fg_enabled.load(std::memory_order_relaxed);
+      if (force_wanted != force_running) {
+        mfgunlock::ui::Description(T(Str::kRestartTheGameToApply_r1b));
+      } else if (force_running) {
+        FILETIME created{}, exited{}, kernel{}, user{}, now{};
+        GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user);
+        GetSystemTimeAsFileTime(&now);
+        const auto ticks = [](const FILETIME& f) { return (uint64_t(f.dwHighDateTime) << 32) | f.dwLowDateTime; };
+        const uint64_t uptime_ms = ticks(now) > ticks(created) ? (ticks(now) - ticks(created)) / 10000 : 0;
+        const auto status = mfgunlock::forcefg::PanelStatus(
+            true, GetModuleHandleW(L"sl.interposer.dll") != nullptr,
+            mfgunlock::framecount::internal::g_init_seen.load(std::memory_order_acquire), uptime_ms,
+            static_cast<mfgunlock::forcefg::Decision>(mfgunlock::framecount::g_force_fg_decision.load(std::memory_order_acquire)),
+            static_cast<mfgunlock::forcefg::Apply>(mfgunlock::framecount::g_force_fg_apply.load(std::memory_order_acquire)));
+        using S = mfgunlock::forcefg::Status;
+        switch (status) {
+          case S::kActive: mfgunlock::ui::Notice(T(Str::kForcedFgActive_r1i), mfgunlock::ui::Accent); break;
+          case S::kNoStreamline: mfgunlock::ui::Notice(T(Str::kNoStreamlineUseXemfg_r1c)); break;
+          case S::kInitMissed: {
+            mfgunlock::ui::Notice(T(Str::kSlinitNotSeenEarly_r1d));
+            static int early_state = 0;  // 0 not tried, 1 saved, 2 failed
+            mfgunlock::ui::ButtonRow early(1);
+            if (early(T(Str::kEnableEarlyAddonLoading_a017), T(Str::kAddsThisAddonToReshade_09f4)))
+              early_state = EnsureEarlyLoadEntry() ? 1 : 2;
+            if (early_state == 1) mfgunlock::ui::Description(T(Str::kSavedRestartTheGame_a1f6));
+            else if (early_state == 2) mfgunlock::ui::Description(T(Str::kReshadeIniCouldNotBe_03d9));
+            break;
+          }
+          case S::kGameHasFrameGeneration: mfgunlock::ui::Description(T(Str::kGameHasOwnFrameGeneration_r1e)); break;
+          case S::kAllFeatures: mfgunlock::ui::Description(T(Str::kGameLoadsEveryFeature_r1f)); break;
+          case S::kNoSuperResolution: mfgunlock::ui::Notice(T(Str::kNoSuperResolution_r1g)); break;
+          case S::kNoReflex: mfgunlock::ui::Notice(T(Str::kNoReflex_r1h)); break;
+          case S::kWaiting: mfgunlock::ui::Description(T(Str::kWaitingForTheGame_r1j)); break;
+          default: break;
+        }
+      }
+#if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
+      if (xmx_selected) {
+        adv::DrawOption(adv::kRoutes[1]);
+        const bool vk_wanted = adv::Current(adv::kRoutes[1]) == L"1";
+        const bool vk_running = mfgunlock::xemfg::native::vulkan::XmxProviderWanted();
+        if (vk_wanted != vk_running) {
+          mfgunlock::ui::Description(T(Str::kRestartTheGameToApply_r1b));
+        } else if (vk_running) {
+          const std::string state = mfgunlock::xemfg::native::vulkan::XmxProviderReport();
+          if (state.empty()) mfgunlock::ui::Description(T(Str::kXmxVulkanNotVulkan_r1k));
+          else if (state.rfind("created", 0) == 0) mfgunlock::ui::Notice(T(Str::kXmxVulkanActive_r1l), mfgunlock::ui::Accent);
+          else if (state.rfind("waiting", 0) == 0) mfgunlock::ui::Description(T(Str::kWaitingForTheGame_r1j));
+          else mfgunlock::ui::Notice(T(Str::kXmxVulkanRefused_r1m));
+        }
+      }
+#endif
+      adv::Result();
+    }
     if (ImGui::BeginTable("##frame_generation_settings", 2,
                         ImGuiTableFlags_SizingStretchProp)) {
     ImGui::TableSetupColumn(T(Str::kSetting_754b), ImGuiTableColumnFlags_WidthStretch, 0.5f);

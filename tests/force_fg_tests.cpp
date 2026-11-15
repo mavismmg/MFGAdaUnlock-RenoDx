@@ -40,6 +40,18 @@ int main() {
   CHECK(DecideApply(true, false, true, true, true) == Apply::kAlreadyOn);
   CHECK(DecideApply(true, false, true, true, false) == Apply::kTurnOn);
 
+  // The General page's status (RDR2: no Streamline at all).
+  CHECK(PanelStatus(false, false, false, 99999, Decision::kOff, Apply::kNotAdded) == Status::kOff);
+  CHECK(PanelStatus(true, false, false, 5000, Decision::kOff, Apply::kNotAdded) == Status::kWaiting);
+  CHECK(PanelStatus(true, false, false, 30000, Decision::kOff, Apply::kNotAdded) == Status::kNoStreamline);
+  CHECK(PanelStatus(true, true, false, 30000, Decision::kOff, Apply::kNotAdded) == Status::kInitMissed);
+  CHECK(PanelStatus(true, true, true, 30000, Decision::kGameHasFrameGeneration, Apply::kNotAdded) ==
+        Status::kGameHasFrameGeneration);
+  CHECK(PanelStatus(true, true, true, 30000, Decision::kNoSuperResolution, Apply::kNotAdded) == Status::kNoSuperResolution);
+  CHECK(PanelStatus(true, true, true, 30000, Decision::kAdded, Apply::kNoReflex) == Status::kNoReflex);
+  CHECK(PanelStatus(true, true, true, 30000, Decision::kAdded, Apply::kAlreadyOn) == Status::kActive);
+  CHECK(PanelStatus(true, true, true, 30000, Decision::kAdded, Apply::kNotAdded) == Status::kWaiting);
+
   if (failures == 0) std::printf("force_fg: all checks passed\n");
   return failures == 0 ? 0 : 1;
 }

@@ -106,4 +106,34 @@ constexpr const char* ApplyText(Apply apply) {
   }
 }
 
+// 1.10.0: what the General page says under the switch. A game that never loads
+// Streamline (RDR2 calls DLSS through NGX directly) never reaches slInit, so the
+// absence of Streamline after the game has been up a while is a status of its own.
+enum class Status : uint8_t {
+  kOff, kWaiting, kNoStreamline, kInitMissed, kGameHasFrameGeneration, kAllFeatures, kNoSuperResolution, kNoReflex,
+  kActive
+};
+constexpr uint64_t kNoStreamlineAfterMs = 20000;
+constexpr Status PanelStatus(bool enabled, bool streamline_loaded, bool init_seen, uint64_t uptime_ms,
+                             Decision decision, Apply apply) {
+  if (!enabled) return Status::kOff;
+  if (!init_seen) {
+    if (streamline_loaded) return Status::kInitMissed;
+    return uptime_ms >= kNoStreamlineAfterMs ? Status::kNoStreamline : Status::kWaiting;
+  }
+  switch (decision) {
+    case Decision::kGameHasFrameGeneration: return Status::kGameHasFrameGeneration;
+    case Decision::kAllFeatures: return Status::kAllFeatures;
+    case Decision::kNoSuperResolution: return Status::kNoSuperResolution;
+    case Decision::kAdded: break;
+    default: return Status::kWaiting;
+  }
+  switch (apply) {
+    case Apply::kNoReflex: return Status::kNoReflex;
+    case Apply::kGameControls: return Status::kGameHasFrameGeneration;
+    case Apply::kAlreadyOn: case Apply::kTurnOn: return Status::kActive;
+    default: return Status::kWaiting;
+  }
+}
+
 }  // namespace mfgunlock::forcefg

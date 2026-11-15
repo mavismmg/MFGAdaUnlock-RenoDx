@@ -933,6 +933,19 @@ enum class Str : unsigned {
   kForStreamlineGamesWith_f4g2,
   kXmxInVulkanGames_x3v1,
   kExperimentalXmxInVulkan_x3v2,
+  kMoreGamesExperimental_r1a,
+  kRestartTheGameToApply_r1b,
+  kNoStreamlineUseXemfg_r1c,
+  kSlinitNotSeenEarly_r1d,
+  kGameHasOwnFrameGeneration_r1e,
+  kGameLoadsEveryFeature_r1f,
+  kNoSuperResolution_r1g,
+  kNoReflex_r1h,
+  kForcedFgActive_r1i,
+  kWaitingForTheGame_r1j,
+  kXmxVulkanNotVulkan_r1k,
+  kXmxVulkanActive_r1l,
+  kXmxVulkanRefused_r1m,
   kCount
 };
 }  // namespace mfgunlock::i18n
