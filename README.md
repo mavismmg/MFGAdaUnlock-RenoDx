@@ -22,6 +22,21 @@
 > existing settings still apply. Older release notes keep the old name.
 
 > [!NOTE]
+> ### New in 1.10.0
+>
+> - **Frame generation in games with DLSS Super Resolution only** (Kingdom Come:
+>   Deliverance II, Red Dead Redemption 2 in DX12 and Vulkan): turn on **Add frame
+>   generation**; MFG Unlock starts NVIDIA's Streamline itself, for DLSS-G or XeMFG
+>   DLSS-G, with a HUD fix in DX12. See [DLSS frame generation in games without
+>   it](#dlss-frame-generation-in-games-without-it).
+> - **XeMFG DLSS-G in Vulkan games** (DOOM: The Dark Ages), with **Pacing in Vulkan
+>   games** so the frame rate holds when the GPU is at its limit.
+> - **The panel in six languages** and a new General page.
+> - RTX 20/30 diagnostics, a crash record, a compatibility matrix.
+>
+> See the [1.10.0 release notes](docs/releases/1.10.0.md).
+
+> [!NOTE]
 > ### New in 1.9.0: NVIDIA's frame generation on RTX 20/30
 >
 > DLSS Frame Generation now runs on RTX 20 and 30 GPUs with NVIDIA's own generator, not
