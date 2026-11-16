@@ -1278,7 +1278,13 @@ Edition call DLSS Super Resolution straight through NGX. For these, the addon
 starts NVIDIA's Streamline itself and gives the game DLSS frame generation, or
 XeMFG DLSS-G when it is selected.
 
-- Copy the `MFGUnlock-Streamline` folder that comes with the addon next to it.
+- The addon needs NVIDIA's Streamline 2.14.16 files in a folder named
+  `MFGUnlock-Streamline` next to it. They are not in this release: download the
+  Streamline SDK 2.14.16 from NVIDIA's GitHub
+  (<https://github.com/NVIDIA-RTX/Streamline/releases>), and copy from its `bin/x64`
+  folder `sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`, `sl.reflex.dll`,
+  `sl.pcl.dll` and `nvngx_dlssg.dll` into `MFGUnlock-Streamline`. The panel says
+  when the folder or a file is missing.
 - Direct3D 12 and Vulkan. Vulkan needs ReShade installed as the Vulkan layer;
   `[DLSSG] HostVulkan=0` turns off the Vulkan route alone.
 - **HUD fix** (on by default, Direct3D 12 only): the addon gives DLSS frame
