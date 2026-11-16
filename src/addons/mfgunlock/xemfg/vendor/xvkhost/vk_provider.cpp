@@ -32,6 +32,9 @@
 
 namespace xess_vulkan_provider
 {
+bool gUiComposition = false;
+void SetUiComposition(bool on) noexcept { gUiComposition = on; }
+
 namespace
 {
 using Microsoft::WRL::ComPtr;
@@ -573,7 +576,9 @@ bool GenerateBatch(Device& d, Feature& f, VkCommandBuffer command, NVSDK_NGX_Par
     f.exec.outputs = f.execOutputs.data();
     f.exec.outputBases = f.execBases.data();
     f.exec.interpolatedFrames = uint8_t(count);
-    f.exec.uiComposition = (slot.hasHudless || slot.hasUi) ? 1u : 0u;
+    // MFG Unlock: XeFG's UI composition left the generated frames uninterpolated (DOOM: The Dark Ages, KCD2 in D3D12);
+    // opt-in only ([DLSSG] XmxUiComposition=1).
+    f.exec.uiComposition = gUiComposition && (slot.hasHudless || slot.hasUi) ? 1u : 0u;
     f.current ^= 1;
     f.havePrevious = true;
     return RecordOutputs(d, f, command, range);

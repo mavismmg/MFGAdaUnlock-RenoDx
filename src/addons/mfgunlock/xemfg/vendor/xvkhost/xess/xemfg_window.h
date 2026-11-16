@@ -2,7 +2,9 @@
 // What Dynamic MFG asks of the game's window (xemfg_dynamic.h, both standalone hosts), as our OptiScaler fork's
 // XeFG_DynamicMFG does: whether it is in front, and its display's refresh rate.
 #include <Windows.h>
+#include <atomic>
 #include <cstdint>
+#include <thread>
 
 namespace xemfg_standalone
 {
@@ -28,10 +30,9 @@ inline int WindowFocus(HWND window) noexcept
     return pid == GetCurrentProcessId() ? 1 : 0;
 }
 
-// The refresh rate of the display the window is on, 0 unknown. The window can move: callers look again every 2 s.
-inline uint32_t WindowRefreshHz(HWND window) noexcept
+// A monitor's refresh rate in Hz, straight from the driver (EnumDisplaySettingsW: slow, tens of ms on some PCs).
+inline uint32_t QueryMonitorRefreshHz(HMONITOR monitor) noexcept
 {
-    const HMONITOR monitor = window ? MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) : nullptr;
     MONITORINFOEXW info{};
     info.cbSize = sizeof(info);
     if (!monitor || !GetMonitorInfoW(monitor, &info)) return 0;
@@ -39,5 +40,44 @@ inline uint32_t WindowRefreshHz(HWND window) noexcept
     mode.dmSize = sizeof(mode);
     if (!EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode)) return 0;
     return mode.dmDisplayFrequency > 1 ? mode.dmDisplayFrequency : 0;   // 0 and 1 mean the hardware default
+}
+
+// MFG Unlock 1.10.0: the refresh rate of `monitor`, cached. The callers run on the game's Present thread every 2 s, and
+// EnumDisplaySettingsW there stalled DOOM: The Dark Ages every 2 s with XMX in Vulkan. Only the first lookup (or a new
+// monitor) waits for the driver; a known monitor is looked up again in the background every 10 s.
+inline uint32_t CachedMonitorRefreshHz(HMONITOR monitor) noexcept
+{
+    static std::atomic<HMONITOR> known{nullptr};
+    static std::atomic<uint32_t> hz{0};
+    static std::atomic<uint64_t> checked{0};
+    static std::atomic<bool> busy{false};
+    if (!monitor) return 0;
+    const uint64_t now = GetTickCount64();
+    if (known.load(std::memory_order_acquire) != monitor) {
+        const uint32_t value = QueryMonitorRefreshHz(monitor);
+        hz.store(value, std::memory_order_relaxed);
+        checked.store(now, std::memory_order_relaxed);
+        known.store(monitor, std::memory_order_release);
+        return value;
+    }
+    if (now - checked.load(std::memory_order_relaxed) >= 10000 && !busy.exchange(true, std::memory_order_acq_rel)) {
+        checked.store(now, std::memory_order_relaxed);
+        try {
+            std::thread([monitor] {
+                const uint32_t value = QueryMonitorRefreshHz(monitor);
+                if (known.load(std::memory_order_acquire) == monitor) hz.store(value, std::memory_order_relaxed);
+                busy.store(false, std::memory_order_release);
+            }).detach();
+        } catch (...) {
+            busy.store(false, std::memory_order_release);
+        }
+    }
+    return hz.load(std::memory_order_relaxed);
+}
+
+// The refresh rate of the display the window is on, 0 unknown. The window can move: callers look again every 2 s.
+inline uint32_t WindowRefreshHz(HWND window) noexcept
+{
+    return CachedMonitorRefreshHz(window ? MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) : nullptr);
 }
 }

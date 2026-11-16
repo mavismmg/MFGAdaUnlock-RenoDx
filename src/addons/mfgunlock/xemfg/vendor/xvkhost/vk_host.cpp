@@ -1402,7 +1402,10 @@ DeviceEditPtr PrepareDeviceImpl(VkPhysicalDevice physical, const VkDeviceCreateI
             edit->presentIds = true;
         }
         // MFGAdaUnlock 1.7: NVIDIA's present metering for the layer's swap chain, where the driver offers it.
-        if (gAddonPresentMetering.load() && offered(VK_NV_PRESENT_METERING_EXTENSION_NAME)) {
+        // MFG Unlock 1.10.0: only when the host takes swap chains over. For XMX's provider (host off) the extension made
+        // the game's own Streamline meter its presents (FlipMetering 2), which NVIDIA's generator never had there:
+        // DOOM: The Dark Ages slowed down every 2 s with XMX, and not with NVIDIA's frame generation.
+        if (gEnabled.load() && gAddonPresentMetering.load() && offered(VK_NV_PRESENT_METERING_EXTENSION_NAME)) {
             VkPhysicalDevicePresentMeteringFeaturesNV metering{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_METERING_FEATURES_NV};
             VkPhysicalDeviceFeatures2 query{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &metering};
             features2(physical, &query);

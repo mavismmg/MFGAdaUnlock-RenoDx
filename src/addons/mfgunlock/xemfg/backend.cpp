@@ -566,7 +566,14 @@ void RecordRuntimeFiles(const std::filesystem::path& folder,const std::filesyste
 #endif
 void Start() {
   std::lock_guard lock(mutex);
-  if (mfgunlock::backend::Read()!=mfgunlock::backend::Kind::XeMfg) { Detail("DLSS-G selected; XeMFG companion inactive"); return; }
+  // 1.10.0: XMX on Vulkan (DLSS-G backend) needs this validated Intel pair too:
+  // the Vulkan host adopts only the pair started here (AdoptVulkanHostPair), so
+  // without it DOOM: The Dark Ages refused XMX ("runtime_route_rejected").
+  bool xmxVulkan=false;
+#if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
+  xmxVulkan=mfgunlock::xemfg::native::vulkan::XmxProviderWanted();
+#endif
+  if (mfgunlock::backend::Read()!=mfgunlock::backend::Kind::XeMfg && !xmxVulkan) { Detail("DLSS-G selected; XeMFG companion inactive"); return; }
 #ifdef MFGUNLOCK_NATIVE_XEMFG
   host=self; // Explicitly admitted in-process transport, never an OptiScaler impersonation.
   {

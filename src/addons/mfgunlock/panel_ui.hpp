@@ -16,6 +16,8 @@
 #include <shellapi.h>
 
 namespace mfgunlock::ui {
+// 1.10.0: the method once called XMX (a product name, never translated).
+inline constexpr const char* kXemfgDlssgName = "XeMFG DLSS-G";
 inline constexpr ImVec4 Accent{0.39f,0.84f,0.71f,1.f};
 inline constexpr ImVec4 Muted{0.65f,0.72f,0.82f,1.f};
 inline constexpr ImVec4 Warning{1.f,0.77f,0.35f,1.f};
@@ -123,10 +125,16 @@ inline bool Segmented(const char* id,int& value,const char* const* labels,int co
   ImGui::BeginGroup();
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(0,0));
   ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize,0.f);
-  const float width=(std::max)(1.f,ImGui::GetContentRegionAvail().x/float(count));
+  // 1.10.0: each option as wide as its label plus an even share of the rest ("XeMFG DLSS-G" did not fit a third).
+  const float available=(std::max)(1.f,ImGui::GetContentRegionAvail().x),pad=ImGui::GetStyle().FramePadding.x*2.f;
+  float widths[16]{},needed=0.f;
+  for(int i=0;i<count && i<16;++i) { widths[i]=ImGui::CalcTextSize(labels[i],nullptr,true).x+pad; needed+=widths[i]; }
+  const float extra=(available-needed)/float(count),scale=needed>available?available/needed:1.f;
+  float offsets[17]{};
+  for(int i=0;i<count && i<16;++i) { widths[i]=extra>0.f?widths[i]+extra:widths[i]*scale; offsets[i+1]=offsets[i]+widths[i]; }
   const float rounding=ImGui::GetStyle().FrameRounding,height=ImGui::GetFrameHeight();
   const auto start=ImGui::GetCursorScreenPos();
-  const ImVec2 end(start.x+width*float(count),start.y+height);
+  const ImVec2 end(start.x+offsets[(std::min)(count,16)],start.y+height);
   auto* draw=ImGui::GetWindowDrawList();
   draw->AddRectFilled(start,end,ImGui::GetColorU32(ImGuiCol_FrameBg),rounding);
   bool changed=false;
@@ -135,16 +143,16 @@ inline bool Segmented(const char* id,int& value,const char* const* labels,int co
     const bool on=i==value;
     // The row's outer corners stay round, so the selection is drawn here and not by the button.
     if(on) {
-      const ImVec2 min(start.x+width*float(i),start.y);
+      const ImVec2 min(start.x+offsets[i],start.y);
       const ImDrawFlags corners=count==1?ImDrawFlags_RoundCornersAll:i==0?ImDrawFlags_RoundCornersLeft:
           i==count-1?ImDrawFlags_RoundCornersRight:ImDrawFlags_RoundCornersNone;
-      draw->AddRectFilled(min,ImVec2(min.x+width,end.y),ImGui::GetColorU32(Selected),rounding,corners);
+      draw->AddRectFilled(min,ImVec2(min.x+widths[i],end.y),ImGui::GetColorU32(Selected),rounding,corners);
     }
     ImGui::PushStyleColor(ImGuiCol_Button,ImVec4(0,0,0,0));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered,on?ImVec4(0,0,0,0):ImVec4(1,1,1,.07f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,on?ImVec4(0,0,0,0):ImVec4(1,1,1,.12f));
     ImGui::PushStyleColor(ImGuiCol_Text,on?Bright:Muted);
-    if(ImGui::Button(labels[i],ImVec2(width,height)) && !on) { value=i; changed=true; }
+    if(ImGui::Button(labels[i],ImVec2(widths[i],height)) && !on) { value=i; changed=true; }
     ImGui::PopStyleColor(4);
   }
   ImGui::PopStyleVar(2);
@@ -152,6 +160,63 @@ inline bool Segmented(const char* id,int& value,const char* const* labels,int co
   draw->AddRect(start,end,ImGui::GetColorU32(ImGuiCol_Border),rounding,0,BorderWidth());
   ImGui::PopID();
   return changed;
+}
+// 1.10.0 (panel reformulation): an on/off switch instead of an On/Off list. One item, so the
+// row's tooltip covers it.
+inline bool Toggle(const char* id,bool& value) {
+  const float height=ImGui::GetFrameHeight()*.8f,width=height*1.85f;
+  const float y=ImGui::GetCursorPosY();
+  ImGui::SetCursorPosY(y+(ImGui::GetFrameHeight()-height)*.5f);
+  const auto at=ImGui::GetCursorScreenPos();
+  const bool pressed=ImGui::InvisibleButton(id,ImVec2(width,height));
+  if(pressed) value=!value;
+  auto* draw=ImGui::GetWindowDrawList();
+  const bool hovered=ImGui::IsItemHovered();
+  const ImVec4 track=value?Selected:ControlBg;
+  draw->AddRectFilled(at,ImVec2(at.x+width,at.y+height),ImGui::GetColorU32(track),height*.5f);
+  draw->AddRect(at,ImVec2(at.x+width,at.y+height),ImGui::GetColorU32(hovered?SelectedLine:Line),height*.5f,0,BorderWidth()*.75f);
+  const float radius=height*.5f-3.f*Scale();
+  const float cx=value?at.x+width-height*.5f:at.x+height*.5f;
+  draw->AddCircleFilled(ImVec2(cx,at.y+height*.5f),radius,ImGui::GetColorU32(value?Bright:ImVec4(.42f,.44f,.47f,1)));
+  return pressed;
+}
+// A status under the control it belongs to: a dot (teal active, amber waiting or a problem,
+// grey off) and the text, in a quiet box the width of the row.
+inline void StatusChip(const char* text,ImVec4 dot=Muted) {
+  if(!text || !text[0]) return;
+  const float pad=6.f*Scale(),dotSize=ImGui::GetFontSize()*.42f;
+  const auto start=ImGui::GetCursorScreenPos();
+  const float width=ImGui::GetContentRegionAvail().x;
+  auto* draw=ImGui::GetWindowDrawList();
+  // Measured first and drawn under the text, without channels: tables already split this list.
+  const float textX=pad*3.f+dotSize,wrap=(std::max)(1.f,width-textX-pad);
+  const float bottom=start.y+pad*2.f+ImGui::CalcTextSize(text,nullptr,false,wrap).y;
+  draw->AddRectFilled(start,ImVec2(start.x+width,bottom),ImGui::GetColorU32(ImVec4(.14f,.145f,.155f,1)),5.f*Scale());
+  draw->AddRect(start,ImVec2(start.x+width,bottom),ImGui::GetColorU32(ImVec4(.21f,.22f,.235f,1)),5.f*Scale());
+  draw->AddCircleFilled(ImVec2(start.x+pad*2.f+dotSize*.5f,start.y+pad+ImGui::GetTextLineHeight()*.5f),dotSize*.5f,ImGui::GetColorU32(dot));
+  ImGui::SetCursorScreenPos(ImVec2(start.x+textX,start.y+pad));
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+wrap);
+  ImGui::PushStyleColor(ImGuiCol_Text,ImVec4(.84f,.86f,.89f,1)); ImGui::TextUnformatted(text); ImGui::PopStyleColor();
+  ImGui::PopTextWrapPos();
+  ImGui::SetCursorScreenPos(ImVec2(start.x,bottom));
+  ImGui::Dummy(ImVec2(width,0.f));
+}
+// A collapsible group, drawn like ReShade's headers ("System check"), with an optional amber tag
+// after the title. Opens once by `openByDefault`; afterwards ImGui keeps what the player chose.
+inline bool SectionHeader(const char* title,bool openByDefault,const char* tag=nullptr) {
+  ImGui::SetNextItemOpen(openByDefault,ImGuiCond_Once);
+  const bool open=ImGui::CollapsingHeader(title);
+  if(tag && tag[0]) {
+    const auto min=ImGui::GetItemRectMin(),max=ImGui::GetItemRectMax();
+    const auto& style=ImGui::GetStyle();
+    const float x=min.x+style.FramePadding.x*3.f+ImGui::GetFontSize()+ImGui::CalcTextSize(title,nullptr,true).x+ImGui::GetFontSize()*.9f;
+    const auto size=ImGui::CalcTextSize(tag);
+    const float pad=4.f*Scale(),y=(min.y+max.y-size.y)*.5f;
+    auto* draw=ImGui::GetWindowDrawList();
+    draw->AddRect(ImVec2(x-pad,y-pad*.5f),ImVec2(x+size.x+pad,y+size.y+pad*.5f),ImGui::GetColorU32(ImVec4(.42f,.33f,.15f,1)),3.f*Scale());
+    draw->AddText(ImVec2(x,y),ImGui::GetColorU32(Warning),tag);
+  }
+  return open;
 }
 inline void Readout(const char* id,const char* title,const char* value,const char* tooltip=nullptr,ImVec4 color=Muted) {
   Setting(id,title,tooltip,[&] {
@@ -264,7 +329,7 @@ inline void BackendSelector() {
   static const auto startup=backend::ReadMode();
   const auto selected=backend::Read(); const auto mode=backend::ReadMode(); int choice=int(mode);
   Setting("##backend_selection",T(Str::kFrameGenerationMethod_fd2d),T(Str::kNvidiaDlssGNvidiaS_572e),[&] {
-    const char* kMethods[] = {"DLSS-G","XeMFG","XMX"};
+    const char* kMethods[] = {"DLSS-G","XeMFG",kXemfgDlssgName};
     if(Segmented("##backend",choice,kMethods,3))
       saveFailed=!backend::SelectMode(backend::Mode(choice));
   });
@@ -343,7 +408,8 @@ inline void SafeModeNotice() {
 // Version left, repository link right: one footer for both backends.
 // 1.8.1: this PC at a glance, on the General page. `sync` is null where it is not known.
 inline void SystemCard(const char* sync,bool xmxSelected) {
-  Section(T(Str::kSystem_84bc));
+  // 1.10.0 (panel reformulation): collapsed by default, like the chain and the system check.
+  if(!SectionHeader(T(Str::kSystem_84bc),false)) return;
   Card card("##system_card");
   const auto& machine=system::ReadMachine();
   const auto& display=system::g_display;
@@ -432,7 +498,9 @@ inline void LanguageSelector() {
     return !i18n::NeedsCjkFont(info.language) || font==nullptr ||
            font->IsGlyphInFont(static_cast<ImWchar>(i18n::ProbeGlyph(info.language)));
   };
-  ImGui::SetNextItemWidth(ImGui::GetFontSize()*12.f);
+  // 1.10.0: no label beside it; the tooltip names it in English too, so a player who picked a
+  // language by mistake still finds it.
+  ImGui::SetNextItemWidth(ImGui::GetFontSize()*10.f);
   if(ImGui::BeginCombo("##panel_language",drawable(current)?current.name:current.code)) {
     for(const auto& info:i18n::kInfo) {
       std::string label=drawable(info)?info.name:info.code;
@@ -447,7 +515,17 @@ inline void LanguageSelector() {
     }
     ImGui::EndCombo();
   }
-  Tooltip(T(Str::kLanguageOfThisPanel_lang));
+  if(ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip) && ImGui::BeginTooltip()) {
+    ImGui::PushTextWrapPos(ImGui::GetFontSize()*34.f);
+    if(selected==i18n::Language::kEnglish) ImGui::TextUnformatted(T(Str::kLanguageLabel_lng));
+    else {
+      // "Language" stays in English next to the translation, for whoever needs to switch back.
+      constexpr const char* kEnglishName=" (Language)";
+      ImGui::Text("%s%s",T(Str::kLanguageLabel_lng),kEnglishName);
+    }
+    ImGui::TextUnformatted(T(Str::kLanguageOfThisPanel_lang));
+    ImGui::PopTextWrapPos(); ImGui::EndTooltip();
+  }
   // Shown in English: this note appears exactly when the font cannot draw the
   // chosen language, and T() then answers in English anyway.
   if(g_language_glyphs_missing) {
@@ -455,23 +533,47 @@ inline void LanguageSelector() {
     ImGui::TextDisabled("%s",T(Str::kRestartTheGameToLoadFont_lang));
   }
 }
-inline void Footer(const char* note=nullptr) {
-  const char* version=kVersionLine;
+// 1.10.0 (panel reformulation): the add-on at the left (name and version, the author below,
+// smaller), its actions at the right (language, GitHub), one hint line under both.
+inline constexpr const char* kVersion="1.10.0";
+inline constexpr const char* kAuthorLine="by mavismmg \xc2\xb7 monet \xc2\xb7 ayase \xc2\xb7 woni";
+inline void Footer(const char* /*note: one hint line now covers restarts*/=nullptr) {
   const auto& style=ImGui::GetStyle();
-  const float button=ImGui::CalcTextSize(T(Str::kGithubRepository_31c6)).x+style.FramePadding.x*2.f;
-  const bool oneLine=ImGui::GetContentRegionAvail().x>ImGui::CalcTextSize(version).x+button+ImGui::GetFontSize();
   const float line=ImGui::GetTextLineHeightWithSpacing(),buttonRow=ImGui::GetFrameHeightWithSpacing();
-  const float height=style.ItemSpacing.y*4.f+buttonRow*2.f+line*((oneLine?1.f:2.f)+(note?1.f:0.f));
+  const float github=ImGui::CalcTextSize("GitHub").x+style.FramePadding.x*2.f;
+  const float actions=ImGui::GetFontSize()*10.f+style.ItemSpacing.x+github;
+  const float width=ImGui::GetContentRegionAvail().x;
+  // The language and GitHub sit beside the name and author line only when both fit; otherwise below them.
+  const float block=(std::max)(ImGui::CalcTextSize(kName).x+style.ItemSpacing.x+ImGui::CalcTextSize(kVersion).x,
+                               ImGui::CalcTextSize(kAuthorLine).x);
+  const bool beside=width>actions+block+ImGui::GetFontSize()*2.f;
+  // The hint's height as StatusChip draws it (it wraps in a narrow panel).
+  const float pad=6.f*Scale(),chipText=pad*3.f+ImGui::GetFontSize()*.42f;
+  const float chip=pad*2.f+ImGui::CalcTextSize(T(Str::kFooterHint_p12),nullptr,false,(std::max)(1.f,width-chipText-pad)).y;
+  const float height=style.ItemSpacing.y*5.f+line*2.f+(beside?0.f:buttonRow)+chip+4.f*Scale();
   const float spare=ImGui::GetContentRegionAvail().y-height;
   if(spare>0.f) ImGui::SetCursorPosY(ImGui::GetCursorPosY()+spare);
-  ImGui::Spacing(); ImGui::Separator();
-  Description(version);
-  if(oneLine) {
-    ImGui::SameLine(); ImGui::SetCursorPosX(ImGui::GetCursorPosX()+ImGui::GetContentRegionAvail().x-button);
+  ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+  const float right=ImGui::GetCursorPosX()+ImGui::GetContentRegionAvail().x;
+  const float top=ImGui::GetCursorPosY();
+  ImGui::BeginGroup();
+  ImGui::TextUnformatted(kName); ImGui::SameLine(); ImGui::TextColored(Muted,"%s",kVersion);
+  ImGui::TextColored(Muted,"%s",kAuthorLine);
+  ImGui::EndGroup();
+  const float blockBottom=ImGui::GetCursorPosY();
+  if(beside) {
+    ImGui::SetCursorPos(ImVec2(right-actions,top+(blockBottom-top-ImGui::GetFrameHeight()-style.ItemSpacing.y)*.5f));
   }
-  RepositoryButton();
   LanguageSelector();
-  Description(T(Str::kHoverASettingToSee_160a));
-  if(note) Description(note);
+  ImGui::SameLine();
+  static bool failed{};
+  if(ImGui::Button("GitHub")) {
+    failed=reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr,L"open",
+        L"https://github.com/mavismmg/MFGAdaUnlock-RenoDx",nullptr,nullptr,SW_SHOWNORMAL))<=32;
+  }
+  Tooltip(T(Str::kOpenTheMaintainedMfgadaunlockRepository_71c5));
+  ImGui::SetCursorPosY((std::max)(ImGui::GetCursorPosY(),blockBottom));
+  if(failed) Notice(T(Str::kCouldNotOpenTheBrowser_1362));
+  StatusChip(T(Str::kFooterHint_p12),Muted);
 }
 }

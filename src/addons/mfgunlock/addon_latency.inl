@@ -76,7 +76,13 @@ uint32_t DetectDisplayRefreshMilliHz(reshade::api::swapchain* swapchain) {
   const uint32_t fallback_fps = DetectDisplayRefreshFps(swapchain);
   const uint32_t fallback_millihz =
       fallback_fps >= 10 && fallback_fps <= 1000 ? fallback_fps * 1000u : 0u;
-  if (swapchain != nullptr && swapchain->get_native() != 0) {
+  // 1.10.0: only a D3D swap chain is a COM object. A Vulkan one (VkSwapchainKHR) read as IUnknown crashed DOOM: The Dark
+  // Ages when the output-FPS cap was turned on.
+  auto* device = swapchain == nullptr ? nullptr : swapchain->get_device();
+  const bool dxgi = device != nullptr && (device->get_api() == reshade::api::device_api::d3d10 ||
+                                          device->get_api() == reshade::api::device_api::d3d11 ||
+                                          device->get_api() == reshade::api::device_api::d3d12);
+  if (dxgi && swapchain->get_native() != 0) {
     auto* native = reinterpret_cast<IUnknown*>(
         static_cast<uintptr_t>(swapchain->get_native()));
     IDXGISwapChain* dxgi_swapchain = nullptr;
@@ -226,6 +232,38 @@ bool PublishReflexWaitableLocked(reshade::api::swapchain* swapchain,
   reshade::log::message(reshade::log::level::info, log.str().c_str());
   return true;
 }
+
+#if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
+// 1.10.0 (plan XMX Vulkan pacing): the real-frame interval XMX's Vulkan provider can hold, as an output frame limit for
+// the game's Reflex (framecount.hpp composes it). None when the GPU holds the display's refresh anyway. Changes under
+// 3% are not replayed, so Reflex is not re-set every frame.
+void UpdateXmxVulkanPacing(reshade::api::swapchain* swapchain) {
+  namespace vk = mfgunlock::xemfg::native::vulkan;
+  uint32_t limit_us = 0;
+  const uint32_t base_us = vk::XmxPacingEnabled() ? vk::XmxPacingIntervalUs() : 0;
+  if (base_us != 0 && mfgunlock::framecount::g_effective_request_seen.load(std::memory_order_acquire)) {
+    const uint32_t multiplier = (std::max)(1u, mfgunlock::framecount::g_last_effective_generated.load(std::memory_order_relaxed) + 1u);
+    const uint32_t output_us = base_us / multiplier;
+    const uint32_t refresh_millihz = DetectDisplayRefreshMilliHz(swapchain);
+    const uint32_t refresh_us = refresh_millihz ? uint32_t(1000000000ull / refresh_millihz) : 0;
+    limit_us = refresh_us != 0 && output_us <= refresh_us + refresh_us / 50 ? 0 : output_us;
+  }
+  const uint32_t previous = mfgunlock::reflexpacing::g_xmx_vulkan_limit_us.load(std::memory_order_relaxed);
+  const bool changed = (previous == 0) != (limit_us == 0) ||
+      (previous != 0 && (limit_us > previous + previous / 33 || limit_us + previous / 33 < previous));
+  if (!changed) return;
+  mfgunlock::reflexpacing::g_xmx_vulkan_limit_us.store(limit_us, std::memory_order_relaxed);
+  mfgunlock::framecount::g_latency_guard_refresh_pending.store(true, std::memory_order_release);
+  static uint32_t logged = 0;
+  if (logged < 40) {
+    ++logged;
+    std::stringstream s;
+    s << "mfgunlock: XMX Vulkan pacing: output limit " << (limit_us ? 1000000.0 / limit_us : 0.0)
+      << " fps (usual real-frame interval " << vk::XmxPacingCostUs() / 1000.0 << " ms).";
+    reshade::log::message(reshade::log::level::info, s.str().c_str());
+  }
+}
+#endif
 
 void UpdateReflexPacingLab(reshade::api::swapchain* swapchain) {
   using namespace mfgunlock;

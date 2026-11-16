@@ -54,6 +54,15 @@ inline void LogParameters(const NVSDK_NGX_Parameter* params) {
   }
   Log(text);
 }
+// 1.10.0 (XMX video memory, addon_provider.inl): with NVIDIA's feature never
+// created, NGX's own Evaluate for XMX's handle comes here instead of through
+// nvngx_dlssg. There is no NVIDIA generator to fall back to; a frame XMX cannot
+// generate repeats the real one, as it already did.
+inline NVSDK_NGX_Result EvaluateWithoutNvidia(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* params) {
+  if (g_evaluations_logged.fetch_add(1, std::memory_order_relaxed) < kEvaluationsToLog) LogParameters(params);
+  generator::g_last_evaluate_tick.store(GetTickCount64(), std::memory_order_relaxed);
+  return generator::Evaluate(list, params) ? NVSDK_NGX_Result_Success : NVSDK_NGX_Result_Fail;
+}
 // A process maps one nvngx_dlssg per location (game folder, DriverStore), and
 // NGX may use any of them, so each module gets its own slot.
 constexpr int kSlots = 4;

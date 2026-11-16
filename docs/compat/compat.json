@@ -561,7 +561,7 @@
   },
   {
    "game": "Resident Evil Requiem",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -585,7 +585,7 @@
   },
   {
    "game": "Monster Hunter Wilds",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -609,7 +609,7 @@
   },
   {
    "game": "Dragon's Dogma 2",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -633,7 +633,7 @@
   },
   {
    "game": "Onimusha: Way of the Sword",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -657,7 +657,7 @@
   },
   {
    "game": "PRAGMATA",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -681,7 +681,7 @@
   },
   {
    "game": "Control Resonant",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -705,7 +705,7 @@
   },
   {
    "game": "Assassin's Creed IV: Black Flag Resynced",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -729,7 +729,7 @@
   },
   {
    "game": "Cyberpunk 2077",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -753,7 +753,7 @@
   },
   {
    "game": "The Witcher 3: Wild Hunt (next-gen)",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -777,7 +777,7 @@
   },
   {
    "game": "Alan Wake 2",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -801,7 +801,7 @@
   },
   {
    "game": "Stellar Blade",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -825,7 +825,7 @@
   },
   {
    "game": "Ghost of Tsushima",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -849,7 +849,7 @@
   },
   {
    "game": "Horizon Zero Dawn Remastered",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -873,7 +873,7 @@
   },
   {
    "game": "The Last of Us Part II Remastered",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -897,7 +897,7 @@
   },
   {
    "game": "Mafia: The Old Country",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -921,7 +921,7 @@
   },
   {
    "game": "Resonance: A Plague Tale Legacy",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -945,7 +945,7 @@
   },
   {
    "game": "Death Stranding 2: On the Beach",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -969,7 +969,7 @@
   },
   {
    "game": "Ghostrunner 2",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -993,7 +993,7 @@
   },
   {
    "game": "S.T.A.L.K.E.R. 2: Heart of Chornobyl",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1017,7 +1017,7 @@
   },
   {
    "game": "Warhammer 40,000: Darktide",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1041,7 +1041,7 @@
   },
   {
    "game": "Black Myth: Wukong",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1065,7 +1065,7 @@
   },
   {
    "game": "Kingdom Come: Deliverance II",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1089,7 +1089,7 @@
   },
   {
    "game": "Red Dead Redemption 2",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12, Vulkan",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1113,7 +1113,7 @@
   },
   {
    "game": "Elden Ring",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1137,7 +1137,7 @@
   },
   {
    "game": "Metro Exodus Enhanced Edition",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1161,7 +1161,7 @@
   },
   {
    "game": "Indiana Jones and the Great Circle",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "Vulkan",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1185,7 +1185,7 @@
   },
   {
    "game": "Crimson Desert",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1209,7 +1209,7 @@
   },
   {
    "game": "Phantom Blade Zero",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1233,7 +1233,7 @@
   },
   {
    "game": "Dying Light 2",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1257,7 +1257,7 @@
   },
   {
    "game": "Grand Theft Auto 5 Enhanced",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1281,7 +1281,7 @@
   },
   {
    "game": "Titans of The Tide",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1305,7 +1305,7 @@
   },
   {
    "game": "Hogwarts Legacy",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1329,7 +1329,7 @@
   },
   {
    "game": "STAR WARS: Galactic Racer",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1353,7 +1353,7 @@
   },
   {
    "game": "Call of Duty Modern Warfare 4",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1377,7 +1377,7 @@
   },
   {
    "game": "The Blood of Dawnwalker",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1401,7 +1401,7 @@
   },
   {
    "game": "Silent Hill 2 Remake",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1425,7 +1425,7 @@
   },
   {
    "game": "Ghotic 1 Remake",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1449,7 +1449,7 @@
   },
   {
    "game": "Once Human",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 40",
    "streamline": "",
@@ -1461,7 +1461,7 @@
   },
   {
    "game": "Titans of the Tide",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 3060 Ti",
    "streamline": "2.14.16+",
@@ -1473,7 +1473,7 @@
   },
   {
    "game": "Ratchet & Clank: Rift Apart",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 3060 Ti",
    "streamline": "2.14.16+",
@@ -1485,7 +1485,7 @@
   },
   {
    "game": "RoboCop: Rogue City",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 3060 Ti",
    "streamline": "2.14.16+",
@@ -1497,7 +1497,7 @@
   },
   {
    "game": "RoboCop: Rogue City - Unfinished Business",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 3060 Ti",
    "streamline": "2.14.16+",
@@ -1509,7 +1509,7 @@
   },
   {
    "game": "Clair Obscur: Expedition 33",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 3060 Ti",
    "streamline": "2.14.16+",
@@ -1521,7 +1521,7 @@
   },
   {
    "game": "Fort Solis",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 3060 Ti",
    "streamline": "2.14.16+",
@@ -1533,7 +1533,7 @@
   },
   {
    "game": "Hell is Us",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 3060 Ti",
    "streamline": "2.14.16+",
@@ -1545,7 +1545,7 @@
   },
   {
    "game": "Keeper",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 3060 Ti",
    "streamline": "2.14.16+",
@@ -1557,7 +1557,7 @@
   },
   {
    "game": "Senua's Saga: Hellblade II",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 3060 Ti",
    "streamline": "2.14.16+",
@@ -1569,7 +1569,7 @@
   },
   {
    "game": "Metal Eden",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 3060 Ti",
    "streamline": "2.14.16+",
@@ -1581,7 +1581,7 @@
   },
   {
    "game": "Valor Mortis",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 3060 Ti",
    "streamline": "2.14.16+",
@@ -1593,7 +1593,7 @@
   },
   {
    "game": "Red Dead Redemption (Remastered)",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 3060 Ti",
    "streamline": "2.14.16+",
@@ -1605,7 +1605,7 @@
   },
   {
    "game": "Samson",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 3060 Ti",
    "streamline": "2.14.16+",
@@ -1617,7 +1617,7 @@
   },
   {
    "game": "Ghost of Tsushima",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 3060 Ti",
    "streamline": "2.14.16+",
@@ -1629,7 +1629,7 @@
   },
   {
    "game": "The Outer Worlds 2",
-   "backend": "XMX",
+   "backend": "XeMFG DLSS-G",
    "api": "DX12",
    "gpu": "RTX 3060 Ti",
    "streamline": "2.14.16+",
@@ -1638,6 +1638,114 @@
    "notes": "Frame generation accepted, never created; sl.log pending",
    "source": "Calledme_kev's RTX 3060 Ti list (Opti Discord), MFG Unlock 1.9.0",
    "date": "2026-11-10"
+  },
+  {
+   "game": "Kingdom Come: Deliverance II",
+   "backend": "XeMFG DLSS-G",
+   "api": "DX12",
+   "gpu": "RTX 4070 SUPER",
+   "streamline": "2.14.16",
+   "provider": "",
+   "result": "Working",
+   "notes": "Add frame generation (MFG Unlock starts Streamline); HUD fix",
+   "source": "MFG Unlock 1.10.0, maintainer test",
+   "date": "2026-11-16"
+  },
+  {
+   "game": "Kingdom Come: Deliverance II",
+   "backend": "DLSS-G",
+   "api": "DX12",
+   "gpu": "RTX 4070 SUPER",
+   "streamline": "2.14.16",
+   "provider": "",
+   "result": "Working",
+   "notes": "Add frame generation (MFG Unlock starts Streamline)",
+   "source": "MFG Unlock 1.10.0, maintainer test",
+   "date": "2026-11-16"
+  },
+  {
+   "game": "Red Dead Redemption 2",
+   "backend": "XeMFG DLSS-G",
+   "api": "DX12",
+   "gpu": "RTX 4070 SUPER",
+   "streamline": "2.14.16",
+   "provider": "",
+   "result": "Working",
+   "notes": "Add frame generation (MFG Unlock starts Streamline)",
+   "source": "MFG Unlock 1.10.0, maintainer test",
+   "date": "2026-11-16"
+  },
+  {
+   "game": "Red Dead Redemption 2",
+   "backend": "XeMFG DLSS-G",
+   "api": "Vulkan",
+   "gpu": "RTX 4070 SUPER",
+   "streamline": "2.14.16",
+   "provider": "",
+   "result": "Working",
+   "notes": "Add frame generation (MFG Unlock starts Streamline); no HUD fix in Vulkan",
+   "source": "MFG Unlock 1.10.0, maintainer test",
+   "date": "2026-11-16"
+  },
+  {
+   "game": "Red Dead Redemption 2",
+   "backend": "DLSS-G",
+   "api": "Vulkan",
+   "gpu": "RTX 4070 SUPER",
+   "streamline": "2.14.16",
+   "provider": "",
+   "result": "Working",
+   "notes": "Add frame generation (MFG Unlock starts Streamline)",
+   "source": "MFG Unlock 1.10.0, maintainer test",
+   "date": "2026-11-16"
+  },
+  {
+   "game": "DOOM: The Dark Ages",
+   "backend": "XeMFG DLSS-G",
+   "api": "Vulkan",
+   "gpu": "RTX 4070 SUPER",
+   "streamline": "2.14.16",
+   "provider": "",
+   "result": "Working",
+   "notes": "Pacing in Vulkan games: ~120 fps at 4x with path tracing, ~20 fps under NVIDIA's generator; launch with +r_allowBlackListedLayers 1",
+   "source": "MFG Unlock 1.10.0, maintainer test",
+   "date": "2026-11-16"
+  },
+  {
+   "game": "Cyberpunk 2077",
+   "backend": "XeMFG DLSS-G",
+   "api": "DX12",
+   "gpu": "RTX 4070 SUPER",
+   "streamline": "2.14.16",
+   "provider": "",
+   "result": "Working",
+   "notes": "",
+   "source": "MFG Unlock 1.10.0, maintainer test",
+   "date": "2026-11-16"
+  },
+  {
+   "game": "Metro Exodus Enhanced Edition",
+   "backend": "XeMFG DLSS-G",
+   "api": "DX12",
+   "gpu": "",
+   "streamline": "2.14.16",
+   "provider": "",
+   "result": "Partially working",
+   "notes": "Add frame generation; dim, flickering image in HDR fixed in 1.10.0, awaiting the tester's confirmation",
+   "source": "Rogallo (Opti Discord), MFG Unlock 1.10.0 test build",
+   "date": "2026-11-16"
+  },
+  {
+   "game": "Arknights: Endfield",
+   "backend": "XeMFG DLSS-G",
+   "api": "Vulkan",
+   "gpu": "RTX 4060 Laptop",
+   "streamline": "2.14.16",
+   "provider": "",
+   "result": "Working",
+   "notes": "base frame rate 60-70 fps at 3x; the slowdown fix (Pacing in Vulkan games) came after this report",
+   "source": "Shen_Xuan233, MFG Unlock 1.10.0 test build",
+   "date": "2026-11-16"
   }
  ]
 }

@@ -945,9 +945,12 @@ inline sl::Result SubmitReflexOptions(const sl::ReflexOptions& native_options, b
               reflexpacing::g_headroom_enabled.load(std::memory_order_relaxed)
           ? reflexpacing::g_headroom_limit_us.load(std::memory_order_relaxed)
           : 0;
+  // A user cap replaces XMX's own Vulkan pacing; otherwise the stricter of the two holds.
+  const uint32_t xmx_limit_us = apply_explicit_target
+      ? 0 : reflexpacing::g_xmx_vulkan_limit_us.load(std::memory_order_relaxed);
   forwarded.frameLimitUs = pacing::ComposeFrameLimitUs(
       native_options.frameLimitUs, explicit_limit_us, guard_limit_us,
-      headroom_limit_us);
+      pacing::StrictestFrameLimitUs(headroom_limit_us, xmx_limit_us));
   const uint32_t intended_limit_us = forwarded.frameLimitUs;
 
   const bool guard_changes_limit =

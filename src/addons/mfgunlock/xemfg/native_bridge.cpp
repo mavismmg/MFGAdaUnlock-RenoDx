@@ -12,6 +12,8 @@
 #include "native_ffx.hpp"
 #include "native_ngx.hpp"
 #include "../backend_selection.hpp"
+#include "../hook_lock.hpp"
+#include "vendor/xvkhost/xess/xemfg_window.h"
 #include "vendor/third_party/minhook/include/MinHook.h"
 #include <deps/imgui/imgui.h>
 #include <reshade.hpp>
@@ -36,12 +38,10 @@ void Report(const char* reason) {
 std::shared_ptr<Output> Active() {
   auto& s=State(); std::lock_guard lock(s.lock); return s.output.lock();
 }
+// 1.10.0: cached (xemfg_window.h): this runs on the Vulkan Present every 2 s, and the driver query stalled DOOM.
 uint32_t WindowRefreshMilliHz(HWND window) noexcept {
-  const auto monitor=window?MonitorFromWindow(window,MONITOR_DEFAULTTONEAREST):nullptr;
-  if(!monitor) return 0;
-  MONITORINFOEXW info{}; info.cbSize=sizeof(info); DEVMODEW mode{}; mode.dmSize=sizeof(mode);
-  return GetMonitorInfoW(monitor,&info) && EnumDisplaySettingsW(info.szDevice,ENUM_CURRENT_SETTINGS,&mode)
-      && mode.dmDisplayFrequency>1 && mode.dmDisplayFrequency<=1000?mode.dmDisplayFrequency*1000:0;
+  const uint32_t hz=xemfg_standalone::WindowRefreshHz(window);
+  return hz>1 && hz<=1000?hz*1000:0;
 }
 // 1.7.1 (plan B.3): the display cap of a Vulkan game's window; the panel reads the refresh.
 uint32_t DisplayCapIntervalForWindow(HWND window) noexcept {
@@ -52,6 +52,9 @@ uint32_t DisplayCapIntervalForWindow(HWND window) noexcept {
 static thread_local std::string lastHookFailure;
 bool Hook(void* entry,void* replacement,void** original) {
   static std::recursive_mutex lock; std::lock_guard guard(lock);
+  // Never while the XMX hooks patch (hook_lock.hpp): each suspends the other's threads.
+  std::lock_guard transaction(mfgunlock::HookTransactionLock());
+  mfgunlock::ProcessHeapGuard heap;
   static std::set<void*> installed;
   lastHookFailure.clear();
   if(!entry) { lastHookFailure="null entry"; return false; }

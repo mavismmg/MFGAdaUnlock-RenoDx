@@ -48,3 +48,6 @@ presentmon*.csv
 *.qdrep
 ReShade.log
 sl.log
+
+# Planning notes stay local (2026-11-16).
+docs/plan/

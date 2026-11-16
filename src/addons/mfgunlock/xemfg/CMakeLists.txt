@@ -154,6 +154,12 @@ target_compile_definitions(dlssg_streamline_smoke PRIVATE NOMINMAX UNICODE _UNIC
 target_include_directories(dlssg_streamline_smoke PRIVATE "${RENODX_SOURCE_DIR}/external/Streamline/include"
   "${RENODX_SOURCE_DIR}/external/Streamline/external/ngx-sdk/include")
 target_link_libraries(dlssg_streamline_smoke PRIVATE d3d12 dxgi)
+# 1.10.0 (plan "DLSS-G em jogos só com DLSS", step 0): a game calling DLSS SR straight through NGX.
+add_executable(ngx_sr_app "${CMAKE_SOURCE_DIR}/ngx_sr_app.cpp")
+target_compile_definitions(ngx_sr_app PRIVATE NOMINMAX UNICODE _UNICODE)
+target_include_directories(ngx_sr_app PRIVATE "${RENODX_SOURCE_DIR}/external/Streamline/external/ngx-sdk/include"
+  "${RENODX_SOURCE_DIR}/external/Streamline/include")
+target_link_libraries(ngx_sr_app PRIVATE d3d12 dxgi dxguid d3dcompiler user32 advapi32)
 add_executable(xemfg_window_tests "${CMAKE_SOURCE_DIR}/xemfg_window_tests.cpp" native_window.cpp)
 target_compile_definitions(xemfg_window_tests PRIVATE NOMINMAX UNICODE _UNICODE)
 target_link_libraries(xemfg_window_tests PRIVATE user32)
@@ -639,7 +645,7 @@ if(EXISTS "${XEMFG_VULKAN_HEADERS}/vulkan/vulkan.h" AND EXISTS "${XEMFG_XVK_PROG
   # NGX Vulkan hooks (native_vulkan.cpp). The program set is embedded as RCDATA
   # 7400+ in the addon itself (vk_host passes its own module to xvk).
   target_sources(mfgunlock_native_xemfg PRIVATE vendor/xvkhost/vk_host.cpp vendor/xvkhost/xess/host_xell_binding.cpp
-    vendor/xvkhost/vk_provider.cpp vendor/xvkhost/xefg_internal.cpp vendor/xvkhost/xess/ngx_provider_local.cpp native_vulkan.cpp
+    vendor/xvkhost/vk_provider.cpp vendor/xvkhost/xefg_internal.cpp vendor/xvkhost/xess/ngx_provider_local.cpp native_vulkan.cpp sl_vulkan.cpp
     "${XEMFG_XVK_GENERATED}/vk_input_copy_spv.h" "${XEMFG_XVK_GENERATED}/embedded_xvk_programs.rc")
   target_include_directories(mfgunlock_native_xemfg PRIVATE vendor/xvkhost)
   # 1.10.0: the provider headers include vulkan.h before xvk.h could select the Win32 platform.

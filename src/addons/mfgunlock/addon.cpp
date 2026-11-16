@@ -150,6 +150,9 @@
 #include "streamline_log.hpp"
 #include "crash_record.hpp"
 #include "vram_timeline.hpp"
+#include "vram_trace.hpp"
+#include "sl_host.hpp"
+#include "hud_capture.hpp"
 
 #include <deps/imgui/imgui.h>
 #include <include/reshade.hpp>
@@ -770,7 +773,11 @@ bool PinResident(const char* when) {
 // create_device for Vulkan comes before vkCreateInstance: the vulkan-1 hooks and the provider mode go in there.
 bool OnCreateDeviceXmxVulkan(reshade::api::device_api api, uint32_t& version) {
   if (api != reshade::api::device_api::vulkan) return false;
-  return mfgunlock::xemfg::native::vulkan::BeginXmxProvider(version);
+  // XMX's provider first (it sets the device's provider edit), then Streamline's hosted mode for games with
+  // DLSS SR only; either may raise the instance to Vulkan 1.3.
+  bool raised = mfgunlock::xemfg::native::vulkan::BeginXmxProvider(version);
+  raised = mfgunlock::xemfg::native::vulkan::BeginStreamlineHost(version) || raised;
+  return raised;
 }
 #endif
 
@@ -780,6 +787,8 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
                              const reshade::api::rect* /*dest_rect*/,
                              uint32_t /*dirty_rect_count*/,
                              const reshade::api::rect* /*dirty_rects*/) {
+  if (mfgunlock::slhost::Hosting() && swapchain != nullptr)
+    mfgunlock::slhost::OnPresent(reinterpret_cast<void*>(swapchain->get_native()));
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
   if(swapchain==g_primary_swapchain.load(std::memory_order_acquire)) mfgunlock::dlssgdisplay::Observe(swapchain);
 #endif
@@ -833,18 +842,23 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
     }
   }
   UpdateReflexPacingLab(swapchain);
+#if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
+  UpdateXmxVulkanPacing(swapchain);
+#endif
   UpdateLatencyGuard(swapchain);
   mfgunlock::framecount::PublishLatencyGuardView();
   UpdateVramDiagnostics(swapchain);
   SampleFrameGenerationVram(swapchain);
 #if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
   // 1.10.0 (item 3): NGX's Vulkan entry points, once _nvngx.dll is mapped (returns at once after that).
-  if (mfgunlock::xemfg::native::vulkan::XmxProviderWanted()) mfgunlock::xemfg::native::vulkan::DiscoverNgx();
+  if (mfgunlock::xemfg::native::vulkan::XmxProviderWanted() || mfgunlock::xemfg::native::vulkan::StreamlineHostWanted())
+    mfgunlock::xemfg::native::vulkan::DiscoverNgx();
 #endif
   WarnCreateMissingOnce();
   CheckDeviceRemoved(swapchain);
   StartDiscoveryWorker();
   RetryPresetHookFromPresent();
+  mfgunlock::vramtrace::Dump(mfgunlock::backend::Directory());
 #if !defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
   if (g_render_api.load(std::memory_order_relaxed) ==
       DetectedRenderApi::kD3D12)
@@ -854,6 +868,8 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
 
 void OnFinishPresent(reshade::api::command_queue* /*queue*/,
                      reshade::api::swapchain* swapchain) {
+  if (mfgunlock::slhost::Hosting() && swapchain != nullptr)
+    mfgunlock::slhost::OnFinishPresent(reinterpret_cast<void*>(swapchain->get_native()));
   if (swapchain != nullptr &&
       swapchain == g_primary_swapchain.load(std::memory_order_acquire))
     mfgunlock::reflexpacing::RecordPresent();
@@ -978,6 +994,19 @@ void LogSystemOnce() {
 
 void OnInitDevice(reshade::api::device* device) {
   LogSystemOnce();
+  // 1.10.0 diagnostic (vram_trace.hpp): MFG_VRAM_TRACE=1 only; the addon pins itself so the detours outlive no copy.
+  if (mfgunlock::vramtrace::Wanted() && device != nullptr && device->get_api() == reshade::api::device_api::d3d12) {
+    HMODULE self = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                       reinterpret_cast<LPCWSTR>(&OnInitDevice), &self);
+    mfgunlock::vramtrace::Install(reinterpret_cast<ID3D12Device*>(device->get_native()));
+  }
+  // 1.10.0 (sl_host.hpp): Streamline for games that call DLSS SR through NGX only.
+  if (mfgunlock::slhost::Wanted() && device != nullptr && device->get_api() == reshade::api::device_api::d3d12) {
+    mfgunlock::slhost::OnDevice(reinterpret_cast<ID3D12Device*>(device->get_native()));
+    // The host pinned this copy; the NGX hooks must be in before the game creates DLSS SR.
+    if (mfgunlock::slhost::Hosting() && PinResident("when the Streamline host started")) TryInstallPresetHook();
+  }
   if (device != nullptr) {
     const DetectedRenderApi detected = RenderApiOf(device);
     const bool no_primary =
@@ -1487,10 +1516,24 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       if (!reshade::register_addon(h_module)) return FALSE;
       mfgunlock::support::BeginSession(mfgunlock::backend::Directory());
       // 1.10.0 (plan XMX/Vulkan/VRAM, item 4): before the game can call slInit (force_fg.hpp).
-      mfgunlock::framecount::g_force_fg_enabled.store(
-          GetPrivateProfileIntW(L"DLSSG", L"ForceFrameGeneration", 0,
-                                (mfgunlock::backend::Directory() / L"MFGAdaUnlock.ini").c_str()) != 0,
-          std::memory_order_relaxed);
+      // [DLSSG] AddFrameGeneration (the panel's single switch) turns on both routes;
+      // each stays inert where it does not apply (sl_host.hpp).
+      {
+        const auto ini = (mfgunlock::backend::Directory() / L"MFGAdaUnlock.ini");
+        // The two earlier switches become the panel's single one, so the panel
+        // shows what runs and its Off turns both off.
+        if (GetPrivateProfileIntW(L"DLSSG", L"AddFrameGeneration", -1, ini.c_str()) == -1 &&
+            (GetPrivateProfileIntW(L"DLSSG", L"ForceFrameGeneration", 0, ini.c_str()) != 0 ||
+             GetPrivateProfileIntW(L"DLSSG", L"HostStreamline", 0, ini.c_str()) != 0)) {
+          WritePrivateProfileStringW(L"DLSSG", L"AddFrameGeneration", L"1", ini.c_str());
+          WritePrivateProfileStringW(L"DLSSG", L"ForceFrameGeneration", nullptr, ini.c_str());
+          WritePrivateProfileStringW(L"DLSSG", L"HostStreamline", nullptr, ini.c_str());
+        }
+        mfgunlock::framecount::g_force_fg_enabled.store(
+            GetPrivateProfileIntW(L"DLSSG", L"ForceFrameGeneration", 0, ini.c_str()) != 0 ||
+                GetPrivateProfileIntW(L"DLSSG", L"AddFrameGeneration", 0, ini.c_str()) != 0,
+            std::memory_order_relaxed);
+      }
       // 1.10.0 (dashdogy B1): opt-in crash record and dump (crash_record.hpp).
       if (mfgunlock::crash::Enabled(mfgunlock::backend::Directory() / L"MFGAdaUnlock.ini"))
         mfgunlock::crash::Install(mfgunlock::backend::Directory());
@@ -1522,6 +1565,45 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       }
       const auto saved_backend = mfgunlock::backend::Read();
       mfgunlock::backend::active = mfgunlock::backend::Effective(saved_backend);
+#if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
+      {
+        // 1.10.0: ReShade as the Vulkan layer (ReShade64.dll), not as a D3D/OpenGL proxy DLL.
+        wchar_t path[MAX_PATH]{};
+        GetModuleFileNameW(reshade::internal::get_reshade_module_handle(), path, MAX_PATH);
+        std::wstring stem = std::filesystem::path(path).stem().wstring();
+        for (auto& c : stem) c = static_cast<wchar_t>(towlower(c));
+        const bool proxy = stem == L"dxgi" || stem == L"d3d9" || stem == L"d3d10" || stem == L"d3d11" || stem == L"d3d12" ||
+                           stem == L"opengl32" || stem == L"dinput8" || stem == L"ddraw";
+        mfgunlock::xemfg::native::vulkan::SetVulkanLayerHost(!proxy && GetModuleHandleW(L"vulkan-1.dll") != nullptr);
+      }
+      // 1.10.0: XMX on Vulkan stays resident like XeMFG. ReShade loads the addon
+      // for the game's first Vulkan instance and unloads both with it; DOOM: The
+      // Dark Ages then ran the freed copy's Vulkan hooks, or a reloaded ReShade
+      // never saw this pinned module register. ReShade and this module stay;
+      // Intel's runtime pair is started for the provider (AttachModel; without
+      // it the pair's preparation failed with "module_pin").
+      if (mfgunlock::backend::active == mfgunlock::backend::Kind::DlssG &&
+          mfgunlock::xemfg::native::vulkan::XmxProviderWanted()) {
+        HMODULE pinned = nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                           reinterpret_cast<LPCWSTR>(reshade::internal::get_reshade_module_handle()), &pinned);
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                           reinterpret_cast<LPCWSTR>(h_module), &pinned);
+        mfgunlock::xemfg::AttachModel(h_module);
+      } else
+#endif
+      // 1.10.0: the same for every Vulkan game on the DLSS-G backend. The first
+      // instance's copy patches DLSS-G and stays mapped (its hooks), so the
+      // reloaded ReShade got "No add-on was registered" and DOOM: The Dark Ages
+      // ran without the panel, XMX or Reflex controls. ReShade stays loaded too.
+      if (mfgunlock::backend::active == mfgunlock::backend::Kind::DlssG &&
+          GetModuleHandleW(L"vulkan-1.dll") != nullptr) {
+        HMODULE pinned = nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                           reinterpret_cast<LPCWSTR>(reshade::internal::get_reshade_module_handle()), &pinned);
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                           reinterpret_cast<LPCWSTR>(h_module), &pinned);
+      }
       if (mfgunlock::backend::active != mfgunlock::backend::Kind::DlssG) {
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
         if(mfgunlock::backend::active==mfgunlock::backend::Kind::XeMfg) {
@@ -1646,8 +1728,10 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
 
       reshade::register_overlay("MFG Unlock", OnRegisterOverlay);
       reshade::register_event<reshade::addon_event::init_device>(OnInitDevice);
+      // 1.10.0 (hud_capture.hpp): the HUD fix of the Streamline host.
+      if (mfgunlock::slhost::Wanted()) mfgunlock::hudcapture::Register(mfgunlock::backend::Directory() / L"MFGAdaUnlock.ini");
 #if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
-      if (mfgunlock::xemfg::native::vulkan::XmxProviderWanted())
+      if (mfgunlock::xemfg::native::vulkan::XmxProviderWanted() || mfgunlock::xemfg::native::vulkan::StreamlineHostWanted())
         reshade::register_event<reshade::addon_event::create_device>(OnCreateDeviceXmxVulkan);
 #endif
       reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
@@ -1663,6 +1747,11 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       if (lpv_reserved != nullptr) mfgunlock::support::EndSession(mfgunlock::backend::Directory());
       // 1.10.0 (dashdogy B1): an unloading copy takes its crash filter with it.
       else mfgunlock::crash::Uninstall();
+#if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
+      // 1.10.0: and its Vulkan hooks (XMX on Vulkan installs them in the first
+      // instance's copy; native_vulkan.cpp).
+      if (lpv_reserved == nullptr) mfgunlock::xemfg::native::vulkan::UninstallForUnload();
+#endif
       // During process termination Windows is already reclaiming every mapped
       // image. Avoid detour transactions and stale provider-memory restores
       // under the loader lock; explicit addon unload still performs cleanup.

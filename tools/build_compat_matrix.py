@@ -2,7 +2,7 @@
 """1.10.0 (plan 3.3): the compatibility matrix, generated from data.
 
 docs/compat/compat.json holds one record per report: game, backend (DLSS-G,
-XMX, XeMFG), API, GPU, Streamline and frame generation file versions when
+XeMFG DLSS-G, once XMX, XeMFG), API, GPU, Streamline and frame generation file versions when
 known, the result (Working, Partially working, Not working, Untested), notes,
 the source and its date. The README's tested-game tables are imported once
 with --import-readme and are then one source among the others.
@@ -69,7 +69,7 @@ def import_readme():
         game, api, cuda, xmx, notes = (c.strip() for c in cells)
         if game in ("Game", "---"):
             continue
-        for backend, status in (("XeMFG", cuda), ("XMX", xmx)):
+        for backend, status in (("XeMFG", cuda), ("XeMFG DLSS-G", xmx)):
             if not status:
                 continue
             records.append({"game": game, "backend": backend, "api": api, "gpu": "RTX 40", "streamline": "", "provider": "",

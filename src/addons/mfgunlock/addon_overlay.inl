@@ -491,10 +491,10 @@ std::string FrameGenChainGenerator(ChainHealth* health = nullptr) {
   const auto report = mfgunlock::xmx::generator::Snapshot();
   if (!report.failure.empty() && !report.generating) {
     out = ChainHealth::kFail;
-    return "XMX selected; not running: " + report.failure;
+    return "XeMFG DLSS-G selected; not running: " + report.failure;
   }
   out = report.generating ? ChainHealth::kOk : ChainHealth::kWarn;
-  return report.generating ? "XMX (Intel's model) generating" : report.hooked ? "XMX ready" : "XMX selected; not started";
+  return report.generating ? "XeMFG DLSS-G (Intel's model) generating" : report.hooked ? "XeMFG DLSS-G ready" : "XeMFG DLSS-G selected; not started";
 }
 // 1.10.0 (plan 1.4): the registry, read once per panel session.
 mfgunlock::system::Hags SystemCheckHags() {
@@ -523,6 +523,13 @@ std::string FrameGenChainReport() {
          [] {  // 1.10.0 (item 3): XMX on Vulkan, only when wanted
            const std::string text = mfgunlock::xemfg::native::vulkan::XmxProviderReport();
            return text.empty() ? std::string() : "\nchain_xmx_vulkan=" + text;
+         }() +
+         [] {  // 1.10.0 (plan XMX Vulkan pacing): the support report stays in English.
+           namespace vk = mfgunlock::xemfg::native::vulkan;
+           if (!vk::XmxProviderWanted()) return std::string();
+           const uint32_t limit_us = mfgunlock::reflexpacing::g_xmx_vulkan_limit_us.load(std::memory_order_relaxed);
+           std::string report = vk::XmxPacingEnabled() ? (limit_us ? "limit " + std::to_string(int(1000000.0 / limit_us + 0.5)) + " fps" : std::string("no limit")) : std::string("off");
+           return "\nchain_xmx_vulkan_pacing=" + report + ", usual real-frame interval " + std::to_string(vk::XmxPacingCostUs() / 1000) + " ms";
          }() +
 #endif
          [] {  // 1.10.0 (force_fg.hpp): only when [DLSSG] ForceFrameGeneration=1
@@ -1960,22 +1967,27 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   const char* xmx_waiting=xmx_bypassed?T(Str::kNvidiaIsGenerating_0bf6):xmx_report.evaluating?T(Str::kWaitingForFrames_9c2f):T(Str::kPausedOrOffInThe_52c7);
   const auto xmx_support_report=[&] {
     std::string report="MFG Unlock 1.10.0\nmethod=";
-    report+=xmx_selected?"XMX":"DLSS-G";
+    report+=xmx_selected?"XeMFG DLSS-G":"DLSS-G";
     report+=std::string("\nrenderer=")+RenderApiName(render_api)+"\nstatus="+player_state;
     if(xmx_selected) {
       report+=std::string("\nxmx_hooked=")+(xmx_report.hooked?"1":"0")+"\nxmx_partial="+(xmx_report.partiallyHooked?"1":"0")
           +"\nxmx_bypassed="+(xmx_bypassed?"1":"0")+"\nxmx_evaluating="+(xmx_report.evaluating?"1":"0")+"\nxmx_generating="+(xmx_report.generating?"1":"0")
           +"\nxmx_idle="+mfgunlock::xmx::policy::IdleText(xmx_report.idle)+"\nxmx_failure="+xmx_report.failure
           +"\nxmx_frames_limit="+std::to_string(xmx_report.framesLimit);
+      // The support report stays in English.
+      const auto created=g_xmx_handles_created.load();
+      report+="\nxmx_nvidia_feature="+(!XmxSaveVramWanted()?std::string("created by NVIDIA (XmxSaveVram=0)"):created>0?"not created, memory saved ("+std::to_string(created)+" creation(s))":std::string("not created yet"));
     }
     report+=std::string("\npre_ada_admitted=")+(mfgunlock::xmx::preada::Admitted()?"1":"0");
     report+="\nstreamline_log="+mfgunlock::streamlinelog::Describe(mfgunlock::streamlinelog::Current());
+    // 1.10.0 (sl_host.hpp): Streamline hosted for an NGX-only game.
+    if(mfgunlock::slhost::Wanted()) report+="\nstreamline_host="+mfgunlock::slhost::Describe();
     report+=CapabilityReport();
     // 1.9.0: the driver profile, read only, and only now: this runs when
     // the report is saved or copied.
     return report+"\n"+FrameGenChainReport()+mfgunlock::drsreport::Describe()+mfgunlock::system::Report();
   };
-  mfgunlock::ui::Hero(multiplier_text.c_str(),xmx_running?"XMX":"DLSS-G",RenderApiName(render_api),
+  mfgunlock::ui::Hero(multiplier_text.c_str(),xmx_running?mfgunlock::ui::kXemfgDlssgName:"DLSS-G",RenderApiName(render_api),
       xmx_failed?T(Str::kFrameGenerationStopped_cfe5):xmx_running?(xmx_report.generating?T(Str::kGeneratingFrames_c5e5):xmx_waiting):player_state,
       xmx_running?xmx_report.generating:mfg_live);
   // 1.9.0: another MFG Unlock file beside this one, or an early-loading
@@ -2008,7 +2020,16 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     ImGui::TextWrapped(T(Str::kThisGameIsUsingThe_dbd3),
         driver_only.version.empty()?"":(" ("+driver_only.version+")").c_str());
   }
-  if(xmx_selected) {
+  // 1.10.0: on Vulkan, dashdogy's provider generates XMX's frames instead of the D3D12 hook.
+  bool xmx_vulkan=false;
+#if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
+  if(xmx_selected && !xmx_d3d12 && mfgunlock::xemfg::native::vulkan::XmxProviderWanted())
+    xmx_vulkan=mfgunlock::xemfg::native::vulkan::XmxProviderReport().rfind("created",0)==0;
+#endif
+  if(xmx_selected && xmx_vulkan) {
+    mfgunlock::ui::Readout("##xmx_generator",T(Str::kGenerator_8b62),T(Str::kIntelXefgModelInDlss_a80b),
+        T(Str::kTheXmxModeReplacesNvidia_8197),mfgunlock::ui::Accent);
+  } else if(xmx_selected) {
     mfgunlock::ui::Readout("##xmx_generator",T(Str::kGenerator_8b62),!xmx_running?T(Str::kNvidiaDlssGXmxNot_1c34):xmx_bypassed?T(Str::kNvidiaDlssGXmxNot_cd23):xmx_failed?T(Str::kNoneXmxFailed_a6e0):xmx_report.generating?T(Str::kIntelXefgModelInDlss_a80b):xmx_report.evaluating?T(Str::kIntelXefgModelWaitingFor_e883):create_missing?T(Str::kNotStartedNvidiaSRuntime_c49b):T(Str::kIntelXefgModelNotBeing_da0a),
         T(Str::kTheXmxModeReplacesNvidia_8197),xmx_report.generating?mfgunlock::ui::Accent:mfgunlock::ui::Muted);
     if(mfgunlock::framecount::g_game_dynamic_replaced.load(std::memory_order_relaxed))
@@ -2032,7 +2053,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     }
 #endif
     else if(!xmx_report.hooked && !xmx_report.failure.empty()) {
-      mfgunlock::ui::Notice(("XMX could not start, so NVIDIA's generator is producing the frames: "+xmx_report.failure).c_str());
+      mfgunlock::ui::Notice(("XeMFG DLSS-G could not start, so NVIDIA's generator is producing the frames: "+xmx_report.failure).c_str());
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
       mfgunlock::ui::ButtonRow actions(1);
       if(actions(T(Str::kInstallUpdateFiles_73d5),T(Str::kOpensTheExternalHelperWith_d3e3)))

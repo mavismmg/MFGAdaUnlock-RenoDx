@@ -24,6 +24,9 @@ PRESETS = {
     'off': NL.join(['[Backend]', 'Selected=DLSSG', '[DLSSG]', 'XmxGenerator=0', 'AutoEarlyLoad=0', '']),
     'native': NL.join(['[Backend]', 'Selected=DLSSG', '[DLSSG]', 'XmxGenerator=0', 'AutoEarlyLoad=0', '']),
     'xmx': NL.join(['[Backend]', 'Selected=DLSSG', '[DLSSG]', 'XmxGenerator=1', 'AutoEarlyLoad=0', '']),
+    # 1.10.0: XMX as before, with NVIDIA's unused feature created (XmxSaveVram=0).
+    'xmx-nvidia': NL.join(['[Backend]', 'Selected=DLSSG', '[DLSSG]', 'XmxGenerator=1', 'XmxSaveVram=0',
+                           'AutoEarlyLoad=0', '']),
 }
 
 ap = argparse.ArgumentParser()
@@ -32,7 +35,7 @@ ap.add_argument('--addon', type=pathlib.Path, required=True)
 ap.add_argument('--reshade', type=pathlib.Path, required=True)
 ap.add_argument('--sdk-fg', type=pathlib.Path, required=True)
 ap.add_argument('--sdk-ll', type=pathlib.Path, required=True)
-ap.add_argument('--config', default='off,native,xmx')
+ap.add_argument('--config', default='off,native,xmx,xmx-nvidia')
 ap.add_argument('--multiplier', type=int, default=4)
 ap.add_argument('--seconds', type=int, default=25)
 ap.add_argument('--width', type=int, default=2560)
@@ -69,7 +72,7 @@ for name, ini in configs:
                      (a.sdk_fg, 'libxess_fg.dll'), (a.sdk_ll, 'libxell.dll')):
         shutil.copy2(src, d / dst)
     # Killed runs count as unclean sessions; after 3 the addon's safe mode turns XMX off.
-    for old in ('ReShade.log', 'MFGAdaUnlock-XeMFG.log', 'MFGAdaUnlock.session'):
+    for old in ('ReShade.log', 'MFGAdaUnlock-XeMFG.log', 'MFGAdaUnlock.session', 'MFGAdaUnlock-vramtrace.txt', 'sl.log'):
         if (d / old).exists():
             (d / old).unlink()
     (d / 'MFGAdaUnlock.ini').write_text(ini, encoding='ascii')
@@ -89,7 +92,7 @@ for name, ini in configs:
         p.wait(30)
     keep = a.work / (name + '-' + time.strftime('%Y%m%d-%H%M%S'))
     keep.mkdir(parents=True, exist_ok=True)
-    for f in ('ReShade.log', 'MFGAdaUnlock-XeMFG.log', 'MFGAdaUnlock.ini'):
+    for f in ('ReShade.log', 'MFGAdaUnlock-XeMFG.log', 'MFGAdaUnlock.ini', 'MFGAdaUnlock-vramtrace.txt', 'sl.log'):
         if (d / f).exists():
             shutil.copy2(d / f, keep / f)
     log = (d / 'ReShade.log').read_text(encoding='utf-8', errors='replace') if (d / 'ReShade.log').exists() else ''

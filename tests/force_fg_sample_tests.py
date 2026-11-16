@@ -87,19 +87,24 @@ def run(name, force, xmx=False):
     masks = sorted(set(re.findall(r"Loaded plugin 'sl\.dlss_g'.*adapter mask (0x[0-9a-f]+)", sl)))
     unloaded = "Feature 'kFeatureDLSS_G' unloaded" in sl
     xmx_line = ''
+    skipped_nvidia = False
     if (b / 'ReShade.log').exists():
-        xmx_lines = [l for l in (b / 'ReShade.log').read_text(encoding='utf-8', errors='replace').splitlines() if 'xmx summary' in l]
+        reshade_log = (b / 'ReShade.log').read_text(encoding='utf-8', errors='replace')
+        xmx_lines = [l for l in reshade_log.splitlines() if 'xmx summary' in l]
         xmx_line = xmx_lines[-1].split('mfgunlock: ')[-1][:120] if xmx_lines else ''
+        # 1.10.0 (XmxSaveVram, on by default): XMX creates frame generation without NVIDIA's feature.
+        skipped_nvidia = "without NVIDIA's feature" in reshade_log
     for f in ('renodx-mfgunlock.addon64', 'd3d12.dll', 'MFGAdaUnlock.ini', 'ReShade.ini', 'libxess_fg.dll', 'libxell.dll'):
         if (b / f).exists():
             (b / f).unlink()
     print(f'== {name}: sl.log {len(sl.splitlines())} lines; sl.dlss_g masks {masks}; DLSS-G unloaded {unloaded}; '
-          f'{mib:.0f} MiB dedicated' + (f'; {xmx_line}' if xmx_line else ''))
-    return sl != '', masks, unloaded, mib, xmx_line
+          f'{mib:.0f} MiB dedicated' + (f'; {xmx_line}' if xmx_line else '') +
+          ('; NVIDIA feature not created' if skipped_nvidia else ''))
+    return sl != '', masks, unloaded, mib, xmx_line, skipped_nvidia
 
 
-ok, masks, unloaded, base, _ = run('control', False)
-fok, fmasks, funloaded, forced, _ = run('forced', True)
+ok, masks, unloaded, base, _, _ = run('control', False)
+fok, fmasks, funloaded, forced, _, _ = run('forced', True)
 if not ok or not fok:
     raise SystemExit('no sl.log: the Streamline log environment did not take effect')
 if masks and not unloaded:
@@ -113,12 +118,14 @@ if a.sdk_fg and a.sdk_ll and a.sdk_fg.is_file() and a.sdk_ll.is_file():
     # Item 5: XMX replaces NVIDIA's generator in the forced DLSS-G.
     # Open point (1.10.0): in the full suite this case missed XMX in 2 of 4 runs (NVIDIA's generator ran,
     # the XMX hooks were in place, no evaluation reached them; cause not found yet). One retry, reported.
-    xok, xmasks, xunloaded, xmib, summary = run('forced-xmx', True, True)
+    xok, xmasks, xunloaded, xmib, summary, skipped = run('forced-xmx', True, True)
     if xunloaded or '0x1' not in xmasks or 'generated' not in summary:
         print('forced-xmx: XMX did not generate on the first run; retrying once')
-        xok, xmasks, xunloaded, xmib, summary = run('forced-xmx-retry', True, True)
+        xok, xmasks, xunloaded, xmib, summary, skipped = run('forced-xmx-retry', True, True)
     if xunloaded or '0x1' not in xmasks or 'generated' not in summary:
         raise SystemExit('forced-xmx: XMX did not generate in the forced DLSS-G')
-    xmx_note = f'; XMX generated in it ({summary})'
+    if not skipped:
+        raise SystemExit("forced-xmx: NVIDIA's unused frame generation feature was created (XmxSaveVram)")
+    xmx_note = f"; XMX generated in it without NVIDIA's feature, {xmib:.0f} MiB ({summary})"
 print(f'PASS: the SR-only sample ran DLSS-G with the addon (+{forced - base:.0f} MiB, sl.dlss_g mask 0x1); '
       'the control loaded no DLSS-G' + xmx_note)

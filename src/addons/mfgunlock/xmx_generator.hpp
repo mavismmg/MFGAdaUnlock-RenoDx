@@ -24,6 +24,7 @@
 #include "tag_states.hpp"
 #include "xmx_policy.hpp"
 #include "xmx_preada.hpp"
+#include "xmx_hud_composite.hpp"
 
 namespace mfgunlock::xmx::generator {
 using Microsoft::WRL::ComPtr;
@@ -141,6 +142,55 @@ inline std::atomic<uint32_t> g_idle_logged{0};
 inline std::atomic<uint64_t> g_copy_bytes{0};
 inline std::atomic<uint32_t> g_copy_resources{0};
 inline std::atomic<uint32_t> g_frames_limit{0};  // the model's limit once a game asks for more
+// 1.10.0: XeFG's UI composition (ExecuteParams::uiComposition, 1: separate the
+// HUD with the HUD-less color; 0: the back buffer alone, so the HUD moved with
+// the scene, KCD2's crosshair repeated). On with the Streamline host's HUD fix
+// (sl_host.hpp sets it); [DLSSG] XmxUiComposition=1 for games that ship DLSS-G.
+inline std::atomic_bool g_ui_composition{false};
+// 1.10.0: the Streamline host's own copy of the image before the HUD (hud_capture.hpp), recorded on the
+// game's list right before its Present. Streamline's HUDLess for the same frame came one frame apart in
+// KCD2 (a camera turn made every pixel "HUD"); this copy is the presented frame's.
+inline std::atomic<ID3D12Resource*> g_own_hudless{nullptr};
+// Bumped by each capture: a frame whose HUD was not captured gets no HUD-less image, never the last one
+// (Metro Exodus caught 322 of 3931 frames, and XMX interpolated that stale, smaller copy: dim, black flicker).
+inline std::atomic<uint64_t> g_own_hudless_seq{0};
+// 1.10.0: XeFG interpolates the HUD-less color and the real frame's HUD goes over
+// each generated frame (xmx_hud_composite.hpp); the panel's HUD fix ([DLSSG] HudFix=0) turns it off.
+inline bool HudCompositeWanted() {
+  static const bool wanted =
+      GetPrivateProfileIntW(L"DLSSG", L"HudFix", 1, (backend::Directory() / L"MFGAdaUnlock.ini").c_str()) != 0;
+  return wanted;
+}
+// Diagnostics: [DLSSG] XmxHudDebug=1 paints what counts as HUD magenta in generated frames;
+// XmxHudFromBackbuffer=1 has XeFG interpolate the back buffer (with the HUD) instead of the HUD-less color.
+// The panel's switch changes it while the game runs; -1 until the INI is read.
+inline std::atomic<int> g_hud_debug{-1};
+inline int HudDebugSetting(const wchar_t* key);
+inline bool HudDebugWanted() {
+  int value = g_hud_debug.load(std::memory_order_relaxed);
+  if (value < 0) g_hud_debug.store(value = HudDebugSetting(L"XmxHudDebug") != 0 ? 1 : 0, std::memory_order_relaxed);
+  return value != 0;
+}
+// The host's copy when a new one was captured since the previous real frame; otherwise none (a stale
+// copy is another frame's image). Without the host's capture, the game's own DLSSG.HUDLess.
+inline ID3D12Resource* Resource(const NVSDK_NGX_Parameter* params, const char* name);
+inline ID3D12Resource* OwnHudlessForThisFrame(const NVSDK_NGX_Parameter* params) {
+  static uint64_t seen = 0;
+  ID3D12Resource* own = g_own_hudless.load(std::memory_order_acquire);
+  if (own == nullptr) return Resource(params, "DLSSG.HUDLess");
+  const uint64_t seq = g_own_hudless_seq.load(std::memory_order_acquire);
+  const bool fresh = seq != seen;
+  seen = seq;
+  return fresh ? own : nullptr;
+}
+inline int HudDebugSetting(const wchar_t* key) {
+  return static_cast<int>(GetPrivateProfileIntW(L"DLSSG", key, 0, (backend::Directory() / L"MFGAdaUnlock.ini").c_str()));
+}
+inline bool UiCompositionWanted() {
+  static const bool wanted =
+      GetPrivateProfileIntW(L"DLSSG", L"XmxUiComposition", 0, (backend::Directory() / L"MFGAdaUnlock.ini").c_str()) != 0;
+  return wanted || g_ui_composition.load(std::memory_order_relaxed);
+}
 // 1.8.3: what the generator saw over the last 10 s, outside Log's cap of 48 lines
 // (Ghost of Tsushima: the first evaluates had 1x1 depth and motion and a reset,
 // and the 2x did not look interpolated; the start alone cannot tell why).
@@ -470,11 +520,12 @@ inline bool Prepare(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* 
   init.maxFrames = state.maxFrames;
   init.creationMask = 1;
   init.visibleMask = 1;
+  init.uiMode = 0;  // AUTO
   const auto initialize = [&] {
     const auto result = Guarded(reinterpret_cast<unsigned char*>(state.fg) + kInitRva, state.context, &init, nullptr);
     Log("init " + std::to_string(width) + "x" + std::to_string(output.Height) + " format " +
         std::to_string(static_cast<int>(output.Format)) + " flags " + std::to_string(init.flags) + " frames " +
-        std::to_string(init.maxFrames) + " result " + std::to_string(result));
+        std::to_string(init.maxFrames) + " composition " + (UiCompositionWanted() ? "on" : "off") + " result " + std::to_string(result));
     return result;
   };
   auto result = initialize();
@@ -500,7 +551,7 @@ inline bool Prepare(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* 
     // Found out only here: the hook goes in when the module loads, long before the
     // game's output format exists, so NVIDIA's generator is already gone.
     Fail(output.Format == DXGI_FORMAT_R16G16B16A16_FLOAT
-             ? "XMX cannot use this game's scRGB HDR output (result " + std::to_string(result) + "); turn HDR off or use XeMFG"
+             ? "XeMFG DLSS-G cannot use this game's scRGB HDR output (result " + std::to_string(result) + "); turn HDR off or use XeMFG"
              : "XeFG initialization returned " + std::to_string(result));
     state.context = nullptr;
     state.refused = true;
@@ -592,7 +643,9 @@ inline bool Generate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
   auto& next = state.frames[state.current];
   if (!Capture(device, list, next.backbuffer, backbuffer, kBackbufferState) ||
       !Capture(device, list, next.depth, depth, kInputState) || !Capture(device, list, next.motion, motion, kInputState) ||
-      !Capture(device, list, next.hudless, Resource(params, "DLSSG.HUDLess"), kInputState)) {
+      !Capture(device, list, next.hudless,
+               OwnHudlessForThisFrame(params),
+               kInputState)) {
     Fail("input copies");
     state.failed = true;
     return false;
@@ -644,6 +697,21 @@ inline bool Generate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
     execute.outputs = outputs;
     execute.outputBases = bases;
     execute.outputCount = static_cast<uint8_t>(frameCount);
+    execute.uiComposition = next.hudless && previous.hudless && UiCompositionWanted() ? 1u : 0u;
+    const auto same_size = [](ID3D12Resource* a, ID3D12Resource* b) {
+      if (a == nullptr || b == nullptr) return false;
+      const auto da = a->GetDesc(), db = b->GetDesc();
+      return da.Width == db.Width && da.Height == db.Height;
+    };
+    const bool composite = execute.uiComposition == 0 && next.hudless && previous.hudless && HudCompositeWanted() &&
+                           !hudcomposite::Get().failed && same_size(next.hudless.Get(), next.backbuffer.Get()) &&
+                           same_size(previous.hudless.Get(), previous.backbuffer.Get());
+    static const bool from_backbuffer = HudDebugSetting(L"XmxHudFromBackbuffer") != 0;
+    const bool hud_debug = HudDebugWanted();
+    if (composite && !from_backbuffer) {
+      execute.previous.backbuffer = previous.data.hudless;
+      execute.next.backbuffer = next.data.hudless;
+    }
     execute.firstFrame = frameIndex - 1;
     execute.frameCount = 1;
     const auto result = Guarded(reinterpret_cast<unsigned char*>(state.fg) + kExecuteRva, state.context, list, &execute);
@@ -656,6 +724,16 @@ inline bool Generate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
       }
     } else {
       generated = result == 0;
+      if (generated && composite &&
+          !hudcomposite::Apply(list, device, outputs[frameIndex - 1], next.backbuffer.Get(), next.hudless.Get(), hud_debug)) {
+        static std::atomic_flag logged = ATOMIC_FLAG_INIT;
+        if (!logged.test_and_set())
+          Log("HUD composition unavailable: " + (hudcomposite::Get().fault.empty() ? std::string("size mismatch")
+                                                                                     : hudcomposite::Get().fault));
+      } else if (generated && composite) {
+        static std::atomic_flag logged = ATOMIC_FLAG_INIT;
+        if (!logged.test_and_set()) Log("HUD: XeFG interpolates the HUD-less color; the real frame's HUD is composed over it");
+      }
       if (!generated) idle = policy::Idle::NoOutput;
       if (generated) g_last_generated_tick.store(GetTickCount64(), std::memory_order_relaxed);
       static std::atomic<int> logged{0};

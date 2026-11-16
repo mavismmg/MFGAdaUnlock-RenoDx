@@ -5,142 +5,49 @@
 #error "overlay page files are included only by addon_overlay.inl"
 #endif
 
+
   if (page == UiPage::General) {
+    namespace ui = mfgunlock::ui;
     ImGui::Spacing();
-    mfgunlock::ui::Section(T(Str::kFrameGeneration_83ac),T(Str::kEnableFrameGenerationInThe_1380));
-    mfgunlock::ui::Card generation_card("##dlssg_general_card");
-    mfgunlock::ui::BackendSelector();
-#if defined(MFGUNLOCK_NATIVE_XEMFG)
-    mfgunlock::dlssgdisplay::Draw();
-#endif
-    // 1.10.0: frame generation in more games (force_fg.hpp, native_vulkan.hpp), next to the method.
-    if (mfgunlock::backend::active == mfgunlock::backend::Kind::DlssG) {
-      ImGui::Spacing();
-      ImGui::TextDisabled("%s", T(Str::kMoreGamesExperimental_r1a));
-      namespace adv = mfgunlock::ui::advanced;
-      adv::DrawOption(adv::kRoutes[0]);
-      const bool force_wanted = adv::Current(adv::kRoutes[0]) == L"1";
-      const bool force_running = mfgunlock::framecount::g_force_fg_enabled.load(std::memory_order_relaxed);
-      if (force_wanted != force_running) {
-        mfgunlock::ui::Description(T(Str::kRestartTheGameToApply_r1b));
-      } else if (force_running) {
-        FILETIME created{}, exited{}, kernel{}, user{}, now{};
-        GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user);
-        GetSystemTimeAsFileTime(&now);
-        const auto ticks = [](const FILETIME& f) { return (uint64_t(f.dwHighDateTime) << 32) | f.dwLowDateTime; };
-        const uint64_t uptime_ms = ticks(now) > ticks(created) ? (ticks(now) - ticks(created)) / 10000 : 0;
-        const auto status = mfgunlock::forcefg::PanelStatus(
-            true, GetModuleHandleW(L"sl.interposer.dll") != nullptr,
-            mfgunlock::framecount::internal::g_init_seen.load(std::memory_order_acquire), uptime_ms,
-            static_cast<mfgunlock::forcefg::Decision>(mfgunlock::framecount::g_force_fg_decision.load(std::memory_order_acquire)),
-            static_cast<mfgunlock::forcefg::Apply>(mfgunlock::framecount::g_force_fg_apply.load(std::memory_order_acquire)));
-        using S = mfgunlock::forcefg::Status;
-        switch (status) {
-          case S::kActive: mfgunlock::ui::Notice(T(Str::kForcedFgActive_r1i), mfgunlock::ui::Accent); break;
-          case S::kNoStreamline: mfgunlock::ui::Notice(T(Str::kNoStreamlineUseXemfg_r1c)); break;
-          case S::kInitMissed: {
-            mfgunlock::ui::Notice(T(Str::kSlinitNotSeenEarly_r1d));
-            static int early_state = 0;  // 0 not tried, 1 saved, 2 failed
-            mfgunlock::ui::ButtonRow early(1);
-            if (early(T(Str::kEnableEarlyAddonLoading_a017), T(Str::kAddsThisAddonToReshade_09f4)))
-              early_state = EnsureEarlyLoadEntry() ? 1 : 2;
-            if (early_state == 1) mfgunlock::ui::Description(T(Str::kSavedRestartTheGame_a1f6));
-            else if (early_state == 2) mfgunlock::ui::Description(T(Str::kReshadeIniCouldNotBe_03d9));
-            break;
-          }
-          case S::kGameHasFrameGeneration: mfgunlock::ui::Description(T(Str::kGameHasOwnFrameGeneration_r1e)); break;
-          case S::kAllFeatures: mfgunlock::ui::Description(T(Str::kGameLoadsEveryFeature_r1f)); break;
-          case S::kNoSuperResolution: mfgunlock::ui::Notice(T(Str::kNoSuperResolution_r1g)); break;
-          case S::kNoReflex: mfgunlock::ui::Notice(T(Str::kNoReflex_r1h)); break;
-          case S::kWaiting: mfgunlock::ui::Description(T(Str::kWaitingForTheGame_r1j)); break;
-          default: break;
-        }
-      }
-#if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
-      if (xmx_selected) {
-        adv::DrawOption(adv::kRoutes[1]);
-        const bool vk_wanted = adv::Current(adv::kRoutes[1]) == L"1";
-        const bool vk_running = mfgunlock::xemfg::native::vulkan::XmxProviderWanted();
-        if (vk_wanted != vk_running) {
-          mfgunlock::ui::Description(T(Str::kRestartTheGameToApply_r1b));
-        } else if (vk_running) {
-          const std::string state = mfgunlock::xemfg::native::vulkan::XmxProviderReport();
-          if (state.empty()) mfgunlock::ui::Description(T(Str::kXmxVulkanNotVulkan_r1k));
-          else if (state.rfind("created", 0) == 0) mfgunlock::ui::Notice(T(Str::kXmxVulkanActive_r1l), mfgunlock::ui::Accent);
-          else if (state.rfind("waiting", 0) == 0) mfgunlock::ui::Description(T(Str::kWaitingForTheGame_r1j));
-          else mfgunlock::ui::Notice(T(Str::kXmxVulkanRefused_r1m));
-        }
-      }
-#endif
-      adv::Result();
-    }
-    if (ImGui::BeginTable("##frame_generation_settings", 2,
-                        ImGuiTableFlags_SizingStretchProp)) {
-    ImGui::TableSetupColumn(T(Str::kSetting_754b), ImGuiTableColumnFlags_WidthStretch, 0.5f);
-    ImGui::TableSetupColumn(T(Str::kControl_bf3e), ImGuiTableColumnFlags_WidthStretch, 0.5f);
+    // 1.10.0 (panel reformulation): one card per job. Statuses go in a chip under their
+    // control; explanations live in the tooltips.
+    ui::Section(T(Str::kFrameGeneration_83ac),T(Str::kEnableFrameGenerationInThe_1380));
+    {
+    ui::Card generation_card("##dlssg_general_card");
+    ui::BackendSelector();
 
-    ImGui::TableNextRow();
-    ImGui::TableNextColumn();
-    SettingLabel(
-        T(Str::kEnableMfgUnlock_67ca), T(Str::kAppliedOnTheNextGame_e392),
-        T(Str::kChangesTheMasterAddonState_fcdf));
-    ImGui::TableNextColumn();
-    if (ImGui::Checkbox("##mfg_enabled", &configured_enabled)) {
-      g_configured_enabled.store(configured_enabled,
-                                 std::memory_order_relaxed);
-      reshade::set_config_value(nullptr, kConfigSection, "Enabled",
-                                configured_enabled ? 1 : 0);
-    }
-
-    int force = static_cast<int>(
-        mfgunlock::framecount::g_force_multiplier.load(
-            std::memory_order_relaxed));
+    int force = static_cast<int>(mfgunlock::framecount::g_force_multiplier.load(std::memory_order_relaxed));
     int force_choice = force == 0 ? 0 : force - 1;
-    const char* kMultiplierModes[] = {
-        T(Str::kGame_2327), "2x", "3x", "4x", "5x", "6x"};
-    ImGui::TableNextRow();
-    ImGui::TableNextColumn();
-    SettingLabel(
-        T(Str::kFrameMultiplier_4a05), T(Str::kUseTheGameSSelector_35b5),
-        T(Str::kGameControlledPreservesTheMultiplier_c085));
-    ImGui::TableNextColumn();
-    ImGui::SetNextItemWidth(-1.0f);
-    if (mfgunlock::ui::Segmented("##frame_multiplier", force_choice,
-                                 kMultiplierModes,
-                                 static_cast<int>(std::size(kMultiplierModes)))) {
-      force = force_choice == 0 ? 0 : force_choice + 1;
-      mfgunlock::framecount::g_force_multiplier.store(
-          static_cast<unsigned int>(force), std::memory_order_relaxed);
-      mfgunlock::framecount::NotifyFixedMultiplierChanged(
-          static_cast<unsigned int>(force));
-      reshade::set_config_value(nullptr, kConfigSection, "ForceMultiplier",
-                                force);
-    }
+    const char* kMultiplierModes[] = {T(Str::kGame_2327), "2x", "3x", "4x", "5x", "6x"};
+    ui::Setting("##frame_multiplier_row", T(Str::kFrameMultiplier_4a05), T(Str::kGameControlledPreservesTheMultiplier_c085), [&] {
+      if (ui::Segmented("##frame_multiplier", force_choice, kMultiplierModes, static_cast<int>(std::size(kMultiplierModes)))) {
+        force = force_choice == 0 ? 0 : force_choice + 1;
+        mfgunlock::framecount::g_force_multiplier.store(static_cast<unsigned int>(force), std::memory_order_relaxed);
+        mfgunlock::framecount::NotifyFixedMultiplierChanged(static_cast<unsigned int>(force));
+        reshade::set_config_value(nullptr, kConfigSection, "ForceMultiplier", force);
+      }
+    });
     if (mfgunlock::forcepolicy::StreamlineBlocksMultiFrame(
-            mfgunlock::framecount::g_active_streamline_version.load(std::memory_order_acquire), 2)) {
-      ImGui::PushTextWrapPos();
-      ImGui::TextColored(kUiWarning,
-          T(Str::kThisGameSStreamlineIs_9679));
-      ImGui::PopTextWrapPos();
-    }
+            mfgunlock::framecount::g_active_streamline_version.load(std::memory_order_acquire), 2))
+      ui::StatusChip(T(Str::kThisGameSStreamlineIs_9679), ui::Warning);
 
     bool dynamic_mfg = dynamic_enabled && !dynamic_game_blocked;
-
     // 1.8.5: name the missing piece instead of a generic "waiting".
     std::string dynamic_status;
+    ImVec4 dynamic_color = ui::Warning;
     if (dynamic_game_blocked) {
-      dynamic_status = T(Str::kDisabledForThisGameS_4b28);
+      dynamic_status = T(Str::kDisabledForThisGameS_4b28); dynamic_color = ui::Muted;
     } else if (dynamic_available) {
-      dynamic_status = T(Str::kRuntimeSupportDetected_b544);
+      dynamic_status = T(Str::kRuntimeSupportDetected_b544); dynamic_color = ui::Accent;
     } else if (dynamic_renderer_blocked) {
-      dynamic_status = T(Str::kUnavailableNvidiaDynamicMfgNeeds_d275);
+      dynamic_status = T(Str::kUnavailableNvidiaDynamicMfgNeeds_d275); dynamic_color = ui::Muted;
     } else if (dynamic_version_blocked &&
                !mfgunlock::runtimeversion::IsDynamicStreamlineVersion(streamline_version)) {
-      dynamic_status = "Unavailable: this game loads Streamline " + streamline_text + "; Dynamic needs 2.14 or newer.";
+      dynamic_status = "Unavailable: this game loads Streamline " + streamline_text + "; Dynamic needs 2.14 or newer."; dynamic_color = ui::Muted;
     } else if (dynamic_version_blocked) {
-      dynamic_status = "Unavailable: this game loads DLSS-G " + dlssg_text + "; Dynamic needs 310.9.1 or newer.";
+      dynamic_status = "Unavailable: this game loads DLSS-G " + dlssg_text + "; Dynamic needs 310.9.1 or newer."; dynamic_color = ui::Muted;
     } else if (dynamic_provider_blocked) {
-      dynamic_status = T(Str::kUnavailableNvidiaSRuntimeReports_8975);
+      dynamic_status = T(Str::kUnavailableNvidiaSRuntimeReports_8975); dynamic_color = ui::Muted;
     } else if (!streamline_seen) {
       dynamic_status = T(Str::kWaitingStreamlineHasNotBeen_a456);
     } else if (!dlssg_seen) {
@@ -149,32 +56,22 @@
       dynamic_status = "Waiting: Streamline " + streamline_text + " and DLSS-G " + dlssg_text +
                        " found; the runtime has not answered the Dynamic support query yet. Turn Frame Generation on in the game.";
     }
+    const bool block_dynamic_enable = dynamic_game_blocked || (dynamic_hard_unavailable && !dynamic_mfg);
+    ui::Setting("##dynamic_mfg_row", T(Str::kNvidiaDynamicMfg_3547), T(Str::kLetsNvidiaSNativeScheduler_f909), [&] {
+      if (block_dynamic_enable) ImGui::BeginDisabled();
+      if (ui::Toggle("##dynamic_mfg", dynamic_mfg)) {
+        mfgunlock::framecount::g_dynamic_mfg_enabled.store(dynamic_mfg, std::memory_order_relaxed);
+        mfgunlock::framecount::NotifyDynamicModeChanged();
+        reshade::set_config_value(nullptr, kConfigSection, "DynamicMFG", dynamic_mfg ? 1 : 0);
+      }
+      if (block_dynamic_enable) ImGui::EndDisabled();
+    });
+    ui::StatusChip(dynamic_status.c_str(), dynamic_color);
+    if (xmx_selected && dynamic_mfg) ui::StatusChip(T(Str::kExperimentalWithXmxNvidiaS_3514), ui::Warning);
 
-    ImGui::TableNextRow();
-    ImGui::TableNextColumn();
-    SettingLabel(
-        T(Str::kNvidiaDynamicMfg_3547),
-        dynamic_status.c_str(),
-        T(Str::kLetsNvidiaSNativeScheduler_f909));
-    ImGui::TableNextColumn();
-    const bool block_dynamic_enable =
-        dynamic_game_blocked || (dynamic_hard_unavailable && !dynamic_mfg);
-    if (block_dynamic_enable) ImGui::BeginDisabled();
-    if (ImGui::Checkbox("##dynamic_mfg", &dynamic_mfg)) {
-      mfgunlock::framecount::g_dynamic_mfg_enabled.store(
-          dynamic_mfg, std::memory_order_relaxed);
-      mfgunlock::framecount::NotifyDynamicModeChanged();
-      reshade::set_config_value(nullptr, kConfigSection, "DynamicMFG",
-                                dynamic_mfg ? 1 : 0);
-    }
-    if (block_dynamic_enable) ImGui::EndDisabled();
-    if (xmx_selected && dynamic_mfg) {
-      ImGui::PushTextWrapPos();
-      ImGui::TextColored(kUiWarning, T(Str::kExperimentalWithXmxNvidiaS_3514));
-      ImGui::PopTextWrapPos();
-    }
-
-    if (dynamic_mfg) {
+    if (dynamic_mfg && ImGui::BeginTable("##frame_generation_settings", 2, ImGuiTableFlags_SizingStretchProp)) {
+    ImGui::TableSetupColumn(T(Str::kSetting_754b), ImGuiTableColumnFlags_WidthStretch, 0.5f);
+    ImGui::TableSetupColumn(T(Str::kControl_bf3e), ImGuiTableColumnFlags_WidthStretch, 0.5f);
       int dynamic_target = static_cast<int>(
           mfgunlock::framecount::g_dynamic_target_fps.load(
               std::memory_order_relaxed));
@@ -252,53 +149,186 @@
       } else {
         ImGui::TextWrapped(T(Str::kCustomOutputTargetAvailableWhen_d045));
       }
+    ImGui::EndTable();
+    }
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+    mfgunlock::dlssgdisplay::Draw();
+#endif
     }
 
-    ImGui::EndTable();
-  }
-
-    ImGui::Spacing();
-    ImGui::TextDisabled(T(Str::kFrameRateControls_5b82));
-    ImGui::Separator();
-    if (ImGui::BeginTable("##frame_rate_controls", 2,
-                          ImGuiTableFlags_SizingStretchProp)) {
-      ImGui::TableSetupColumn(T(Str::kSetting_754b), ImGuiTableColumnFlags_WidthStretch,
-                              0.5f);
-      ImGui::TableSetupColumn(T(Str::kControl_bf3e), ImGuiTableColumnFlags_WidthStretch,
-                              0.5f);
-      const auto source_cap_state =
-          mfgunlock::framecount::internal::ResolveUserSourceCapState();
-      const std::string source_cap_summary =
-          UserSourceCapSummary(source_cap_state);
+    // Frame rate.
+    ui::Section(T(Str::kFrameRate_p5));
+    {
+      ui::Card rate_card("##frame_rate_card");
+      const auto source_cap_state = mfgunlock::framecount::internal::ResolveUserSourceCapState();
       int source_cap = static_cast<int>(source_cap_state.configured_fps);
-      ImGui::TableNextRow();
-      ImGui::TableNextColumn();
-      SettingLabel(
-          T(Str::kOutputFpsCapReflex_01c8), source_cap_summary.c_str(),
-          T(Str::kSetsTheFinalOutputFps_c7e4));
-      ImGui::TableNextColumn();
-      ImGui::SetNextItemWidth(-1.0f);
-      if (ImGui::InputInt("##rendered_fps_cap", &source_cap, 1, 10)) {
-        source_cap = source_cap <= 0 ? 0
-                                     : std::clamp(source_cap, 10, 1000);
-        mfgunlock::framecount::g_reflex_source_fps_cap.store(
-            static_cast<unsigned int>(source_cap),
-            std::memory_order_relaxed);
-        g_source_cap_config_origin.store(
-            static_cast<unsigned int>(
-                mfgunlock::pacing::SourceCapConfigOrigin::kConfigured),
-            std::memory_order_relaxed);
-        mfgunlock::framecount::NotifySourceFpsCapChanged();
-        reshade::set_config_value(nullptr, kConfigSection,
-                                  "ReflexSourceFpsCap", source_cap);
+      ui::Setting("##rendered_fps_cap_row", T(Str::kOutputFpsCapReflex_01c8), T(Str::kSetsTheFinalOutputFps_c7e4), [&] {
+        if (ImGui::InputInt("##rendered_fps_cap", &source_cap, 1, 10)) {
+          source_cap = source_cap <= 0 ? 0 : std::clamp(source_cap, 10, 1000);
+          mfgunlock::framecount::g_reflex_source_fps_cap.store(static_cast<unsigned int>(source_cap), std::memory_order_relaxed);
+          g_source_cap_config_origin.store(
+              static_cast<unsigned int>(mfgunlock::pacing::SourceCapConfigOrigin::kConfigured), std::memory_order_relaxed);
+          mfgunlock::framecount::NotifySourceFpsCapChanged();
+          reshade::set_config_value(nullptr, kConfigSection, "ReflexSourceFpsCap", source_cap);
+        }
+      });
+      if (source_cap_state.configured_fps != 0)
+        ui::StatusChip(UserSourceCapStatusText(source_cap_state.status), UserSourceCapColor(source_cap_state.status));
+      else
+        ui::StatusChip(UserSourceCapSummary(source_cap_state).c_str(), ui::Muted);
+    }
+
+    if (mfgunlock::backend::active == mfgunlock::backend::Kind::DlssG) {
+      namespace adv = mfgunlock::ui::advanced;
+      // An INI switch of advanced_settings.hpp, drawn as a toggle.
+      const auto toggle = [&](const adv::Option& option, const char* label) {
+        ImGui::PushID(&option);
+        bool on = adv::Current(option) == L"1";
+        ui::Setting("##toggle_row", label, T(option.help), [&] {
+          if (ui::Toggle("##toggle", on)) adv::Store(option, on ? L"1" : L"0");
+        });
+        ImGui::PopID();
+      };
+      // XMX options (1.10.0): only with XMX selected.
+      if (xmx_selected && ui::SectionHeader(T(Str::kXmxOptions_p1), true)) {
+        ui::Card xmx_card("##xmx_options_card");
+        toggle(adv::kXmxSaveVram, T(Str::kXmxSaveVram_v1a));
+        const bool save_wanted = adv::Current(adv::kXmxSaveVram) == L"1";
+        if (save_wanted != XmxSaveVramWanted()) ui::StatusChip(T(Str::kRestartTheGameToApply_r1b), ui::Warning);
+        else if (save_wanted && g_xmx_handles_created.load(std::memory_order_relaxed) > 0)
+          ui::StatusChip(T(Str::kXmxSaveVramActive_v1c), ui::Accent);
+#if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
+        // On by default, Vulkan games only ([DLSSG] XmxVulkan=0 turns it off): a readout, not a switch.
+        namespace vk = mfgunlock::xemfg::native::vulkan;
+        const bool vk_selected = adv::Current(adv::kRoutes[1]) == L"1";
+        ui::Readout("##xmx_vulkan_row", T(Str::kVulkanGames_p6), vk_selected ? T(Str::kAutomatic_p7) : T(Str::kOff_b4aa),
+                    T(Str::kExperimentalXmxInVulkan_x3v2));
+        if (!vk::VulkanLayerHost()) {
+          ui::StatusChip(T(Str::kXmxVulkanNotVulkan_r1k), ui::Muted);
+        } else if (vk_selected != vk::XmxProviderWanted()) {
+          ui::StatusChip(T(Str::kRestartTheGameToApply_r1b), ui::Warning);
+        } else if (vk::XmxProviderWanted()) {
+          const std::string state = vk::XmxProviderReport();
+          if (state.rfind("created", 0) == 0) ui::StatusChip(T(Str::kXmxVulkanActive_r1l), ui::Accent);
+          else if (state.empty() || state.rfind("waiting", 0) == 0) ui::StatusChip(T(Str::kWaitingForTheGame_r1j), ui::Warning);
+          else ui::StatusChip(T(Str::kXmxVulkanRefused_r1m), ui::Warning);
+        }
+        if (vk::VulkanLayerHost() && vk_selected) {
+          toggle(adv::kXmxVulkanPacing, T(Str::kXmxVulkanPacing_q1));
+          const bool pacing_wanted = adv::Current(adv::kXmxVulkanPacing) == L"1";
+          if (vk::XmxProviderWanted() && pacing_wanted != vk::XmxPacingEnabled()) {
+            ui::StatusChip(T(Str::kRestartTheGameToApply_r1b), ui::Warning);
+          } else if (vk::XmxPacingEnabled() && vk::XmxProviderReport().rfind("created", 0) == 0) {
+            const uint32_t limit_us = mfgunlock::reflexpacing::g_xmx_vulkan_limit_us.load(std::memory_order_relaxed);
+            if (limit_us != 0) {
+              char text[256]{};
+              std::snprintf(text, sizeof(text), T(Str::kXmxVulkanPacingLimit_q3), int(1000000.0 / limit_us + 0.5));
+              ui::StatusChip(text, ui::Accent);
+            } else {
+              ui::StatusChip(T(Str::kXmxVulkanPacingIdle_q4), ui::Accent);
+            }
+          }
+        }
+#endif
       }
-      ImGui::EndTable();
-      if (source_cap_state.configured_fps != 0) {
-        ImGui::TextColored(UserSourceCapColor(source_cap_state.status), "%s",
-                           UserSourceCapStatusText(source_cap_state.status));
-        ImGui::TextDisabled(
-            T(Str::kThisIsTheFinalFps_1fb6));
+
+      // Games without frame generation (1.10.0): one switch for both routes, DLSS-G forced
+      // through the game's own Streamline (force_fg.hpp) or Streamline started by the addon
+      // for games with DLSS SR only (sl_host.hpp). The status says which one applies.
+      const bool add_wanted = adv::Current(adv::kRoutes[3]) == L"1" || adv::Current(adv::kRoutes[0]) == L"1" ||
+                              adv::Current(adv::kRoutes[2]) == L"1";
+      const bool force_running = mfgunlock::framecount::g_force_fg_enabled.load(std::memory_order_relaxed);
+      // The Vulkan counterpart of sl_host.hpp (xemfg/sl_vulkan.hpp): its own state when it runs.
+      int vk_host = 0;
+#if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
+      vk_host = mfgunlock::xemfg::native::vulkan::StreamlineHostState();
+      if (vk_host == static_cast<int>(mfgunlock::slhost::State::kGameStreamline)) vk_host = 0;
+#endif
+      const bool add_running = force_running || mfgunlock::slhost::Wanted() || vk_host != 0;
+      if (ui::SectionHeader(T(Str::kGamesWithoutFg_p2), add_wanted || add_running, T(Str::kExperimentalTag_p3))) {
+        ui::Card add_card("##add_fg_card");
+        toggle(adv::kRoutes[3], T(Str::kAddFgToggle_p8));
+        using H = mfgunlock::slhost::State;
+        const H host = vk_host != 0 ? static_cast<H>(vk_host) : mfgunlock::slhost::Current();
+        if (add_wanted != add_running) {
+          ui::StatusChip(T(Str::kRestartTheGameToApply_r1b), ui::Warning);
+        } else if (add_running && (vk_host != 0 || mfgunlock::slhost::Wanted()) && host != H::kGameStreamline && host != H::kOff) {
+          switch (host) {
+            case H::kGenerating: ui::StatusChip(T(Str::kHostActive_h1c), ui::Accent); break;
+            case H::kSwapChain: ui::StatusChip(T(Str::kHostWaitingDlss_h1d), ui::Warning); break;
+            case H::kMissingFiles: ui::StatusChip(T(Str::kHostMissingFiles_h1f), ui::Danger); break;
+            case H::kFailed: ui::StatusChip(T(Str::kHostFailed_h1g), ui::Danger); break;
+            default: ui::StatusChip(T(Str::kHostWaitingSwapchain_h1h), ui::Warning); break;
+          }
+          ui::Readout("##add_fg_route", T(Str::kRoute_p9), T(Str::kRouteHostedShort_p10), T(Str::kHostStreamlineDesc_h1b));
+          // The HUD fix: the image before the HUD, for NVIDIA's generator and for XMX (D3D12 only for now).
+          if (vk_host == 0) {
+          toggle(adv::kHudFix, T(Str::kHudFix_p15));
+          const bool fix_wanted = adv::Current(adv::kHudFix) == L"1";
+          if (fix_wanted != mfgunlock::hudcapture::g_registered.load()) ui::StatusChip(T(Str::kRestartTheGameToApply_r1b), ui::Warning);
+          else if (fix_wanted && mfgunlock::slhost::HudCaptures() > 0) ui::StatusChip(T(Str::kHudFixFound_p19), ui::Accent);
+          else if (fix_wanted) ui::StatusChip(T(Str::kHudFixWaiting_p20), ui::Warning);
+          // XMX composes the real frame's HUD over its frames; this shows what counts as HUD.
+          if (xmx_selected && fix_wanted) {
+            ImGui::PushID("hud_debug");
+            bool debug = mfgunlock::xmx::generator::HudDebugWanted();
+            ui::Setting("##toggle_row", T(Str::kHudDebug_p17), T(Str::kHudDebugDesc_p18), [&] {
+              if (ui::Toggle("##toggle", debug)) {
+                mfgunlock::xmx::generator::g_hud_debug.store(debug ? 1 : 0, std::memory_order_relaxed);
+                adv::Store(adv::kXmxHudDebug, debug ? L"1" : L"0");
+              }
+            });
+            ImGui::PopID();
+          }
+          }
+        } else if (force_running) {
+        FILETIME created{}, exited{}, kernel{}, user{}, now{};
+        GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user);
+        GetSystemTimeAsFileTime(&now);
+        const auto ticks = [](const FILETIME& f) { return (uint64_t(f.dwHighDateTime) << 32) | f.dwLowDateTime; };
+        const uint64_t uptime_ms = ticks(now) > ticks(created) ? (ticks(now) - ticks(created)) / 10000 : 0;
+        const auto status = mfgunlock::forcefg::PanelStatus(
+            true, GetModuleHandleW(L"sl.interposer.dll") != nullptr,
+            mfgunlock::framecount::internal::g_init_seen.load(std::memory_order_acquire), uptime_ms,
+            static_cast<mfgunlock::forcefg::Decision>(mfgunlock::framecount::g_force_fg_decision.load(std::memory_order_acquire)),
+            static_cast<mfgunlock::forcefg::Apply>(mfgunlock::framecount::g_force_fg_apply.load(std::memory_order_acquire)));
+        using S = mfgunlock::forcefg::Status;
+        switch (status) {
+          case S::kActive: ui::StatusChip(T(Str::kForcedFgActive_r1i), mfgunlock::ui::Accent); break;
+          case S::kNoStreamline: ui::StatusChip(T(Str::kNoStreamlineUseXemfg_r1c), ui::Warning); break;
+          case S::kInitMissed: {
+            ui::StatusChip(T(Str::kSlinitNotSeenEarly_r1d), ui::Warning);
+            static int early_state = 0;  // 0 not tried, 1 saved, 2 failed
+            mfgunlock::ui::ButtonRow early(1);
+            if (early(T(Str::kEnableEarlyAddonLoading_a017), T(Str::kAddsThisAddonToReshade_09f4)))
+              early_state = EnsureEarlyLoadEntry() ? 1 : 2;
+            if (early_state == 1) ui::StatusChip(T(Str::kSavedRestartTheGame_a1f6));
+            else if (early_state == 2) ui::StatusChip(T(Str::kReshadeIniCouldNotBe_03d9));
+            break;
+          }
+          case S::kGameHasFrameGeneration: ui::StatusChip(T(Str::kGameHasOwnFrameGeneration_r1e)); break;
+          case S::kAllFeatures: ui::StatusChip(T(Str::kGameLoadsEveryFeature_r1f)); break;
+          case S::kNoSuperResolution: ui::StatusChip(T(Str::kNoSuperResolution_r1g), ui::Warning); break;
+          case S::kNoReflex: ui::StatusChip(T(Str::kNoReflex_r1h), ui::Warning); break;
+          case S::kWaiting: ui::StatusChip(T(Str::kWaitingForTheGame_r1j)); break;
+          default: break;
+        }
+          ui::Readout("##add_fg_route", T(Str::kRoute_p9), T(Str::kRouteGameShort_p11), T(Str::kForStreamlineGamesWith_f4g2));
+        }
       }
+      adv::Result();
+    }
+
+    // The add-on itself: rarely changed, applies on the next launch.
+    if (ui::SectionHeader(T(Str::kAddonSection_p4), false)) {
+      ui::Card addon_card("##addon_card");
+      ui::Setting("##mfg_enabled_row", T(Str::kMfgUnlockEnabled_p13), T(Str::kChangesTheMasterAddonState_fcdf), [&] {
+        if (ui::Toggle("##mfg_enabled", configured_enabled)) {
+          g_configured_enabled.store(configured_enabled, std::memory_order_relaxed);
+          reshade::set_config_value(nullptr, kConfigSection, "Enabled", configured_enabled ? 1 : 0);
+        }
+      });
+      ui::StatusChip(T(Str::kAppliedOnTheNextGame_e392), ui::Muted);
     }
   }
 

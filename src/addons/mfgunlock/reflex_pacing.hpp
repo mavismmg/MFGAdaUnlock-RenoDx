@@ -122,6 +122,9 @@ inline std::atomic<uint32_t> g_headroom_basis_points{100};
 inline std::atomic_bool g_vrr_active{false};
 inline std::atomic<uint32_t> g_refresh_millihz{0};
 inline std::atomic<uint32_t> g_headroom_limit_us{0};
+// 1.10.0 (plan XMX Vulkan pacing): the output frame limit XMX's Vulkan provider can hold (us, 0 none), composed like
+// the VRR headroom limit; a user cap takes its place (framecount.hpp).
+inline std::atomic<uint32_t> g_xmx_vulkan_limit_us{0};
 inline std::atomic<uint32_t> g_native_mode{0};
 inline std::atomic<uint32_t> g_forwarded_mode{0};
 inline std::atomic_bool g_mode_applied{false};

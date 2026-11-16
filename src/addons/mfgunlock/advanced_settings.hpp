@@ -75,13 +75,27 @@ inline constexpr Option kDlssG[]{
   // 1.10.0: Streamline's own log, for support (streamline_log.hpp).
   {L"DLSSG",L"StreamlineLog",Str::kStreamlineLogSlLog_55a1,Str::kWritesStreamlineSOwnLog_531a,L"0",MFGUNLOCK_CHOICES(kStreamlineLog)},
   {L"DLSSG",L"ForceBorderless",Str::kForceBorderless_315b,Str::kServesTheGameAsA_53d5,L"0",MFGUNLOCK_CHOICES(kOnOff)},
+  // 1.10.0: the Streamline host's Vulkan route alone (xemfg/sl_vulkan.cpp), and XeFG's own UI composition for XMX.
+  {L"DLSSG",L"HostVulkan",Str::kHostVulkan_p21,Str::kHostVulkanDesc_p22,L"1",MFGUNLOCK_CHOICES(kOnOff)},
+  {L"DLSSG",L"XmxUiComposition",Str::kXmxUiComposition_p23,Str::kXmxUiCompositionDesc_p24,L"0",MFGUNLOCK_CHOICES(kOnOff)},
 };
 // 1.10.0: frame generation in more games, drawn on the General page next to the method
 // (players did not find them in the advanced list): [0] forced DLSS-G, [1] XMX on Vulkan.
 inline constexpr Option kRoutes[]{
   {L"DLSSG",L"ForceFrameGeneration",Str::kForceDlssFrameGeneration_f4g1,Str::kForStreamlineGamesWith_f4g2,L"0",MFGUNLOCK_CHOICES(kOnOff)},
-  {L"DLSSG",L"XmxVulkan",Str::kXmxInVulkanGames_x3v1,Str::kExperimentalXmxInVulkan_x3v2,L"0",MFGUNLOCK_CHOICES(kOnOff)},
+  {L"DLSSG",L"XmxVulkan",Str::kXmxInVulkanGames_x3v1,Str::kExperimentalXmxInVulkan_x3v2,L"1",MFGUNLOCK_CHOICES(kOnOff)},
+  // [2] Streamline hosted for games that call DLSS SR through NGX only (sl_host.hpp).
+  {L"DLSSG",L"HostStreamline",Str::kHostStreamline_h1a,Str::kHostStreamlineDesc_h1b,L"0",MFGUNLOCK_CHOICES(kOnOff)},
+  // [3] The panel's single switch for both: the route follows the game (Streamline or not).
+  {L"DLSSG",L"AddFrameGeneration",Str::kAddFrameGeneration_g1a,Str::kAddFrameGenerationDesc_g1b,L"0",MFGUNLOCK_CHOICES(kOnOff)},
 };
+// 1.10.0: XMX without NVIDIA's unused generator (addon_provider.inl), on the General page under XMX.
+// 1.10.0: the Streamline host's HUD fix (hud_capture.hpp) and XMX's HUD mask view (xmx_hud_composite.hpp).
+inline constexpr Option kHudFix{L"DLSSG",L"HudFix",Str::kHudFix_p15,Str::kHudFixDesc_p16,L"1",MFGUNLOCK_CHOICES(kOnOff)};
+inline constexpr Option kXmxHudDebug{L"DLSSG",L"XmxHudDebug",Str::kHudDebug_p17,Str::kHudDebugDesc_p18,L"0",MFGUNLOCK_CHOICES(kOnOff)};
+// 1.10.0 (plan XMX Vulkan pacing): the output limit XeMFG DLSS-G's Vulkan provider applies when the GPU falls behind.
+inline constexpr Option kXmxVulkanPacing{L"DLSSG",L"XmxVulkanPacing",Str::kXmxVulkanPacing_q1,Str::kXmxVulkanPacingDesc_q2,L"1",MFGUNLOCK_CHOICES(kOnOff)};
+inline constexpr Option kXmxSaveVram{L"DLSSG",L"XmxSaveVram",Str::kXmxSaveVram_v1a,Str::kXmxSaveVramDesc_v1b,L"1",MFGUNLOCK_CHOICES(kOnOff)};
 #undef MFGUNLOCK_CHOICES
 #undef MFGUNLOCK_NUMBER
 

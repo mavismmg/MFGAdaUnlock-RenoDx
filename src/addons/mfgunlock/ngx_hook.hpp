@@ -24,6 +24,7 @@
 #include <mutex>
 #include <sstream>
 #include "module_session.hpp"
+#include "hook_lock.hpp"
 #include <tuple>
 #include <vector>
 
@@ -54,7 +55,8 @@ struct DetourOperations {
 };
 inline DetourOperations detours{};
 // Detours has one transaction at a time, across threads: a second Begin fails.
-inline std::mutex transaction_lock;
+// Shared with the MinHook installs (hook_lock.hpp).
+inline std::mutex& transaction_lock = HookTransactionLock();
 struct ThreadCoverage {
   std::vector<HANDLE> handles;
   DWORD error = ERROR_SUCCESS;
@@ -171,6 +173,7 @@ inline bool Install(HMODULE module, const std::vector<HookItem>& hooks,
   if (!modulesession::Acquire(module)) return false;
   for (const auto& [name, real, replacement] : hooks) *real = reinterpret_cast<void*>(GetProcAddress(module, name));
   std::lock_guard transaction(internal::transaction_lock);
+  ProcessHeapGuard heap;
   if (internal::detours.begin() != NO_ERROR) {
     clear_resolved();
     return false;
@@ -228,6 +231,7 @@ inline bool Install(HMODULE module, const std::vector<HookItem>& hooks,
 inline bool InstallOne(void** real, void* replacement) {
   if (JumpsIntoSelf(*real)) return false;
   std::lock_guard transaction(internal::transaction_lock);
+  ProcessHeapGuard heap;
   if (internal::detours.begin() != NO_ERROR) return false;
   auto threads = internal::OpenOtherThreads();
   bool ok = threads.complete;
@@ -245,6 +249,7 @@ inline bool Uninstall(const std::vector<HookItem>& hooks) {
   // Not a blocking lock: at process exit its owner may already have been killed.
   std::unique_lock transaction(internal::transaction_lock, std::try_to_lock);
   if (!transaction.owns_lock()) return false;
+  // No heap lock here: at process exit a killed thread may hold it, and HeapLock would wait forever.
   if (internal::detours.begin() != NO_ERROR) return false;
   auto threads = internal::OpenOtherThreads();
   bool ok = threads.complete;

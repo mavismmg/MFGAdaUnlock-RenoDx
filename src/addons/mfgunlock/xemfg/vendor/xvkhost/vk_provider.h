@@ -13,6 +13,8 @@ int32_t VulkanCreateFeature(VkDevice device, VkCommandBuffer command, NVSDK_NGX_
 int32_t VulkanEvaluate(VkCommandBuffer command, void* feature, NVSDK_NGX_Parameter* parameters);
 int32_t ReleaseFeature(void* feature);
 int32_t Shutdown();
+// MFG Unlock: XeFG composes the HUD from the HUD-less color and UI texture only when set (off by default).
+void SetUiComposition(bool on) noexcept;
 
 // The provider's shim sits in OptiScaler's custom DLSSG folder (<OptiScaler folder>\custom\<name>\dlssg, also under
 // its OptiScaler subfolder). Checked once; the Vulkan host then prepares instances and devices for the provider.

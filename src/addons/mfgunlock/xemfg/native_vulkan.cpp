@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "native_vulkan.hpp"
+#include "sl_vulkan.hpp"
+#include <deque>
+#include <array>
 #include "vendor/xvkhost/vk_host.h"
 #include "vendor/xvkhost/vk_provider.h"
 #include "vendor/xvkhost/xess/ngx_provider.h"
@@ -51,6 +54,8 @@ namespace {
 std::atomic<bool> installed{},gameVulkan{};
 // 1.10.0 (item 3): XMX on Vulkan. The host never takes a chain over in this mode (HostPrepared answers false).
 std::atomic<bool> providerMode{};
+// 1.10.0 (prototype): Streamline hosted for a Vulkan game with DLSS SR only (sl_vulkan.hpp). The host stays off.
+std::atomic<bool> streamlineMode{};
 std::atomic<uint32_t> frames{4};
 std::atomic<uint32_t> instanceApi{0}; // 0: the instance creation was not seen
 thread_local int internalDepth{};
@@ -72,7 +77,10 @@ bool FromSelf(const void* caller) noexcept {
   const auto address=reinterpret_cast<uintptr_t>(caller);
   return address>=base && address<selfEnd.load(std::memory_order_acquire);
 }
-bool Passed(const void* caller) noexcept { return internalDepth>0 || FromSelf(caller); }
+// Streamline's own calls (its proxies call the loader's exports) pass on too in its hosted mode.
+bool Passed(const void* caller) noexcept {
+  return internalDepth>0 || FromSelf(caller) || (streamlineMode.load(std::memory_order_relaxed) && slvk::IsStreamlineCaller(caller));
+}
 std::atomic<bool> takeoverSeen{};
 std::atomic<uint64_t> presentsDone{}; // the game's presents through this hook (hang watch)
 std::atomic<VkDevice> inputDevice{}; // the newest host device, for an input image created before the hooks
@@ -88,6 +96,7 @@ void ApplyFpsLimit() noexcept {
   xess_vulkan::SetStandaloneFpsLimit(policy::LimitFps(CombinedIntervalUs(gameLimitUs.load(),cap)));
 }
 void FlushLog();
+void PollLatencyReports() noexcept;
 
 #define MFG_VK_EXPORTS(X) \
   X(vkGetInstanceProcAddr) X(vkGetDeviceProcAddr) X(vkEnumeratePhysicalDevices) X(vkCreateDevice) X(vkDestroyDevice) \
@@ -126,7 +135,7 @@ template<class F> F Extension(VkDevice device,F Extensions::*member) {
 bool HostPrepared(VkDevice device) {
   // XMX on Vulkan: the device carries the provider's features only; its chains, presents and extension
   // commands stay the game's and the driver's.
-  if(providerMode.load()) return false;
+  if(providerMode.load() || streamlineMode.load()) return false;
   std::lock_guard guard(extensionLock);
   const auto found=deviceExtensions.find(device);
   return found!=deviceExtensions.end() && found->second.vkSignalSemaphore;
@@ -184,7 +193,13 @@ void ForgetInstance(VkInstance instance) {
 
 PFN_vkVoidFunction Wrap(const char* name,PFN_vkVoidFunction original,VkDevice device);
 
+VkResult VKAPI_CALL Hook_vkCreateWin32SurfaceKHR(VkInstance,const VkWin32SurfaceCreateInfoKHR*,const VkAllocationCallbacks*,VkSurfaceKHR*);
 __declspec(noinline) PFN_vkVoidFunction VKAPI_CALL Hook_vkGetInstanceProcAddr(VkInstance instance,const char* name) {
+  // XMX provider mode sees the game's instance here (vkEnumeratePhysicalDevices is not hooked there).
+  if((providerMode.load() || streamlineMode.load()) && instance && !Passed(_ReturnAddress())) SeeInstance(instance);
+  // Streamline may resolve vkCreateWin32SurfaceKHR through the loader while it is shown the game's surface.
+  if(slvk::ShowingSurface() && name && !strcmp(name,"vkCreateWin32SurfaceKHR"))
+    return reinterpret_cast<PFN_vkVoidFunction>(&Hook_vkCreateWin32SurfaceKHR);
   const auto result=original_vkGetInstanceProcAddr(instance,name);
   return Passed(_ReturnAddress())?result:Wrap(name,result,VK_NULL_HANDLE);
 }
@@ -200,6 +215,30 @@ __declspec(noinline) VkResult VKAPI_CALL Hook_vkCreateDevice(VkPhysicalDevice ph
     const VkAllocationCallbacks* allocator,VkDevice* output) {
   if(Passed(_ReturnAddress())) return original_vkCreateDevice(physical,info,allocator,output);
   Internal internal;
+  if(streamlineMode.load() && slvk::Active()) {
+    xess_vulkan::DeviceEditPtr edit;
+    const VkDeviceCreateInfo* used=info;
+    if(providerMode.load() && xess_vulkan::RuntimeFilesFound()) { edit=xess_vulkan::PrepareDevice(physical,info); used=xess_vulkan::EditedInfo(edit.get(),info); }
+    auto sl=slvk::EditDevice(physical,used);
+    VkResult result=original_vkCreateDevice(physical,slvk::Edited(sl.get(),used),allocator,output);
+    slvk::Restore(sl.get());
+    if(result!=VK_SUCCESS && sl) {
+      xess_mod::WriteLog("sl_vulkan_device_refused","\"result\":"+std::to_string(int(result)));
+      sl.reset();
+      result=original_vkCreateDevice(physical,used,allocator,output);
+    }
+    if(result!=VK_SUCCESS && edit) { edit.reset(); result=original_vkCreateDevice(physical,info,allocator,output); }
+    if(result==VK_SUCCESS && output && *output) {
+      gameVulkan=true;
+      if(edit) {
+        { std::lock_guard guard(extensionLock); auto& e=deviceExtensions[*output]; e.physical=physical; }
+        xess_vulkan::DeviceCreated(std::move(edit),*output);
+      }
+      if(sl) slvk::DeviceCreated(sl.get(),gameInstance.load(),physical,*output);
+      inputDevice=*output;
+    }
+    return result;
+  }
   // 1.8.1: without Intel's pair the host can never start, so the game's device and
   // chains stay exactly as the game asked (the host's own search, wider than the
   // D3D12 route's: a pair in RTXMFG-XeSS still works here).
@@ -255,8 +294,11 @@ __declspec(noinline) void VKAPI_CALL Hook_vkGetDeviceQueue2(VkDevice device,cons
 }
 __declspec(noinline) VkResult VKAPI_CALL Hook_vkCreateWin32SurfaceKHR(VkInstance instance,const VkWin32SurfaceCreateInfoKHR* info,
     const VkAllocationCallbacks* allocator,VkSurfaceKHR* output) {
+  // Streamline being shown the game's existing surface (sl_vulkan.cpp, ShowSurface).
+  if(const VkSurfaceKHR existing=slvk::ShowingSurface(); existing && output) { *output=existing; return VK_SUCCESS; }
   const auto result=original_vkCreateWin32SurfaceKHR(instance,info,allocator,output);
   if(!Passed(_ReturnAddress()) && result==VK_SUCCESS && info && output) {
+    slvk::SurfaceCreated(*output,info->hwnd);
     SeeInstance(instance);
     gameWindow=info->hwnd;
     xess_vulkan::SurfaceCreated(instance,*output,info->hwnd);
@@ -264,7 +306,7 @@ __declspec(noinline) VkResult VKAPI_CALL Hook_vkCreateWin32SurfaceKHR(VkInstance
   return result;
 }
 __declspec(noinline) void VKAPI_CALL Hook_vkDestroySurfaceKHR(VkInstance instance,VkSurfaceKHR surface,const VkAllocationCallbacks* allocator) {
-  if(!Passed(_ReturnAddress())) xess_vulkan::SurfaceDestroyed(surface);
+  if(!Passed(_ReturnAddress())) { xess_vulkan::SurfaceDestroyed(surface); slvk::SurfaceDestroyed(surface); }
   original_vkDestroySurfaceKHR(instance,surface,allocator);
 }
 __declspec(noinline) void VKAPI_CALL Hook_vkDestroyInstance(VkInstance instance,const VkAllocationCallbacks* allocator) {
@@ -274,6 +316,7 @@ __declspec(noinline) void VKAPI_CALL Hook_vkDestroyInstance(VkInstance instance,
 void ForgetPrivateData(VkSwapchainKHR swapchain);
 __declspec(noinline) VkResult VKAPI_CALL Hook_vkCreateSwapchainKHR(VkDevice device,const VkSwapchainCreateInfoKHR* info,
     const VkAllocationCallbacks* allocator,VkSwapchainKHR* output) {
+  if(!Passed(_ReturnAddress()) && streamlineMode.load()) { VkResult r{}; if(slvk::CreateSwapchain(device,info,allocator,output,r)) return r; }
   if(Passed(_ReturnAddress()) || !HostPrepared(device)) return original_vkCreateSwapchainKHR(device,info,allocator,output);
   Internal internal;
   // Full-screen exclusive is disallowed on every chain of the game while the
@@ -320,6 +363,7 @@ __declspec(noinline) VkResult VKAPI_CALL Hook_vkCreateSwapchainKHR(VkDevice devi
   return original_vkCreateSwapchainKHR(device,used,allocator,output);
 }
 __declspec(noinline) void VKAPI_CALL Hook_vkDestroySwapchainKHR(VkDevice device,VkSwapchainKHR swapchain,const VkAllocationCallbacks* allocator) {
+  if(!Passed(_ReturnAddress()) && streamlineMode.load() && slvk::DestroySwapchain(device,swapchain,allocator)) return;
   if(!Passed(_ReturnAddress())) {
     Internal internal;
     ForgetPrivateData(swapchain);
@@ -329,6 +373,7 @@ __declspec(noinline) void VKAPI_CALL Hook_vkDestroySwapchainKHR(VkDevice device,
 }
 __declspec(noinline) VkResult VKAPI_CALL Hook_vkGetSwapchainImagesKHR(VkDevice device,VkSwapchainKHR swapchain,uint32_t* count,VkImage* images) {
   VkResult result=VK_SUCCESS;
+  if(!Passed(_ReturnAddress()) && streamlineMode.load() && slvk::GetSwapchainImages(device,swapchain,count,images,result)) return result;
   if(!Passed(_ReturnAddress()) && xess_vulkan::GetSwapchainImages(device,swapchain,count,images,result)) return result;
   return original_vkGetSwapchainImagesKHR(device,swapchain,count,images);
 }
@@ -337,6 +382,7 @@ __declspec(noinline) VkResult VKAPI_CALL Hook_vkAcquireNextImageKHR(VkDevice dev
   if(!Passed(_ReturnAddress())) {
     Internal internal;
     VkResult result=VK_SUCCESS;
+    if(streamlineMode.load() && slvk::AcquireNextImage(device,swapchain,timeout,semaphore,fence,index,result)) return result;
     if(xess_vulkan::AcquireNextImage(device,swapchain,timeout,semaphore,fence,index,result)) return result;
   }
   return original_vkAcquireNextImageKHR(device,swapchain,timeout,semaphore,fence,index);
@@ -345,6 +391,8 @@ __declspec(noinline) VkResult VKAPI_CALL Hook_vkAcquireNextImage2KHR(VkDevice de
   if(!Passed(_ReturnAddress()) && info) {
     Internal internal;
     VkResult result=VK_SUCCESS;
+    // Streamline has no vkAcquireNextImage2KHR proxy: its vkAcquireNextImageKHR one (single-GPU, device mask ignored).
+    if(streamlineMode.load() && slvk::AcquireNextImage(device,info->swapchain,info->timeout,info->semaphore,info->fence,index,result)) return result;
     if(xess_vulkan::AcquireNextImage(device,info->swapchain,info->timeout,info->semaphore,info->fence,index,result)) return result;
   }
   return original_vkAcquireNextImage2KHR(device,info,index);
@@ -352,7 +400,14 @@ __declspec(noinline) VkResult VKAPI_CALL Hook_vkAcquireNextImage2KHR(VkDevice de
 __declspec(noinline) VkResult VKAPI_CALL Hook_vkQueuePresentKHR(VkQueue queue,const VkPresentInfoKHR* info) {
   if(Passed(_ReturnAddress())) return original_vkQueuePresentKHR(queue,info);
   Internal internal;
+  if(streamlineMode.load()) {
+    struct Count { ~Count() { presentsDone.fetch_add(1,std::memory_order_relaxed); } } count;
+    VkResult result=VK_SUCCESS;
+    if(slvk::QueuePresent(queue,info,result)) return result;
+    return original_vkQueuePresentKHR(queue,info);
+  }
   struct Count { ~Count() { presentsDone.fetch_add(1,std::memory_order_relaxed); } } count;
+  if(providerMode.load()) PollLatencyReports();
   // The display's refresh and the panel's display cap, as on D3D12, every 2 s.
   if(const auto tick=GetTickCount64();tick-limitTick.load(std::memory_order_relaxed)>=2000) {
     limitTick.store(tick,std::memory_order_relaxed);
@@ -365,6 +420,7 @@ __declspec(noinline) VkResult VKAPI_CALL Hook_vkQueuePresentKHR(VkQueue queue,co
 }
 __declspec(noinline) VkResult VKAPI_CALL Hook_vkDeviceWaitIdle(VkDevice device) {
   VkResult result=VK_SUCCESS;
+  if(!Passed(_ReturnAddress()) && streamlineMode.load() && slvk::DeviceWaitIdle(device,result)) return result;
   if(!Passed(_ReturnAddress()) && xess_vulkan::DeviceWaitIdle(device,result)) return result;
   return original_vkDeviceWaitIdle(device);
 }
@@ -474,7 +530,12 @@ void VKAPI_CALL Hook_vkSetHdrMetadataEXT(VkDevice device,uint32_t count,const Vk
     if(!xess_vulkan::SetHdrMetadata(device,swapchains[i],&metadata[i])) { native.push_back(swapchains[i]); nativeMetadata.push_back(metadata[i]); }
   if(!native.empty() && original) original(device,uint32_t(native.size()),native.data(),nativeMetadata.data());
 }
+// 1.10.0 (plan XMX Vulkan pacing, P1): the game's Reflex chain, for the driver's per-frame GPU timings.
+std::atomic<VkDevice> latencyDevice{};
+std::atomic<VkSwapchainKHR> latencyChain{};
+void PollLatencyReports() noexcept;
 VkResult VKAPI_CALL Hook_vkSetLatencySleepModeNV(VkDevice device,VkSwapchainKHR swapchain,const VkLatencySleepModeInfoNV* info) {
+  if(!xess_vulkan::OwnsSwapchain(swapchain)) { latencyDevice=device; latencyChain=swapchain; }
   if(info && gameLimitUs.exchange(info->minimumIntervalUs)!=info->minimumIntervalUs) ApplyFpsLimit();
   if(xess_vulkan::OwnsSwapchain(swapchain)) return VK_SUCCESS;
   const auto original=Extension(device,&Extensions::vkSetLatencySleepModeNV);
@@ -497,6 +558,103 @@ void VKAPI_CALL Hook_vkSetLatencyMarkerNV(VkDevice device,VkSwapchainKHR swapcha
     return;
   }
   if(const auto original=Extension(device,&Extensions::vkSetLatencyMarkerNV)) original(device,swapchain,info);
+}
+// 1.10.0 (plan XMX Vulkan pacing): XMX's work makes each real frame cost more GPU than NVIDIA's generator, and the
+// game's Reflex (through Streamline's DLSS-G) aims at the display's refresh / multiplier anyway. When the GPU cannot
+// hold that, the queue filled until presentation stalled, every ~2 s in DOOM: The Dark Ages with path tracing (41 real
+// frames per second, then 24). The GPU's cost per frame cannot be read back (the driver's GPU span stretches with the
+// frame interval: DLSS-G's frames are metered across it), so the pacing watches the outcome instead: the interval
+// between real frames from the driver's reports. A run of late frames is that stall; the limit then starts just under
+// the rate the game did deliver, backs off 7% at each new stall and creeps up 3% after 8 s without one (AIMD).
+namespace pacing_auto {
+std::mutex lock;
+std::deque<float> interval;           // ms between real frames, the newest last
+uint64_t lastPresent = 0, lastStart = 0;
+ULONGLONG lastPoll = 0, lastReport = 0, lastLog = 0, lastStall = 0, lastRaise = 0;
+double limitFps = 0;                  // real frames per second to hold, 0 none
+double stallFps = 0, stallUsual = 0;  // the limit where the last stall happened, and the usual interval then
+uint32_t stalls = 0;
+std::atomic<uint32_t> publishedUs{0}, costUs{0};
+bool Enabled() {
+  static const bool enabled =
+      GetPrivateProfileIntW(L"DLSSG", L"XmxVulkanPacing", 1, (backend::Directory() / L"MFGAdaUnlock.ini").c_str()) != 0;
+  return enabled;
+}
+double Percentile(std::vector<float> values, double p) {
+  if (values.empty()) return 0;
+  const size_t k = std::min(values.size() - 1, size_t(p * double(values.size() - 1) + 0.5));
+  std::nth_element(values.begin(), values.begin() + k, values.end());
+  return values[k];
+}
+}  // namespace pacing_auto
+void PollLatencyReports() noexcept {
+  using namespace pacing_auto;
+  if (!Enabled()) return;
+  const ULONGLONG now = GetTickCount64();
+  if (now - lastPoll < 250) return;
+  lastPoll = now;
+  const VkDevice device = latencyDevice.load(); const VkSwapchainKHR chain = latencyChain.load();
+  const auto get = device && chain ? Extension(device, &Extensions::vkGetLatencyTimingsNV) : nullptr;
+  try {
+    std::lock_guard guard(lock);
+    if (get) {
+      std::array<VkLatencyTimingsFrameReportNV, 64> reports{};
+      for (auto& r : reports) r.sType = VK_STRUCTURE_TYPE_LATENCY_TIMINGS_FRAME_REPORT_NV;
+      VkGetLatencyMarkerInfoNV info{VK_STRUCTURE_TYPE_GET_LATENCY_MARKER_INFO_NV, nullptr, uint32_t(reports.size()), reports.data()};
+      get(device, chain, &info);
+      for (uint32_t i = 0; i < info.timingCount && i < reports.size(); ++i) {
+        const auto& r = reports[i];
+        if (!r.gpuRenderStartTimeUs || r.presentID <= lastPresent) continue;
+        if (lastStart && r.gpuRenderStartTimeUs > lastStart) {
+          interval.push_back(float(r.gpuRenderStartTimeUs - lastStart) / 1000.f);
+          lastReport = now;
+        }
+        lastPresent = r.presentID;
+        lastStart = r.gpuRenderStartTimeUs;
+      }
+      while (interval.size() > 160) interval.pop_front();
+    }
+    if (!lastReport || now - lastReport > 2000) {
+      // No reports (no Reflex chain, a menu, a driver without them): no limit.
+      limitFps = 0; interval.clear(); lastStart = 0;
+    } else if (interval.size() >= 24) {
+      // The last ~2 s: a stall is a run of real frames 1.4x longer than the usual one.
+      std::vector<float> recent(interval.end() - (std::min<size_t>)(interval.size(), 64), interval.end());
+      const double usual = Percentile(recent, 0.25);
+      // A loading screen or a scene change (intervals over 250 ms or 3x the usual one) is not a stall and not a rate.
+      uint32_t late = 0, counted = 0, outliers = 0; double sum = 0;
+      for (float v : recent) {
+        if (v > 250.f || v > usual * 3.0) { ++outliers; continue; }
+        sum += v; ++counted;
+        if (v > usual * 1.4) ++late;
+      }
+      const double delivered = sum > 0 ? 1000.0 * double(counted) / sum : 0;
+      const bool stall = outliers == 0 && late >= 6 && usual > 0 && now - lastStall >= 1000;
+      if (stall) {
+        ++stalls;
+        lastStall = lastRaise = now;
+        stallFps = limitFps > 0 ? limitFps : delivered; stallUsual = usual;
+        const double floor = (std::max)(15.0, 500.0 / usual);   // never under 15 real fps nor half the usual rate
+        limitFps = limitFps == 0 ? (std::min)(delivered, 1000.0 / (usual * 1.15)) * 0.95 : limitFps * 0.93;
+        limitFps = (std::max)(limitFps, floor);
+        interval.clear();   // judge the new limit on its own frames
+      } else if (limitFps > 0 && now - lastStall >= 4000 && now - lastRaise >= 4000) {
+        lastRaise = now;
+        // Below the last stall's rate for 60 s, unless the scene got clearly lighter (usual interval 10% shorter).
+        const bool remembered = stallFps > 0 && now - lastStall < 60000 && !(usual > 0 && usual < stallUsual * 0.9);
+        limitFps = remembered ? (std::min)(limitFps * 1.03, (std::max)(limitFps, stallFps * 0.97)) : limitFps * 1.03;
+      }
+      costUs = usual > 0 ? uint32_t(usual * 1000.0) : 0;
+    }
+    if (limitFps > 0 && limitFps < 15) limitFps = 15;
+    publishedUs = limitFps > 0 ? uint32_t(1e6 / limitFps) : 0;
+    if (now - lastLog >= 10000) {
+      lastLog = now;
+      xess_mod::WriteLog("vk_xmx_pacing", "\"limit_base_fps\":" + std::to_string(limitFps) + ",\"usual_interval_ms\":" +
+          std::to_string(costUs.load() / 1000.0) + ",\"frames\":" + std::to_string(interval.size()) + ",\"stalls\":" + std::to_string(stalls));
+      stalls = 0;
+    }
+  } catch (...) {}
 }
 void VKAPI_CALL Hook_vkGetLatencyTimingsNV(VkDevice device,VkSwapchainKHR swapchain,VkGetLatencyMarkerInfoNV* info) {
   if(xess_vulkan::OwnsSwapchain(swapchain)) { if(info) info->timingCount=0; return; }
@@ -638,6 +796,12 @@ LONG CALLBACK NullCall(EXCEPTION_POINTERS* info) {
   return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// 1.10.0: the entries Install() hooked, removed again when ReShade unloads this
+// copy (UninstallForUnload). ReShade loads the addon for a Vulkan instance and
+// unloads it with that instance: DOOM: The Dark Ages' first instance did, the
+// next copy hooked over the freed copy's hooks, and the game executed freed
+// code in vkGetInstanceProcAddr (crash record, 2026-11-15).
+std::vector<void*> hookedEntries;
 bool Install() noexcept {
   static std::mutex lock; std::lock_guard guard(lock);
   if(installed) return true;
@@ -653,9 +817,16 @@ bool Install() noexcept {
 #undef MFG_ENTRY
   };
   std::string missing;
+  hookedEntries.clear();
   for(const auto& e:entries) {
+    // 1.10.0: not in XMX provider mode. DOOM: The Dark Ages' Streamline (sl.common
+    // 2.14.16) called the hooked export in an endless loop at its DLSS-G plugin
+    // startup and the game never opened its window (one core busy, field test
+    // 2026-11-15); the instance is seen from vkGetInstanceProcAddr instead.
+    if(providerMode.load() && !strcmp(e.name,"vkEnumeratePhysicalDevices")) continue;
     void* target=reinterpret_cast<void*>(GetProcAddress(loader,e.name));
     if(!target || !Hook(target,e.hook,e.original)) missing+=(missing.empty()?"":",")+std::string(e.name);
+    else hookedEntries.push_back(target);
   }
   // The host takes a chain over only when every entry its handle reaches is ours.
   for(const char* name:{"vkCreateSwapchainKHR","vkQueuePresentKHR","vkDestroySwapchainKHR","vkGetSwapchainImagesKHR","vkAcquireNextImageKHR"})
@@ -732,7 +903,9 @@ NVSDK_NGX_Result NVSDK_CONV NgxCreate(VkCommandBuffer command,NVSDK_NGX_Feature 
   if(providerMode.load() && feature==NVSDK_NGX_Feature_FrameGeneration)
     NoteProvider("not used: the game created frame generation without naming its device");
   const auto result=ngxCreate(command,feature,params,out);
-  Remember(result,feature,out); return result;
+  Remember(result,feature,out);
+  if(streamlineMode.load() && InputFeature(feature) && NVSDK_NGX_SUCCEED(result) && out) slvk::FeatureCreated(*out,params);
+  return result;
 }
 NVSDK_NGX_Result NVSDK_CONV NgxCreate1(VkDevice device,VkCommandBuffer command,NVSDK_NGX_Feature feature,NVSDK_NGX_Parameter* params,
     NVSDK_NGX_Handle** out) {
@@ -741,7 +914,9 @@ NVSDK_NGX_Result NVSDK_CONV NgxCreate1(VkDevice device,VkCommandBuffer command,N
     if(auto* handle=ProviderCreate(device,command,params,provided)) { *out=handle; return provided; }
   }
   const auto result=ngxCreate1(device,command,feature,params,out);
-  Remember(result,feature,out); return result;
+  Remember(result,feature,out);
+  if(streamlineMode.load() && InputFeature(feature) && NVSDK_NGX_SUCCEED(result) && out) slvk::FeatureCreated(*out,params);
+  return result;
 }
 NVSDK_NGX_Result NVSDK_CONV NgxEvaluate(VkCommandBuffer command,const NVSDK_NGX_Handle* handle,const NVSDK_NGX_Parameter* params,
     PFN_NVSDK_NGX_ProgressCallback callback) {
@@ -792,6 +967,12 @@ NVSDK_NGX_Result NVSDK_CONV NgxEvaluate(VkCommandBuffer command,const NVSDK_NGX_
             +"\",\"levels\":"+std::to_string(m.SubresourceRange.levelCount)+",\"layers\":"+std::to_string(m.SubresourceRange.layerCount)+"}"
             +",\"usable\":"+(usable?"true":"false"));
         FlushLog();
+      }
+      if(streamlineMode.load()) {
+        // Streamline's hosted mode: the inputs are tagged after DLSS SR ran (they stay valid on this command buffer).
+        const auto evaluated=ngxEvaluate(command,handle,params,callback);
+        if(NVSDK_NGX_SUCCEED(evaluated)) slvk::AfterEvaluate(command,handle,params,depthImage.usage,motionImage.usage);
+        return evaluated;
       }
       const bool captured=usable && xess_vulkan::CaptureDlssEvaluate(command,params);
       if(evaluateLog.fetch_add(1)<4)
@@ -919,15 +1100,30 @@ bool BeforeInstance(uint32_t& apiVersion) noexcept {
   return raised;
 }
 
-bool XmxProviderWanted() noexcept {
-  static const bool wanted=[] {
+// Explicit unload only (DLL_PROCESS_DETACH with FreeLibrary): vulkan-1's entries
+// get their own code back before this copy's memory goes away.
+void UninstallForUnload() noexcept {
+  if(!installed) return;
+  for(void* target:hookedEntries) MH_DisableHook(target);
+  hookedEntries.clear();
+  installed=false;
+}
+
+// 1.10.0: on by default with XMX ([DLSSG] XmxVulkan=0 turns it off), and only in a process where ReShade
+// was loaded as the Vulkan layer: in a D3D12 game this mode pinned ReShade and started XeMFG's Intel pair.
+std::atomic_bool vulkanLayerHost{false};
+void SetVulkanLayerHost(bool layer) noexcept { vulkanLayerHost.store(layer); }
+bool VulkanLayerHost() noexcept { return vulkanLayerHost.load(); }
+bool XmxProviderSelected() noexcept {
+  static const bool selected=[] {
     if(backend::Read()!=backend::Kind::DlssG) return false;
     const auto ini=backend::Directory()/L"MFGAdaUnlock.ini";
     return GetPrivateProfileIntW(L"DLSSG",L"XmxGenerator",0,ini.c_str())!=0
-        && GetPrivateProfileIntW(L"DLSSG",L"XmxVulkan",0,ini.c_str())!=0;
+        && GetPrivateProfileIntW(L"DLSSG",L"XmxVulkan",1,ini.c_str())!=0;
   }();
-  return wanted;
+  return selected;
 }
+bool XmxProviderWanted() noexcept { return XmxProviderSelected() && VulkanLayerHost(); }
 
 bool BeginXmxProvider(uint32_t& apiVersion) noexcept {
   if(!XmxProviderWanted()) return false;
@@ -935,6 +1131,9 @@ bool BeginXmxProvider(uint32_t& apiVersion) noexcept {
   // The host stays off (no chain is taken over); a wanted provider gets the features-only device edit.
   xess_vulkan::Configure(false,false,frames.load());
   xess_vulkan::SetProvider(true);
+  // [DLSSG] XmxUiComposition=1: XeFG's own UI composition (off by default; it left frames uninterpolated).
+  xess_vulkan_provider::SetUiComposition(
+      GetPrivateProfileIntW(L"DLSSG",L"XmxUiComposition",0,(backend::Directory()/L"MFGAdaUnlock.ini").c_str())!=0);
   Install();
   const auto [major,minor,raised]=policy::ReadInstanceVersion(apiVersion);
   if(raised) apiVersion=0x1300;
@@ -943,6 +1142,25 @@ bool BeginXmxProvider(uint32_t& apiVersion) noexcept {
   NoteProvider("waiting for the game's frame generation");
   return raised;
 }
+
+bool BeginStreamlineHost(uint32_t& apiVersion) noexcept {
+  if(!slvk::Wanted()) return false;
+  streamlineMode=true;
+  // The XeMFG host stays off; the provider (XMX) may run inside Streamline's DLSS-G.
+  if(!providerMode.load()) xess_vulkan::Configure(false,false,frames.load());
+  Install();
+  slvk::Start();
+  const auto [major,minor,raised]=policy::ReadInstanceVersion(apiVersion);
+  if(raised) apiVersion=0x1300;
+  instanceApi=VK_MAKE_API_VERSION(0,raised?1:major,raised?3:minor,0);
+  return raised;
+}
+bool StreamlineHostWanted() noexcept { return slvk::Wanted(); }
+int StreamlineHostState() noexcept { return streamlineMode.load()?slvk::PanelState():0; }
+uint32_t XmxPacingIntervalUs() noexcept { return providerMode.load() ? pacing_auto::publishedUs.load() : 0; }
+uint32_t XmxPacingCostUs() noexcept { return providerMode.load() ? pacing_auto::costUs.load() : 0; }
+bool XmxPacingEnabled() noexcept { return providerMode.load() && pacing_auto::Enabled(); }
+std::string StreamlineHostReport() noexcept { try { return streamlineMode.load()?slvk::Describe():std::string(); } catch(...) { return {}; } }
 
 std::string XmxProviderReport() noexcept {
   if(!providerMode.load()) return {};

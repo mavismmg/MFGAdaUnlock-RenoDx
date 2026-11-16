@@ -133,10 +133,22 @@ inline const char* SystemFontFor(Language language, bool fallback) {
 // The font to write into ReShade's [STYLE] Font for this language, or nullptr
 // to leave it: only when it is empty or is the Cascadia Mono the addon set
 // itself (addon_font), never over a font the player chose.
+// 1.10.0: a CJK font the addon set for an earlier language is the addon's too: leaving Japanese for
+// English gave KCD2's panel MS Gothic for good, and Japanese to Chinese kept the Japanese font.
+inline bool IsAddonCjkFont(const char* font) {
+  if (font == nullptr || font[0] == '\0') return false;
+  for (const Language language : {Language::kJapanese, Language::kKorean, Language::kChineseSimplified})
+    for (const bool fallback : {false, true})
+      if (const char* f = SystemFontFor(language, fallback); f != nullptr && _stricmp(font, f) == 0) return true;
+  return false;
+}
 template <class Exists>
 inline const char* FontToSet(Language language, const char* current_font, const char* addon_font, Exists exists) {
-  if (!NeedsCjkFont(language)) return nullptr;
-  const bool ours = current_font == nullptr || current_font[0] == '\0' ||
+  if (!NeedsCjkFont(language)) {
+    // Back from a CJK language: the addon's Latin font again.
+    return IsAddonCjkFont(current_font) && addon_font != nullptr && exists(addon_font) ? addon_font : nullptr;
+  }
+  const bool ours = current_font == nullptr || current_font[0] == '\0' || IsAddonCjkFont(current_font) ||
                     (addon_font != nullptr && _stricmp(current_font, addon_font) == 0);
   if (!ours) return nullptr;
   for (const bool fallback : {false, true}) {

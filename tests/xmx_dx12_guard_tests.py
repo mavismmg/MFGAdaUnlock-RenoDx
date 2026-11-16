@@ -9,8 +9,13 @@ import hashlib, pathlib, sys
 root = pathlib.Path(__file__).resolve().parents[1] / 'src' / 'addons' / 'mfgunlock'
 PINNED = {
     # 603a4fa: passive copy-size counters for the VRAM measurement.
-    'xmx_generator.hpp': '2421be9d9dd72e1e037754fe60762f6ebe08215c96aba1e80e85c53c93991eef',
-    'xmx_hook.hpp': '33d53f96c18ef71cb172634f141dbced09142b81b42fca432bfb8448c1c840eb',
+    # 1.10.0 (user-approved): XeFG UI composition opt-in (XmxUiComposition); the Streamline host's HUD fix
+    # (xmx_hud_composite.hpp, its own HUD-less copy, HUD debug); Metro Exodus HDR fix (only a copy captured for
+    # this frame, composition only at the back buffer's size); the composition follows the panel's HUD fix; 1.10.0 rename XMX -> XeMFG DLSS-G in a message.
+    'xmx_generator.hpp': '2224c07a2a8bee6c8e84b7dc0d5a928631115727515b2392584b3ab97b2296f0',
+    # 1.10.0 (user-approved): EvaluateWithoutNvidia, NGX's own Evaluate for XMX's handle when
+    # NVIDIA's unused feature is not created (addon_provider.inl, [DLSSG] XmxSaveVram).
+    'xmx_hook.hpp': '735014c5a16584da455a099b56c3fc054ff4f1bdf7510281bba1692f4b4682ce',
 }
 failed = False
 for name, pinned in PINNED.items():

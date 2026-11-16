@@ -112,6 +112,11 @@ int main() {
   CHECK(FontToSet(Language::kJapanese, "D:\\Fonts\\MyFont.ttf", cascadia, all) == nullptr);  // the player's choice
   CHECK(FontToSet(Language::kPortugueseBrazil, "", cascadia, all) == nullptr);                // Latin script
   CHECK(FontToSet(Language::kKorean, "", cascadia, none) == nullptr);                         // not on this Windows
+  // 1.10.0: back to a Latin language from a CJK font the addon set, and from one CJK language to another.
+  CHECK(std::string(FontToSet(Language::kEnglish, "C:\\Windows\\Fonts\\msgothic.ttc", cascadia, all)) == cascadia);
+  CHECK(std::string(FontToSet(Language::kChineseSimplified, "C:\\Windows\\Fonts\\msgothic.ttc", cascadia, all)) ==
+        "C:\\Windows\\Fonts\\msyh.ttc");
+  CHECK(FontToSet(Language::kEnglish, "D:\\Fonts\\MyFont.ttf", cascadia, all) == nullptr);  // the player's choice
   CHECK(NeedsCjkFont(Language::kJapanese) && !NeedsCjkFont(Language::kSpanish));
   CHECK(ProbeGlyph(Language::kChineseSimplified) == 0x4E2D);
   std::cout << "i18n tests passed: " << count << " strings in " << std::size(kInfo) << " languages\n";
