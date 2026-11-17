@@ -4,6 +4,15 @@
 #include "../src/addons/mfgunlock/binary_patch.hpp"
 #define CHECK(x) do { if (!(x)) { std::cerr << __LINE__ << ": " #x "\n"; std::abort(); } } while (false)
 namespace bw=mfgunlock::blackwell;
+// 1.10.1: the kernel replacements come from the local 1.4.5 inputs (blackwell_cubins.generated.hpp),
+// which CI does not have; without them there is nothing to check.
+#if !MFGUNLOCK_HAS_GENERATED_BLACKWELL_CUBINS
+int wmain(int,wchar_t**) {
+  std::cout<<"SKIP: blackwell_cubins.generated.hpp is a local input
+";
+  return 77;
+}
+#else
 int wmain(int argc,wchar_t** argv) {
   if(argc<2){std::cout<<"SKIP: provide installed PE inputs\n";return 77;}
   size_t kernels=0,profiles=0;
@@ -77,3 +86,4 @@ int wmain(int argc,wchar_t** argv) {
   CHECK(kernels>=3 && profiles>=2);
   std::cout<<kernels<<" original kernels mutated; "<<profiles<<" exact binary profiles apply/restore; session leases passed\n";
 }
+#endif
