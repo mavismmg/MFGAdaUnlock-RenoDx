@@ -35,6 +35,7 @@
 #pragma once
 
 #include <windows.h>
+#include <dxgi1_2.h>
 
 #include <array>
 #include <atomic>
@@ -50,11 +51,13 @@
 #include <sl.h>
 #include <sl_dlss_g.h>
 #include <sl_reflex.h>
+#include <sl_pcl.h>
 
 #include <include/reshade.hpp>
 
 #include "./dlss_preset.hpp"
 #include "./force_fg.hpp"
+#include "./sl_module.hpp"
 #include "./force_policy.hpp"
 #include "./hdr_compat.hpp"
 #include "./input_diagnostics.hpp"
@@ -1931,6 +1934,253 @@ inline sl::Result HookedSetTagForFrame(const sl::FrameToken& frame,
 }
 
 inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport, const sl::DLSSGOptions& options);
+
+// 1.10.1 (plan item 2, user-approved): Reflex for a game that never uses it
+// (Ninja Gaiden 4: Streamline 2.13 with DLSS SR only). DLSS-G presents and
+// paces through Reflex, so without it the added DLSS-G never turned on. The
+// addon turns Reflex on and sends the PCL markers on the game's own frame
+// tokens: simulation and render submit at the frame's slSetConstants, present
+// around the game's Present on Streamline's proxy swap chain (hooked through
+// the interposer's factory, as in sl_host.hpp). Reflex's sleep runs after the
+// Present only for a game that numbers its frames itself: asking Streamline
+// for the next token otherwise moves its 6-token ring ahead of the game's.
+namespace reflexdrive {
+using PclMarkerFn = PFun_slPCLSetMarker*;
+using NewTokenFn = sl::Result (*)(sl::FrameToken*&, const uint32_t*);
+using UpgradeFn = sl::Result (*)(void**);
+using CreateFactoryFn = HRESULT(WINAPI*)(REFIID, void**);
+using CreateFactory2Fn = HRESULT(WINAPI*)(UINT, REFIID, void**);
+using CreateHwndFn = HRESULT(STDMETHODCALLTYPE*)(IUnknown*, IUnknown*, HWND, const void*, const void*, IUnknown*,
+                                                  IUnknown**);
+using CreateLegacyFn = HRESULT(STDMETHODCALLTYPE*)(IUnknown*, IUnknown*, void*, IUnknown**);
+using PresentFn = HRESULT(STDMETHODCALLTYPE*)(IUnknown*, UINT, UINT);
+using Present1Fn = HRESULT(STDMETHODCALLTYPE*)(IUnknown*, UINT, UINT, const void*);
+
+inline std::atomic_bool g_active{false};
+inline std::atomic_bool g_presents_hooked{false};
+inline std::atomic<uint64_t> g_constants_calls{0};
+inline std::atomic<int> g_explicit_index{-1};  // -1 unknown, 0 the game lets Streamline number frames, 1 it numbers them
+inline PclMarkerFn g_marker = nullptr;
+inline NewTokenFn g_real_new_token = nullptr;
+inline UpgradeFn g_real_upgrade = nullptr;
+inline CreateFactoryFn g_real_create_factory = nullptr;
+inline CreateFactoryFn g_real_create_factory1 = nullptr;
+inline CreateFactory2Fn g_real_create_factory2 = nullptr;
+inline CreateHwndFn g_real_create_hwnd = nullptr;
+inline CreateLegacyFn g_real_create_legacy = nullptr;
+inline PresentFn g_real_present = nullptr;
+inline Present1Fn g_real_present1 = nullptr;
+
+inline SRWLOCK g_frame_lock = SRWLOCK_INIT;
+inline const sl::FrameToken* g_token = nullptr;  // the game's token for its newest frame
+inline uint32_t g_frame = 0, g_presented = 0, g_slept = 0;
+inline const sl::FrameToken* g_present_token = nullptr;
+
+inline bool InInterposer(const void* address) {
+  HMODULE owner = nullptr;
+  return GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            static_cast<LPCWSTR>(address), &owner) &&
+         owner == GetModuleHandleW(L"sl.interposer.dll");
+}
+inline void Mark(sl::PCLMarker which, const sl::FrameToken* token) {
+  if (g_marker != nullptr && token != nullptr) g_marker(which, *token);
+}
+
+// The game's Present on Streamline's proxy: once per game frame, before Streamline.
+inline void BeforePresent() {
+  if (!g_active.load(std::memory_order_acquire)) return;
+  AcquireSRWLockExclusive(&g_frame_lock);
+  if (g_token != nullptr && g_frame != g_presented) {
+    g_presented = g_frame;
+    g_present_token = g_token;
+    Mark(sl::PCLMarker::eRenderSubmitEnd, g_present_token);
+    Mark(sl::PCLMarker::ePresentStart, g_present_token);
+  } else {
+    g_present_token = nullptr;
+  }
+  ReleaseSRWLockExclusive(&g_frame_lock);
+}
+inline void AfterPresent() {
+  if (!g_active.load(std::memory_order_acquire)) return;
+  AcquireSRWLockExclusive(&g_frame_lock);
+  const sl::FrameToken* token = g_present_token;
+  const uint32_t frame = g_presented;
+  g_present_token = nullptr;
+  ReleaseSRWLockExclusive(&g_frame_lock);
+  if (token == nullptr) return;
+  Mark(sl::PCLMarker::ePresentEnd, token);
+  const auto sleep = g_real_reflex_sleep.load(std::memory_order_acquire);
+  if (sleep == nullptr || g_real_new_token == nullptr || g_explicit_index.load(std::memory_order_acquire) != 1) return;
+  const uint32_t next = frame + 1;
+  sl::FrameToken* t = nullptr;
+  if (g_real_new_token(t, &next) != sl::Result::eOk || t == nullptr) return;
+  sleep(*t);
+  Mark(sl::PCLMarker::eSimulationStart, t);
+  AcquireSRWLockExclusive(&g_frame_lock);
+  g_slept = next;
+  ReleaseSRWLockExclusive(&g_frame_lock);
+}
+// From the game's slSetConstants: its frame token, once per frame.
+inline void OnConstants(const sl::FrameToken& token) {
+  g_constants_calls.fetch_add(1, std::memory_order_relaxed);
+  if (!g_active.load(std::memory_order_acquire)) return;
+  const uint32_t frame = static_cast<uint32_t>(token);
+  AcquireSRWLockExclusive(&g_frame_lock);
+  const bool fresh = frame != g_frame || g_token == nullptr;
+  const bool slept = frame == g_slept;
+  if (fresh) {
+    g_frame = frame;
+    g_token = &token;
+  }
+  ReleaseSRWLockExclusive(&g_frame_lock);
+  if (!fresh) return;
+  if (!slept) Mark(sl::PCLMarker::eSimulationStart, &token);
+  Mark(sl::PCLMarker::eSimulationEnd, &token);
+  Mark(sl::PCLMarker::eRenderSubmitStart, &token);
+}
+
+inline HRESULT STDMETHODCALLTYPE Present(IUnknown* self, UINT interval, UINT flags) {
+  BeforePresent();
+  const HRESULT hr = g_real_present(self, interval, flags);
+  AfterPresent();
+  return hr;
+}
+inline HRESULT STDMETHODCALLTYPE Present1(IUnknown* self, UINT interval, UINT flags, const void* parameters) {
+  BeforePresent();
+  const HRESULT hr = g_real_present1(self, interval, flags, parameters);
+  AfterPresent();
+  return hr;
+}
+// Streamline's proxy swap chain: its Present lives in sl.interposer.dll. Never
+// while MFG Unlock hosts Streamline itself (sl_host.hpp hooks the same Present).
+inline void HookSwapChain(IUnknown* chain) {
+  if (chain == nullptr || slmodule::g_host.load(std::memory_order_acquire) != nullptr) return;
+  static std::atomic_bool done{false};
+  void** table = *reinterpret_cast<void***>(chain);
+  if (!InInterposer(table[8]) || done.exchange(true)) return;
+  g_real_present = reinterpret_cast<PresentFn>(table[8]);
+  g_real_present1 = reinterpret_cast<Present1Fn>(table[22]);
+  const bool a = hook::InstallOne(reinterpret_cast<void**>(&g_real_present), reinterpret_cast<void*>(&Present));
+  const bool b = InInterposer(table[22]) &&
+                 hook::InstallOne(reinterpret_cast<void**>(&g_real_present1), reinterpret_cast<void*>(&Present1));
+  g_presents_hooked.store(a, std::memory_order_release);
+  reshade::log::message(a ? reshade::log::level::info : reshade::log::level::warning,
+                        a ? (b ? "mfgunlock: Route A Reflex: Streamline's Present hooked."
+                               : "mfgunlock: Route A Reflex: Streamline's Present hooked (Present1 not).")
+                          : "mfgunlock: Route A Reflex: Streamline's Present could not be hooked.");
+}
+inline HRESULT STDMETHODCALLTYPE CreateHwnd(IUnknown* self, IUnknown* queue, HWND window, const void* desc,
+                                            const void* fullscreen, IUnknown* output, IUnknown** chain) {
+  const HRESULT hr = g_real_create_hwnd(self, queue, window, desc, fullscreen, output, chain);
+  if (SUCCEEDED(hr) && chain != nullptr) HookSwapChain(*chain);
+  return hr;
+}
+inline HRESULT STDMETHODCALLTYPE CreateLegacy(IUnknown* self, IUnknown* queue, void* desc, IUnknown** chain) {
+  const HRESULT hr = g_real_create_legacy(self, queue, desc, chain);
+  if (SUCCEEDED(hr) && chain != nullptr) HookSwapChain(*chain);
+  return hr;
+}
+// Streamline's proxy factory: its swap chain creation lives in sl.interposer.dll.
+inline void HookFactory(void* object) {
+  if (object == nullptr || slmodule::g_host.load(std::memory_order_acquire) != nullptr ||
+      !g_force_fg_enabled.load(std::memory_order_relaxed))
+    return;
+  IUnknown* unknown = static_cast<IUnknown*>(object);
+  IDXGIFactory2* factory = nullptr;
+  if (FAILED(unknown->QueryInterface(__uuidof(IDXGIFactory2), reinterpret_cast<void**>(&factory))) || factory == nullptr)
+    return;
+  void** table = *reinterpret_cast<void***>(factory);
+  factory->Release();
+  static std::atomic_bool done{false};
+  if (!InInterposer(table[15]) || done.exchange(true)) return;
+  g_real_create_hwnd = reinterpret_cast<CreateHwndFn>(table[15]);
+  hook::InstallOne(reinterpret_cast<void**>(&g_real_create_hwnd), reinterpret_cast<void*>(&CreateHwnd));
+  if (InInterposer(table[10])) {
+    g_real_create_legacy = reinterpret_cast<CreateLegacyFn>(table[10]);
+    hook::InstallOne(reinterpret_cast<void**>(&g_real_create_legacy), reinterpret_cast<void*>(&CreateLegacy));
+  }
+}
+inline HRESULT WINAPI CreateFactory(REFIID riid, void** out) {
+  const HRESULT hr = g_real_create_factory(riid, out);
+  if (SUCCEEDED(hr) && out != nullptr) HookFactory(*out);
+  return hr;
+}
+inline HRESULT WINAPI CreateFactory1(REFIID riid, void** out) {
+  const HRESULT hr = g_real_create_factory1(riid, out);
+  if (SUCCEEDED(hr) && out != nullptr) HookFactory(*out);
+  return hr;
+}
+inline HRESULT WINAPI CreateFactory2(UINT flags, REFIID riid, void** out) {
+  const HRESULT hr = g_real_create_factory2(flags, riid, out);
+  if (SUCCEEDED(hr) && out != nullptr) HookFactory(*out);
+  return hr;
+}
+inline sl::Result Upgrade(void** object) {
+  const sl::Result result = g_real_upgrade(object);
+  if (result == sl::Result::eOk && object != nullptr) HookFactory(*object);
+  return result;
+}
+inline sl::Result NewToken(sl::FrameToken*& token, const uint32_t* index) {
+  if (g_explicit_index.load(std::memory_order_relaxed) < 0) g_explicit_index.store(index != nullptr ? 1 : 0);
+  return g_real_new_token(token, index);
+}
+// The interposer exports these hooks wrap; added to framecount's hook list.
+inline void AddHooks(HMODULE interposer, std::vector<hook::HookItem>& hooks) {
+  const auto add = [&](const char* name, void** real, void* replacement) {
+    if (GetProcAddress(interposer, name) != nullptr) hooks.push_back({name, real, replacement});
+  };
+  add("slGetNewFrameToken", reinterpret_cast<void**>(&g_real_new_token), reinterpret_cast<void*>(&NewToken));
+  add("slUpgradeInterface", reinterpret_cast<void**>(&g_real_upgrade), reinterpret_cast<void*>(&Upgrade));
+  add("CreateDXGIFactory", reinterpret_cast<void**>(&g_real_create_factory), reinterpret_cast<void*>(&CreateFactory));
+  add("CreateDXGIFactory1", reinterpret_cast<void**>(&g_real_create_factory1), reinterpret_cast<void*>(&CreateFactory1));
+  add("CreateDXGIFactory2", reinterpret_cast<void**>(&g_real_create_factory2), reinterpret_cast<void*>(&CreateFactory2));
+}
+// Once DLSS-G was added and the game has run a while without asking for Reflex.
+// Returns whether the addon drives Reflex now.
+inline bool TryActivate() {
+  if (g_active.load(std::memory_order_acquire)) return true;
+  if (g_constants_calls.load(std::memory_order_relaxed) < 120 || !g_presents_hooked.load(std::memory_order_acquire) ||
+      g_real_get_feature_function == nullptr)
+    return false;
+  static std::atomic_bool tried{false};
+  if (tried.exchange(true)) return false;
+  void* set_options = nullptr;
+  void* sleep = nullptr;
+  void* marker = nullptr;
+  if (g_real_get_feature_function(sl::kFeatureReflex, "slReflexSetOptions", set_options) != sl::Result::eOk ||
+      g_real_get_feature_function(sl::kFeaturePCL, "slPCLSetMarker", marker) != sl::Result::eOk ||
+      set_options == nullptr || marker == nullptr) {
+    reshade::log::message(reshade::log::level::warning,
+                          "mfgunlock: Route A Reflex: Streamline's Reflex or PCL functions are missing.");
+    return false;
+  }
+  g_real_get_feature_function(sl::kFeatureReflex, "slReflexSleep", sleep);
+  if (g_real_reflex_set_options.load(std::memory_order_acquire) == nullptr)
+    g_real_reflex_set_options.store(reinterpret_cast<ReflexSetOptionsFn>(set_options), std::memory_order_release);
+  if (sleep != nullptr && g_real_reflex_sleep.load(std::memory_order_acquire) == nullptr)
+    g_real_reflex_sleep.store(reinterpret_cast<ReflexSleepFn>(sleep), std::memory_order_release);
+  g_marker = reinterpret_cast<PclMarkerFn>(marker);
+  sl::ReflexOptions options{};
+  options.mode = sl::ReflexMode::eLowLatency;
+  const sl::Result result = HookedReflexSetOptions(options);
+  if (result != sl::Result::eOk) {
+    reshade::log::message(reshade::log::level::warning,
+                          ("mfgunlock: Route A Reflex: slReflexSetOptions returned " +
+                           std::to_string(static_cast<int>(result)) + ".").c_str());
+    return false;
+  }
+  g_active.store(true, std::memory_order_release);
+  const int explicit_index = g_explicit_index.load(std::memory_order_acquire);
+  reshade::log::message(reshade::log::level::info,
+                        (std::string("mfgunlock: Route A Reflex: the game does not use Reflex; MFG Unlock turned it on "
+                                     "and marks the game's frames") +
+                         (explicit_index == 1 && sleep != nullptr
+                              ? ", with Reflex's sleep after each Present."
+                              : " (no Reflex sleep: the game lets Streamline number its frames).")).c_str());
+  return true;
+}
+}  // namespace reflexdrive
+
 // 1.10.0 (force_fg.hpp, item 4): turns DLSS-G on for this viewport while the
 // game never did, at the panel's multiplier (2x when it follows the game).
 inline void TryForceFrameGeneration(const sl::ViewportHandle& viewport) {
@@ -1944,8 +2194,10 @@ inline void TryForceFrameGeneration(const sl::ViewportHandle& viewport) {
         function != nullptr && function != reinterpret_cast<void*>(&HookedSetOptions))
       g_real_set_options.store(reinterpret_cast<SetOptionsFn>(function), std::memory_order_release);
   }
+  // 1.10.1 (plan item 2): without the game's Reflex, the addon's (reflexdrive above).
+  const bool reflex = g_reflex_hooked.load(std::memory_order_acquire) || reflexdrive::TryActivate();
   const auto apply = forcefg::DecideApply(
-      true, g_game_set_options.load(std::memory_order_acquire), g_reflex_hooked.load(std::memory_order_acquire),
+      true, g_game_set_options.load(std::memory_order_acquire), reflex,
       g_real_set_options.load(std::memory_order_acquire) != nullptr,
       g_force_fg_applied_multiplier.load(std::memory_order_relaxed) == multiplier);
   if (g_force_fg_apply.exchange(static_cast<int>(apply), std::memory_order_acq_rel) != static_cast<int>(apply) &&
@@ -1977,7 +2229,10 @@ inline sl::Result HookedSetConstants(const sl::Constants& values,
                                      const sl::FrameToken& frame,
                                      const sl::ViewportHandle& viewport) {
   if (g_real_set_constants == nullptr) return sl::Result::eErrorNotInitialized;
-  if (g_force_fg_enabled.load(std::memory_order_relaxed)) TryForceFrameGeneration(viewport);
+  if (g_force_fg_enabled.load(std::memory_order_relaxed)) {
+    reflexdrive::OnConstants(frame);
+    TryForceFrameGeneration(viewport);
+  }
   inputdiag::ObserveConstants(static_cast<uint32_t>(viewport), values,
                               static_cast<uint32_t>(frame));
   if (!g_addon_enabled.load(std::memory_order_relaxed))
@@ -2052,8 +2307,20 @@ inline std::atomic<void (*)(bool)> g_init_scope{nullptr};
 inline sl::Result InitWithPolicy(const sl::Preferences& pref, uint64_t sdk_version);
 // 1.9.0: slInit reached this hook, for the panel's frame generation chain.
 inline std::atomic_bool g_init_seen{false};
+// 1.10.1 (plan item 5): Add frame generation's own slInit, kept apart from the game's.
+inline std::atomic_bool g_host_init_seen{false};
 inline sl::Result HookedInit(const sl::Preferences& pref, uint64_t sdk_version) {
   if (g_real_init == nullptr) return sl::Result::eErrorNotInitialized;
+  if (forcefg::IsHostInit(pref)) {
+    g_host_init_seen.store(true, std::memory_order_release);
+    reshade::log::message(reshade::log::level::info,
+                          "mfgunlock: slInit from MFG Unlock's own Streamline (Add frame generation); not the game's.");
+    const auto scope = g_init_scope.load(std::memory_order_acquire);
+    if (scope != nullptr) scope(true);
+    const sl::Result result = g_real_init(pref, sdk_version);
+    if (scope != nullptr) scope(false);
+    return result;
+  }
   g_init_seen.store(true, std::memory_order_release);
   const auto scope = g_init_scope.load(std::memory_order_acquire);
   // 1.8.7 diagnostics (Rift Apart on an RTX 3060 Ti): say whether slInit
@@ -3048,9 +3315,16 @@ inline void TryInstall() {
           expected, true, std::memory_order_acq_rel)) {
     return;
   }
-  HMODULE interposer = GetModuleHandleW(L"sl.interposer.dll");
+  // 1.10.1 (plan item 1): Add frame generation's copy while it hosts Streamline.
+  HMODULE interposer = slmodule::Interposer();
   if (interposer == nullptr ||
       GetProcAddress(interposer, "slGetFeatureFunction") == nullptr) {
+    // 1.10.1 (plan item 3): say once why nothing is hooked (The Last of Us Part I ships Streamline 1.x).
+    static std::atomic_bool v1_logged{false};
+    if (interposer != nullptr && !v1_logged.exchange(true))
+      reshade::log::message(reshade::log::level::warning,
+                            "mfgunlock: the game's Streamline is 1.x (sl.interposer.dll has no slGetFeatureFunction); "
+                            "DLSS-G, XeMFG DLSS-G and Add frame generation need Streamline 2. Nothing is hooked.");
     internal::g_installing.store(false, std::memory_order_release);
     return;
   }
@@ -3073,6 +3347,9 @@ inline void TryInstall() {
         {"slSetConstants", reinterpret_cast<void**>(&internal::g_real_set_constants),
          reinterpret_cast<void*>(&internal::HookedSetConstants)});
   }
+  // 1.10.1 (plan item 2): Route A's Reflex needs the game's Present on Streamline's proxy.
+  if (g_force_fg_enabled.load(std::memory_order_relaxed) && slmodule::g_host.load(std::memory_order_acquire) == nullptr)
+    internal::reflexdrive::AddHooks(interposer, hooks);
   // slInit is only detoured for an explicit provider-selection override, or
   // (1.8.5) for XMX's admission on RTX 20/30.
   const auto init_wanted = internal::g_init_wanted.load(std::memory_order_acquire);

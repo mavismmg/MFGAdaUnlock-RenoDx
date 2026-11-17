@@ -112,10 +112,55 @@ def patch_sr_only(sample):
     integration.write_text(text, encoding='utf-8')
 
 
+NR_MARK = '// MFGAdaUnlock no-Reflex patch'
+NR_HELPER = NR_MARK + ': MFG_SAMPLE_NO_REFLEX=1 (with MFG_SAMPLE_SR_ONLY=1) makes the sample a game\n' \
+    '// without Reflex (Ninja Gaiden 4): no Reflex in slInit, no Reflex options, sleep or PCL markers.\n' \
+    'inline bool MfgWrapperNoReflex() { char* v=nullptr; size_t n=0; _dupenv_s(&v,&n,"MFG_SAMPLE_NO_REFLEX");\n' \
+    '  const bool on=v && v[0]==\'1\'; free(v); return on; }\n'
+
+
+def patch_no_reflex(sample):
+    """1.10.1 (plan item 2): Route A's own Reflex needs a game that never uses Reflex."""
+    integration = sample / 'src' / 'SLWrapper.cpp'
+    text = integration.read_text(encoding='utf-8')
+    if NR_MARK in text:
+        return
+    sr = '        for (auto f : featuresToLoad) if (f != sl::kFeatureDLSS_G) mfgSrOnly.push_back(f);\n'
+    if text.count(sr) != 1:
+        raise SystemExit('SLWrapper.cpp: the SR-only patch is not in place')
+    text = text.replace(sr, '        for (auto f : featuresToLoad) if (f != sl::kFeatureDLSS_G && '
+                        '!(MfgWrapperNoReflex() && (f == sl::kFeatureReflex || f == sl::kFeaturePCL))) mfgSrOnly.push_back(f);\n')
+    # The frame token comes from the sleep callback: kept, the sleep itself is not.
+    sleep = '        successCheck(slReflexSleep(*SLWrapper::Get().m_currentFrame), "Reflex_Sleep");\n'
+    if text.count(sleep) != 1:
+        raise SystemExit('SLWrapper.cpp: the Reflex sleep was not found')
+    text = text.replace(sleep, '        if (!MfgWrapperNoReflex()) ' + sleep.lstrip())
+    sleep_head = 'void SLWrapper::ReflexCallback_Sleep(donut::app::DeviceManager& manager, uint32_t frameID) {\n' \
+                 '    if (SLWrapper::Get().GetReflexAvailable()) {'
+    if text.count(sleep_head) != 1:
+        raise SystemExit('SLWrapper.cpp: ReflexCallback_Sleep layout not recognized')
+    text = text.replace(sleep_head, sleep_head.replace('if (SLWrapper::Get().GetReflexAvailable())',
+                                                       'if (SLWrapper::Get().GetReflexAvailable() || MfgWrapperNoReflex())'))
+    heads = ['void SLWrapper::SetReflexConsts(const sl::ReflexOptions options)\n'] + [
+        f'void SLWrapper::ReflexCallback_{n}(donut::app::DeviceManager& manager, uint32_t frameID) {{'
+        for n in ('SimStart', 'SimEnd', 'RenderStart', 'RenderEnd', 'PresentStart', 'PresentEnd')]
+    for head in heads:
+        at = text.find(head)
+        if at < 0:
+            raise SystemExit('SLWrapper.cpp: ' + head.strip() + ' not found')
+        body = text.index('{', at + len(head) - 1) + 1
+        text = text[:body] + '\n    if (MfgWrapperNoReflex()) return;' + text[body:]
+    # After the SR-only helper, which follows <cstdlib>.
+    helper_at = text.index(SR_MARK)
+    text = text[:helper_at] + NR_HELPER + text[helper_at:]
+    integration.write_text(text, encoding='utf-8')
+
+
 def build(sample, archive):
     extract(sample, archive)
     patch(sample)
     patch_sr_only(sample)
+    patch_no_reflex(sample)
     out = sample / '_build'
     subprocess.run(['cmake', '-S', str(sample), '-B', str(out), '-G', 'Visual Studio 17 2022', '-A', 'x64',
                     '-DUSE_SL=ON', '-DDONUT_WITH_VULKAN=OFF', '-DNVRHI_WITH_VULKAN=OFF', '-DDONUT_WITH_DX11=OFF',

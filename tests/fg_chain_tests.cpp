@@ -31,6 +31,11 @@ int main() {
         Source::kDriver);
   CHECK(ClassifyProvider(LR"(C:\Steam\steamapps\common\ELDEN RING\Game\EldenRingDLSS\nvngx_dlssg.dll)") == Source::kGame);
   CHECK(ClassifyProvider(nullptr) == Source::kUnknown);
+  // 1.10.1: Add frame generation's own files are not the game's.
+  CHECK(ClassifyStreamline(LR"(D:\Steam\steamapps\common\Metro Exodus Enhanced Edition\MFGUnlock-Streamline\sl.dlss_g.dll)") ==
+        Source::kMfgUnlock);
+  CHECK(ClassifyProvider(LR"(D:\Games\Red Dead Redemption 2\mfgunlock-streamline\nvngx_dlssg.dll)") == Source::kMfgUnlock);
+  CHECK(std::string(Name(Source::kMfgUnlock)).find("MFGUnlock-Streamline") != std::string::npos);
   std::cout << "fg_chain tests passed\n";
   return 0;
 }

@@ -12,7 +12,10 @@ PINNED = {
     # 1.10.0 (user-approved): XeFG UI composition opt-in (XmxUiComposition); the Streamline host's HUD fix
     # (xmx_hud_composite.hpp, its own HUD-less copy, HUD debug); Metro Exodus HDR fix (only a copy captured for
     # this frame, composition only at the back buffer's size); the composition follows the panel's HUD fix; 1.10.0 rename XMX -> XeMFG DLSS-G in a message.
-    'xmx_generator.hpp': '2224c07a2a8bee6c8e84b7dc0d5a928631115727515b2392584b3ab97b2296f0',
+    # 1.10.1 (user-approved, plan item 9): the HUD composition only with a HUD-less color of the back
+    # buffer's format family, and a guard that turns it off when most of the screen counts as HUD (RenoDX
+    # in Phantom Blade Zero, NTE, Wuthering Waves); its state goes to the support report (xmx_hud).
+    'xmx_generator.hpp': 'a3bd22c5c0a4cede1a2958303fb2611ddcd9f7d9b98060134be823bac55d9929',
     # 1.10.0 (user-approved): EvaluateWithoutNvidia, NGX's own Evaluate for XMX's handle when
     # NVIDIA's unused feature is not created (addon_provider.inl, [DLSSG] XmxSaveVram).
     'xmx_hook.hpp': '735014c5a16584da455a099b56c3fc054ff4f1bdf7510281bba1692f4b4682ce',

@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "catalog": "nvidia-streamline-2.14.16",
+  "url": "https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.14.16/streamline-sdk-v2.14.16.zip",
+  "zip_size": 276016170,
+  "folder": "MFGUnlock-Streamline",
+  "files": [
+    {"name":"sl.interposer.dll","source":"bin/x64/sl.interposer.dll","sha256":"b1d7395aebd7b9722841d64dcf7433680020b6a8e421f851c16d5ba0c2182edf","required":true},
+    {"name":"sl.common.dll","source":"bin/x64/sl.common.dll","sha256":"38eea3b4209afc455636ea372b5933d65fcc13becec6c84d101dcfc4d8648f75","required":true},
+    {"name":"sl.dlss_g.dll","source":"bin/x64/sl.dlss_g.dll","sha256":"3ed9538df724993bea8a050195a6a78b9c8c8a566d5b05ade477aab3c390e90f","required":true},
+    {"name":"sl.reflex.dll","source":"bin/x64/sl.reflex.dll","sha256":"443577e869352436ff7ec8f4d9c90418d3e95368436ce219261e0f4f07a38122","required":true},
+    {"name":"sl.pcl.dll","source":"bin/x64/sl.pcl.dll","sha256":"5698c38e722318681f215c9fe68e45b9bedd51378acc699d8eee26e961e57770","required":true},
+    {"name":"nvngx_dlssg.dll","source":"bin/x64/nvngx_dlssg.dll","sha256":"8d59d49b36410dd6b62fef2503a5871d347415bd85d943fa0848563a95dd50c7","required":true},
+    {"name":"NVIDIA-Streamline-license.txt","source":"license.txt","sha256":"7b6f23e7d6f3ad6292f9308d2b42cdc3d82ae4e9b2abb55f230279d83bedd43d","required":false}
+  ]
+}

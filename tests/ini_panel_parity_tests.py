@@ -12,7 +12,9 @@ INI_EXEMPT = {('XeFG.Learned', 'Executable'),
               # Test only (1.8.3): simulates an RTX 20/30 for XMX's pre-Ada path.
               ('DLSSG', 'SimulatePreAda'),
               # Test only (1.10.0): fails NGX's requirements query under SimulatePreAda=2.
-              ('DLSSG', 'SimulateRequirementsFailure')}
+              ('DLSSG', 'SimulateRequirementsFailure'),
+              # Diagnostics for a tester (1.10.1, plan item 4): logs the passes after DLSS SR.
+              ('DLSSG', 'HudTrace')}
 RESHADE_EXEMPT = {
     'DisocclusionGuardLevel',   # migrated to DepthEdgeGuardLevel
     'DynamicReflexSourceCap',   # migrated to ReflexSourceFpsCap

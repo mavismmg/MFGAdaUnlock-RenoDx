@@ -10,4 +10,9 @@ void Inspect();
 void Repair();
 Status Snapshot();
 void Draw();
+// 1.10.1 (plan item 8): the MFGUnlock-Streamline files for Add frame generation.
+struct StreamlineStatus { bool checked{},helperRunning{}; int missing{},different{}; std::string message; };
+void InspectStreamline();
+void RepairStreamline();
+StreamlineStatus StreamlineSnapshot();
 }

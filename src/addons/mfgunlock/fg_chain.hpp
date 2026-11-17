@@ -10,7 +10,13 @@
 
 namespace mfgunlock::fgchain {
 
-enum class Source { kUnknown, kGame, kNvidiaAppOverride, kNvidiaAppUpdate, kNvidiaApp, kDriver };
+enum class Source { kUnknown, kGame, kNvidiaAppOverride, kNvidiaAppUpdate, kNvidiaApp, kDriver, kMfgUnlock };
+
+// 1.10.1: Add frame generation's own Streamline, beside the addon (the Metro Exodus
+// report called those files the game's).
+inline bool InMfgUnlockFolder(const std::wstring& lower) {
+  return lower.find(L"\\mfgunlock-streamline\\") != std::wstring::npos;
+}
 
 inline std::wstring Lower(const wchar_t* path) {
   std::wstring out = path != nullptr ? path : L"";
@@ -24,6 +30,7 @@ inline std::wstring Lower(const wchar_t* path) {
 inline Source ClassifyStreamline(const wchar_t* path) {
   const std::wstring p = Lower(path);
   if (p.empty()) return Source::kUnknown;
+  if (InMfgUnlockFolder(p)) return Source::kMfgUnlock;
   if (p.find(L"\\sl_dlss_g_override_") != std::wstring::npos) return Source::kNvidiaAppOverride;
   if (p.find(L"\\sl_dlss_g_") != std::wstring::npos) return Source::kNvidiaAppUpdate;
   return Source::kGame;
@@ -34,6 +41,7 @@ inline Source ClassifyStreamline(const wchar_t* path) {
 inline Source ClassifyProvider(const wchar_t* path) {
   const std::wstring p = Lower(path);
   if (p.empty()) return Source::kUnknown;
+  if (InMfgUnlockFolder(p)) return Source::kMfgUnlock;
   if (p.find(L"\\driverstore\\") != std::wstring::npos) return Source::kDriver;
   if (p.find(L"\\nvidia\\ngx\\") != std::wstring::npos || p.find(L"\\ngx\\models\\") != std::wstring::npos)
     return Source::kNvidiaApp;
@@ -47,6 +55,7 @@ inline const char* Name(Source source) {
     case Source::kNvidiaAppUpdate: return "NVIDIA app (automatic update)";
     case Source::kNvidiaApp: return "NVIDIA app";
     case Source::kDriver: return "NVIDIA driver (built-in, 2x only)";
+    case Source::kMfgUnlock: return "MFG Unlock's Streamline (MFGUnlock-Streamline)";
     default: return "unknown";
   }
 }

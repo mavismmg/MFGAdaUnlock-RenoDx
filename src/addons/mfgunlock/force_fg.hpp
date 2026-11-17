@@ -14,18 +14,30 @@
 //   2. Each slSetConstants: while the game itself never called
 //      slDLSSGSetOptions, frame generation is turned on for that viewport at
 //      the panel's multiplier, through the addon's own SetOptions path.
-//   3. Without the game's Reflex (it never asked for slReflexSetOptions) it is
-//      not turned on: DLSS-G presents and paces through Reflex, and this addon
-//      does not invent latency markers. The panel says so.
+//   3. Without the game's Reflex (it never asked for slReflexSetOptions):
+//      DLSS-G presents and paces through Reflex, so since 1.10.1 (plan item 2,
+//      user-approved) the addon turns Reflex on and marks the game's own frame
+//      tokens (framecount.hpp, reflexdrive). Until it can (it needs the game's
+//      Present on Streamline's proxy) DLSS-G stays off and the panel says so.
 // With the HUD-less image missing, DLSS-G interpolates the HUD, as in any game
 // that does not tag one. Games that use NGX without Streamline are out of scope.
 // Independent of JavieEm's GPL "force FG": only Streamline's public API.
 #include <sl.h>
 
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace mfgunlock::forcefg {
+
+// 1.10.1 (plan item 5): the project id Add frame generation's own Streamline passes to slInit
+// (sl_host.hpp, xemfg/sl_vulkan.cpp). Its slInit is not the game's: the Metro Exodus report
+// read it as "the game asks for DLSS frame generation itself".
+inline constexpr const char* kHostProjectId = "3c5b0a51-6f2e-4b8d-9d17-4f0b6e2a8c19";
+inline bool IsHostInit(const sl::Preferences& pref) {
+  return pref.structType == sl::Preferences::s_structType && pref.projectId != nullptr &&
+         std::strcmp(pref.projectId, kHostProjectId) == 0;
+}
 
 enum class Decision : uint8_t { kOff, kGameHasFrameGeneration, kNoSuperResolution, kUnknownAbi, kAdded, kAllFeatures };
 
@@ -99,7 +111,7 @@ constexpr const char* ApplyText(Apply apply) {
   switch (apply) {
     case Apply::kNotAdded: return "";
     case Apply::kGameControls: return "the game turns DLSS frame generation on and off itself";
-    case Apply::kNoReflex: return "not turned on: the game does not use Reflex, which DLSS frame generation needs";
+    case Apply::kNoReflex: return "not turned on yet: the game does not use Reflex, which DLSS frame generation needs; MFG Unlock turns Reflex on once it has found the game's Present (see the log)";
     case Apply::kNoFunction: return "not turned on: Streamline did not give its DLSS-G options function";
     case Apply::kAlreadyOn: return "on";
     default: return "turning on";

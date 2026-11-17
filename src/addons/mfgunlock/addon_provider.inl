@@ -1233,8 +1233,19 @@ FrameGenChain DescribeFrameGenChain() {
   } else {
     chain.gate = "unknown";
   }
+  // 1.10.1 (plan item 3): Streamline 1.x has no slGetFeatureFunction; nothing in this addon works with it.
+  if (const HMODULE interposer = GetModuleHandleW(L"sl.interposer.dll");
+      interposer != nullptr && GetProcAddress(interposer, "slGetFeatureFunction") == nullptr) {
+    chain.streamline = "Streamline 1.x" + ChainVersion(interposer) +
+                       " (not supported: DLSS-G and Add frame generation need Streamline 2)";
+    chain.streamline_health = ChainHealth::kFail;
+  }
   if (mfgunlock::framecount::internal::g_init_seen.load(std::memory_order_acquire)) {
     chain.slinit = "seen by the addon";
+    chain.slinit_health = ChainHealth::kOk;
+  } else if (mfgunlock::framecount::internal::g_host_init_seen.load(std::memory_order_acquire)) {
+    // 1.10.1 (plan item 5): only Add frame generation's own slInit ran.
+    chain.slinit = "MFG Unlock's own Streamline (Add frame generation); the game's slInit not seen";
     chain.slinit_health = ChainHealth::kOk;
   } else if (GetModuleHandleW(L"sl.interposer.dll") != nullptr) {
     const bool needed = mfgunlock::xmx::preada::Admitted() ||

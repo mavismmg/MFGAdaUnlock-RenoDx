@@ -114,6 +114,51 @@ constexpr std::pair<Area, Area> SharedArea(Area depth, Area motion) {
   return {Area{depth.x, depth.y, width, height}, Area{motion.x, motion.y, width, height}};
 }
 
+// 1.10.1: formats that hold the same kind of image (8-bit SDR, 10-bit, 16-bit float).
+// A HUD-less color outside the back buffer's family was written before something that
+// changes every color (RenoDX's tonemap, a game's own HDR encode), so comparing the two
+// marks the whole screen as HUD.
+constexpr int FormatFamily(DXGI_FORMAT format) {
+  switch (format) {
+    case DXGI_FORMAT_R8G8B8A8_TYPELESS: case DXGI_FORMAT_R8G8B8A8_UNORM: case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+    case DXGI_FORMAT_B8G8R8A8_TYPELESS: case DXGI_FORMAT_B8G8R8A8_UNORM: case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+      return 1;
+    case DXGI_FORMAT_R10G10B10A2_TYPELESS: case DXGI_FORMAT_R10G10B10A2_UNORM: return 2;
+    case DXGI_FORMAT_R16G16B16A16_TYPELESS: case DXGI_FORMAT_R16G16B16A16_FLOAT: return 3;
+    default: return 100 + static_cast<int>(format);
+  }
+}
+
+// 1.10.1: XMX's HUD composition pastes the real frame wherever the back buffer differs
+// from the HUD-less color. With RenoDX (Phantom Blade Zero, NTE, Wuthering Waves) the
+// back buffer is changed after the game's HUD-less color, so most of the screen counted
+// as HUD: artifacts, or generated frames that were copies of the real one. The guard
+// watches the share of HUD pixels and, when most of the recent frames are mostly
+// "HUD", turns the composition off for the session (XeFG interpolates the back buffer,
+// as in 1.9.0).
+struct HudGuard {
+  static constexpr uint32_t kWindow = 16;     // measured frames looked at
+  static constexpr uint32_t kTripFrames = 12;  // of those, this many over the limit trip it
+  static constexpr double kLimit = 0.30;       // share of the screen a HUD rarely covers
+  uint32_t history{};                          // one bit per measured frame, newest in bit 0
+  uint32_t measured{};
+  bool tripped{};
+  double last{};
+  // Returns true on the frame that trips the guard.
+  bool Feed(double share) {
+    if (tripped) return false;
+    last = share;
+    history = (history << 1) | (share > kLimit ? 1u : 0u);
+    if (measured < kWindow) ++measured;
+    if (measured < kWindow) return false;
+    uint32_t over = 0;
+    for (uint32_t i = 0; i < kWindow; ++i) over += (history >> i) & 1u;
+    if (over < kTripFrames) return false;
+    tripped = true;
+    return true;
+  }
+};
+
 // Why the last evaluation produced no generated frame.
 enum class Idle : int {
   None,

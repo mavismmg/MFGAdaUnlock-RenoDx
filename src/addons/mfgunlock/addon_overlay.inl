@@ -536,8 +536,11 @@ std::string FrameGenChainReport() {
            if (!mfgunlock::framecount::g_force_fg_enabled.load(std::memory_order_relaxed)) return std::string();
            const auto decision = static_cast<mfgunlock::forcefg::Decision>(
                mfgunlock::framecount::g_force_fg_decision.load(std::memory_order_acquire));
-           std::string text = mfgunlock::framecount::internal::g_init_seen.load(std::memory_order_acquire)
+           namespace fc = mfgunlock::framecount::internal;
+           std::string text = fc::g_init_seen.load(std::memory_order_acquire)
                                   ? mfgunlock::forcefg::DecisionText(decision)
+                              : fc::g_host_init_seen.load(std::memory_order_acquire)
+                                  ? "not used: MFG Unlock's own Streamline runs frame generation (Add frame generation)"
                                   : "slInit not seen by the addon (it needs to load early)";
            if (mfgunlock::forcefg::Added(decision))
              text += std::string("; ") + mfgunlock::forcefg::ApplyText(static_cast<mfgunlock::forcefg::Apply>(
@@ -1966,14 +1969,14 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   }
   const char* xmx_waiting=xmx_bypassed?T(Str::kNvidiaIsGenerating_0bf6):xmx_report.evaluating?T(Str::kWaitingForFrames_9c2f):T(Str::kPausedOrOffInThe_52c7);
   const auto xmx_support_report=[&] {
-    std::string report="MFG Unlock 1.10.0\nmethod=";
+    std::string report="MFG Unlock 1.10.1\nmethod=";
     report+=xmx_selected?"XeMFG DLSS-G":"DLSS-G";
     report+=std::string("\nrenderer=")+RenderApiName(render_api)+"\nstatus="+player_state;
     if(xmx_selected) {
       report+=std::string("\nxmx_hooked=")+(xmx_report.hooked?"1":"0")+"\nxmx_partial="+(xmx_report.partiallyHooked?"1":"0")
           +"\nxmx_bypassed="+(xmx_bypassed?"1":"0")+"\nxmx_evaluating="+(xmx_report.evaluating?"1":"0")+"\nxmx_generating="+(xmx_report.generating?"1":"0")
           +"\nxmx_idle="+mfgunlock::xmx::policy::IdleText(xmx_report.idle)+"\nxmx_failure="+xmx_report.failure
-          +"\nxmx_frames_limit="+std::to_string(xmx_report.framesLimit);
+          +"\nxmx_frames_limit="+std::to_string(xmx_report.framesLimit)+"\nxmx_hud="+xmx_report.hud;
       // The support report stays in English.
       const auto created=g_xmx_handles_created.load();
       report+="\nxmx_nvidia_feature="+(!XmxSaveVramWanted()?std::string("created by NVIDIA (XmxSaveVram=0)"):created>0?"not created, memory saved ("+std::to_string(created)+" creation(s))":std::string("not created yet"));

@@ -93,6 +93,39 @@ int main() {
   auto [offsetDepth, offsetMotion] = SharedArea({8, 4, 1480, 830}, {0, 0, 1485, 836});
   CHECK((offsetDepth == Area{8, 4, 1480, 830} && offsetMotion == Area{0, 0, 1480, 830}));
 
+  // 1.10.1: format families for the HUD composition.
+  CHECK(FormatFamily(DXGI_FORMAT_R8G8B8A8_UNORM) == FormatFamily(DXGI_FORMAT_B8G8R8A8_UNORM_SRGB));
+  CHECK(FormatFamily(DXGI_FORMAT_R10G10B10A2_UNORM) != FormatFamily(DXGI_FORMAT_R8G8B8A8_UNORM));
+  CHECK(FormatFamily(DXGI_FORMAT_R16G16B16A16_FLOAT) != FormatFamily(DXGI_FORMAT_R10G10B10A2_TYPELESS));
+  CHECK(FormatFamily(DXGI_FORMAT_R11G11B10_FLOAT) != FormatFamily(DXGI_FORMAT_R16G16B16A16_FLOAT));
+  // A normal HUD (crosshair, minimap, a menu now and then) never trips the guard.
+  {
+    HudGuard guard;
+    for (int i = 0; i < 200; ++i) CHECK(!guard.Feed(i % 10 == 0 ? 0.6 : 0.05));
+    CHECK(!guard.tripped);
+  }
+  // A full-screen menu for a few frames does not trip it either.
+  {
+    HudGuard guard;
+    for (int i = 0; i < 11; ++i) CHECK(!guard.Feed(0.95));
+    for (int i = 0; i < 40; ++i) CHECK(!guard.Feed(0.02));
+    CHECK(!guard.tripped);
+  }
+  // RenoDX over the game's HUD-less color: nearly every pixel differs, so it trips once.
+  {
+    HudGuard guard;
+    int trips = 0;
+    for (int i = 0; i < 40; ++i) trips += guard.Feed(0.9) ? 1 : 0;
+    CHECK(trips == 1 && guard.tripped);
+    CHECK(!guard.Feed(0.0) && guard.tripped);  // it stays off for the session
+  }
+  // It needs a full window before it decides.
+  {
+    HudGuard guard;
+    for (uint32_t i = 0; i + 1 < HudGuard::kWindow; ++i) CHECK(!guard.Feed(1.0));
+    CHECK(guard.Feed(1.0));
+  }
+
   for (int i = 1; i < int(Idle::Count); ++i) CHECK(IdleText(Idle(i))[0] != '\0');
   CHECK(IdleText(Idle::None)[0] == '\0');
   std::cout << "PASS: XMX decisions\n";

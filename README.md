@@ -22,6 +22,24 @@
 > existing settings still apply. Older release notes keep the old name.
 
 > [!NOTE]
+> ### New in 1.10.1
+>
+> - **XeMFG DLSS-G with RenoDX HDR**: the artifacts and the generated frames that
+>   looked like copies of the real ones in 1.10.0 (Phantom Blade Zero, NTE,
+>   Wuthering Waves) are fixed. The HUD composition now turns itself off when the
+>   game's image before the HUD does not match the final image.
+> - **Add frame generation**: the Streamline files install from the panel
+>   (**Install / update Streamline files**); games without Reflex (Ninja Gaiden 4)
+>   get Reflex from MFG Unlock; another addon's unused Streamline no longer blocks
+>   it (Shadow of the Tomb Raider); with RenoDX's HDR upgrade in a game running in
+>   SDR it now steps aside instead of crashing (Red Dead Redemption 2 in Vulkan).
+> - The support report names MFG Unlock's own Streamline and Streamline 1.x games, and
+>   the panel says when a game's HDR uses FP16 (scRGB), which NVIDIA's DLSS-G does not
+>   support (Kingdom Come: Deliverance II's HDR).
+>
+> See the [1.10.1 release notes](docs/releases/1.10.1.md).
+
+> [!NOTE]
 > ### New in 1.10.0
 >
 > - **Frame generation in games with DLSS Super Resolution only** (Kingdom Come:
@@ -1274,8 +1292,11 @@ Requirements and limits:
 
 - The addon must load before the game starts Streamline (ReShade's
   `LoadFromDllMain`, which the addon adds itself; the panel says when it did not).
-- The game must use Reflex: DLSS frame generation presents and paces through it.
-  Without it the addon does not turn it on, and the support report says why.
+- DLSS frame generation presents and paces through Reflex. For a game that does
+  not use Reflex (Ninja Gaiden 4), the addon turns Reflex on and marks the game's
+  own frames (1.10.1); the log says "Route A Reflex".
+- Games with Streamline 1.x (The Last of Us Part I) are not supported; the
+  support report's `chain_streamline` line says "Streamline 1.x".
 - Without a HUD-less image from the game, the HUD is interpolated with the scene.
 - A game that asks for frame generation itself is never changed, nor a game that
   loads every Streamline feature (it may have its own frame generation turned off
@@ -1294,12 +1315,16 @@ starts NVIDIA's Streamline itself and gives the game DLSS frame generation, or
 XeMFG DLSS-G when it is selected.
 
 - The addon needs NVIDIA's Streamline 2.14.16 files in a folder named
-  `MFGUnlock-Streamline` next to it. They are not in this release: download the
-  Streamline SDK 2.14.16 from NVIDIA's GitHub
-  (<https://github.com/NVIDIA-RTX/Streamline/releases>), and copy from its `bin/x64`
-  folder `sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`, `sl.reflex.dll`,
-  `sl.pcl.dll` and `nvngx_dlssg.dll` into `MFGUnlock-Streamline`. The panel says
-  when the folder or a file is missing.
+  `MFGUnlock-Streamline` next to it. They are not in this release. Since 1.10.1
+  the panel installs them: under **Add frame generation**, **Install / update
+  Streamline files** opens a helper that downloads them from NVIDIA's Streamline
+  SDK release on GitHub (about 5 MB of the 276 MB archive), checks each one
+  against a pinned hash, shows what it will install and installs it after the game
+  exits (with a backup and a rollback journal). To do it by hand: download the
+  Streamline SDK 2.14.16 (<https://github.com/NVIDIA-RTX/Streamline/releases>) and
+  copy from its `bin/x64` folder `sl.interposer.dll`, `sl.common.dll`,
+  `sl.dlss_g.dll`, `sl.reflex.dll`, `sl.pcl.dll` and `nvngx_dlssg.dll` into
+  `MFGUnlock-Streamline`.
 - Direct3D 12 and Vulkan. Vulkan needs ReShade installed as the Vulkan layer;
   `[DLSSG] HostVulkan=0` turns off the Vulkan route alone.
 - **HUD fix** (on by default, Direct3D 12 only): the addon gives DLSS frame
@@ -1311,7 +1336,22 @@ XeMFG DLSS-G when it is selected.
 - NGX gives no camera, so the camera constants are a fixed projection and DLSS
   frame generation's automatic scene change detection stays off.
 - A game that has its own Streamline, or ships `sl.interposer.dll`, is never
-  hosted.
+  hosted. An `sl.interposer.dll` another addon loaded without starting Streamline
+  (RenoDX's DLSS addon) no longer counts as the game's (1.10.1).
+- **RenoDX HDR in a game running in SDR**: RenoDX changes the swap chain's format
+  under Streamline, whose buffers keep the game's. Since 1.10.1 the addon sees it
+  and runs the game without Streamline for that session (no frame generation; the
+  panel and the support report say why) instead of crashing. Use the game's own
+  HDR with RenoDX, or turn RenoDX's swap chain upgrade off.
+- Loading screens without DLSS SR pause DLSS frame generation until the game uses
+  DLSS SR again (1.10.1).
+- NVIDIA's DLSS-G does not generate on an FP16 (scRGB) HDR swap chain (DLSS-G
+  programming guide, section 11). Kingdom Come: Deliverance II's own HDR is one:
+  with it on, Add frame generation produces no frames, and the panel says so
+  (1.10.1). Turn the game's HDR off, or use the XeMFG method.
+- For testers: `[DLSSG] HudTrace=3` logs the draws, dispatches and copies of 3
+  frames after DLSS SR, to find where a game draws its HUD when the HUD fix finds
+  nothing.
 - Tested:
   - Kingdom Come: Deliverance II (Direct3D 12): XeMFG DLSS-G with the HUD fix.
   - Red Dead Redemption 2, Direct3D 12 and Vulkan: DLSS frame generation and XeMFG DLSS-G.

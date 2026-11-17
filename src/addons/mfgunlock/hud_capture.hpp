@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <map>
 #include <mutex>
+#include <string>
 #include <include/reshade.hpp>
 #include "sl_host.hpp"
 
@@ -85,6 +86,65 @@ inline void Capture(api::command_list* cmd, api::resource target, const api::res
                      reinterpret_cast<ID3D12GraphicsCommandList*>(cmd->get_native()), frame);
 }
 
+// 1.10.1 (plan item 4): [DLSSG] HudTrace=N logs, for N frames after DLSS SR, every draw,
+// dispatch and copy with its render target, so a game the fix misses (Metro Exodus in
+// HDR: "HUD fix captures 0") shows where its HUD is drawn. Off by default.
+inline std::atomic<int> trace_frames{0};
+inline std::atomic<int> trace_lines{0};
+inline uint32_t trace_frame = 0;
+inline constexpr int kTraceLineLimit = 1500;
+inline void Trace(const std::string& text) {
+  if (trace_lines.fetch_add(1, std::memory_order_relaxed) >= kTraceLineLimit) return;
+  reshade::log::message(reshade::log::level::info, ("mfgunlock: HudTrace " + text).c_str());
+}
+// The frame being traced, or 0. A new armed frame uses up one of the N.
+inline uint32_t TraceFrame() {
+  if (trace_frames.load(std::memory_order_relaxed) <= 0) return 0;
+  const uint32_t frame = slhost::HudArmIndex();
+  if (frame == 0) return 0;
+  std::lock_guard guard(lock);
+  if (frame != trace_frame) {
+    if (trace_frames.fetch_sub(1, std::memory_order_relaxed) <= 0) return 0;
+    trace_frame = frame;
+    Trace("frame " + std::to_string(frame) + ": back buffer " + std::to_string(slhost::BackbufferWidth()) + "x" +
+          std::to_string(slhost::BackbufferHeight()) + " DXGI format " + std::to_string(slhost::BackbufferFormat()));
+  }
+  return frame;
+}
+inline std::string Describe(api::device* device, api::resource resource) {
+  if (resource.handle == 0) return "none";
+  const api::resource_desc d = device->get_resource_desc(resource);
+  if (d.type != api::resource_type::texture_2d) return "buffer";
+  return std::to_string(d.texture.width) + "x" + std::to_string(d.texture.height) + " fmt " +
+         std::to_string(static_cast<int>(d.texture.format)) + " #" + std::to_string(resource.handle & 0xFFFFFF);
+}
+inline void TraceDraw(api::command_list* cmd, const char* kind, uint32_t count, uint32_t instances) {
+  if (TraceFrame() == 0) return;
+  api::resource_view view{0};
+  {
+    std::lock_guard guard(lock);
+    const auto it = targets.find(cmd);
+    if (it != targets.end()) view = it->second;
+  }
+  api::device* device = cmd->get_device();
+  const api::resource target = view.handle != 0 ? device->get_resource_from_view(view) : api::resource{0};
+  Trace(std::string(kind) + " " + std::to_string(count) + "x" + std::to_string(instances) + " -> " + Describe(device, target));
+}
+inline bool OnTraceDispatch(api::command_list* cmd, uint32_t x, uint32_t y, uint32_t z) {
+  if (TraceFrame() != 0)
+    Trace("dispatch " + std::to_string(x) + "x" + std::to_string(y) + "x" + std::to_string(z));
+  return false;
+}
+inline bool OnTraceCopy(api::command_list* cmd, api::resource source, api::resource dest) {
+  if (TraceFrame() != 0)
+    Trace("copy " + Describe(cmd->get_device(), source) + " -> " + Describe(cmd->get_device(), dest));
+  return false;
+}
+inline bool OnTraceCopyRegion(api::command_list* cmd, api::resource source, uint32_t, const api::subresource_box*,
+                              api::resource dest, uint32_t, const api::subresource_box*, api::filter_mode) {
+  return OnTraceCopy(cmd, source, dest);
+}
+
 inline void OnDrawCommon(api::command_list* cmd, bool full_screen) {
   const uint32_t frame = slhost::HudArmIndex();
   if (frame == 0) return;
@@ -118,10 +178,12 @@ inline void OnDrawCommon(api::command_list* cmd, bool full_screen) {
   Capture(cmd, target, desc, frame);
 }
 inline bool OnDraw(api::command_list* cmd, uint32_t vertices, uint32_t instances, uint32_t, uint32_t) {
+  TraceDraw(cmd, "draw", vertices, instances);
   OnDrawCommon(cmd, (vertices == 3 || vertices == 4) && instances == 1);
   return false;
 }
-inline bool OnDrawIndexed(api::command_list* cmd, uint32_t, uint32_t, uint32_t, int32_t, uint32_t) {
+inline bool OnDrawIndexed(api::command_list* cmd, uint32_t indices, uint32_t instances, uint32_t, int32_t, uint32_t) {
+  TraceDraw(cmd, "draw_indexed", indices, instances);
   OnDrawCommon(cmd, false);
   return false;
 }
@@ -135,6 +197,15 @@ inline void Register(const std::filesystem::path& ini) {
   reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&internal::OnBindTargets);
   reshade::register_event<reshade::addon_event::draw>(&internal::OnDraw);
   reshade::register_event<reshade::addon_event::draw_indexed>(&internal::OnDrawIndexed);
+  if (const int frames = static_cast<int>(GetPrivateProfileIntW(L"DLSSG", L"HudTrace", 0, ini.c_str())); frames > 0) {
+    internal::trace_frames.store(frames > 20 ? 20 : frames);
+    reshade::register_event<reshade::addon_event::dispatch>(&internal::OnTraceDispatch);
+    reshade::register_event<reshade::addon_event::copy_resource>(&internal::OnTraceCopy);
+    reshade::register_event<reshade::addon_event::copy_texture_region>(&internal::OnTraceCopyRegion);
+    reshade::log::message(reshade::log::level::info,
+                          ("mfgunlock: HudTrace on for " + std::to_string(internal::trace_frames.load()) +
+                           " frame(s) after DLSS SR.").c_str());
+  }
 }
 
 }  // namespace mfgunlock::hudcapture

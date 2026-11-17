@@ -52,6 +52,17 @@ int main() {
   CHECK(PanelStatus(true, true, true, 30000, Decision::kAdded, Apply::kAlreadyOn) == Status::kActive);
   CHECK(PanelStatus(true, true, true, 30000, Decision::kAdded, Apply::kNotAdded) == Status::kWaiting);
 
+  // 1.10.1 (plan item 5): Add frame generation's own slInit is recognized; a game's is not.
+  {
+    sl::Preferences host{};
+    host.projectId = kHostProjectId;
+    CHECK(IsHostInit(host));
+    sl::Preferences game{};
+    CHECK(!IsHostInit(game));
+    game.projectId = "a2bcbbbe-4c7a-4f2b-9d1b-1d1b1d1b1d1b";
+    CHECK(!IsHostInit(game));
+  }
+
   if (failures == 0) std::printf("force_fg: all checks passed\n");
   return failures == 0 ? 0 : 1;
 }

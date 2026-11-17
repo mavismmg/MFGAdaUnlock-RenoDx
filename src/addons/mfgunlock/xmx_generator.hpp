@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -223,7 +224,17 @@ struct Report {
   bool partiallyHooked{};
   uint32_t framesLimit{};
   bool everEvaluated{};
+  std::string hud;  // 1.10.1: the HUD composition's state, for the support report
 };
+// 1.10.1: what the HUD composition is doing, for the support report.
+inline std::mutex g_hud_lock;
+inline std::string g_hud_state = "not used yet";
+inline void SetHudState(const std::string& text) {
+  std::lock_guard guard(g_hud_lock);
+  if (g_hud_state == text) return;
+  g_hud_state = text;
+  Log("HUD: " + text);
+}
 inline Report Snapshot() {
   const auto now = GetTickCount64();
   const auto tick = g_last_generated_tick.load(std::memory_order_relaxed);
@@ -237,6 +248,10 @@ inline Report Snapshot() {
   report.idle = static_cast<policy::Idle>(g_idle.load(std::memory_order_relaxed));
   report.partiallyHooked = hooks > 0 && failed > 0;
   report.framesLimit = g_frames_limit.load(std::memory_order_relaxed);
+  {
+    std::lock_guard hud(g_hud_lock);
+    report.hud = g_hud_state;
+  }
   std::lock_guard guard(g_failure_lock);
   report.failure = g_failure;
   // Only with no hook at all is this a failure to start; one hooked copy still generates.
@@ -703,9 +718,23 @@ inline bool Generate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
       const auto da = a->GetDesc(), db = b->GetDesc();
       return da.Width == db.Width && da.Height == db.Height;
     };
-    const bool composite = execute.uiComposition == 0 && next.hudless && previous.hudless && HudCompositeWanted() &&
-                           !hudcomposite::Get().failed && same_size(next.hudless.Get(), next.backbuffer.Get()) &&
+    // 1.10.1: only when the HUD-less color is the same kind of image as the back buffer, and
+    // until the guard sees most of the screen counted as HUD (RenoDX changes the back buffer
+    // after the game's HUD-less color). Otherwise XeFG interpolates the back buffer, as in 1.9.0.
+    const auto same_family = [](ID3D12Resource* a, ID3D12Resource* b) {
+      return a != nullptr && b != nullptr &&
+             policy::FormatFamily(a->GetDesc().Format) == policy::FormatFamily(b->GetDesc().Format);
+    };
+    const bool hud_inputs = execute.uiComposition == 0 && next.hudless && previous.hudless && HudCompositeWanted();
+    const bool families = hud_inputs && same_family(next.hudless.Get(), next.backbuffer.Get()) &&
+                          same_family(previous.hudless.Get(), previous.backbuffer.Get());
+    const bool composite = hud_inputs && families && !hudcomposite::Tripped() && !hudcomposite::Get().failed &&
+                           same_size(next.hudless.Get(), next.backbuffer.Get()) &&
                            same_size(previous.hudless.Get(), previous.backbuffer.Get());
+    if (hud_inputs && !families)
+      SetHudState("off: the HUD-less color (format " + std::to_string(int(next.hudless->GetDesc().Format)) +
+                  ") is not the same kind of image as the back buffer (format " +
+                  std::to_string(int(next.backbuffer->GetDesc().Format)) + "); the HUD is interpolated");
     static const bool from_backbuffer = HudDebugSetting(L"XmxHudFromBackbuffer") != 0;
     const bool hud_debug = HudDebugWanted();
     if (composite && !from_backbuffer) {
@@ -731,8 +760,15 @@ inline bool Generate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter*
           Log("HUD composition unavailable: " + (hudcomposite::Get().fault.empty() ? std::string("size mismatch")
                                                                                      : hudcomposite::Get().fault));
       } else if (generated && composite) {
-        static std::atomic_flag logged = ATOMIC_FLAG_INIT;
-        if (!logged.test_and_set()) Log("HUD: XeFG interpolates the HUD-less color; the real frame's HUD is composed over it");
+        auto& pass = hudcomposite::Get();
+        if (hudcomposite::Measure(pass)) {
+          char share[16];
+          std::snprintf(share, sizeof(share), "%.0f%%", pass.guard.last * 100.0);
+          SetHudState(std::string("off: the HUD-less color does not match the back buffer (") + share +
+                      " of the screen differed; RenoDX or another post-process after it?); the HUD is interpolated");
+        } else if (!pass.guard.tripped) {
+          SetHudState("on: XeFG interpolates the HUD-less color; the real frame's HUD is composed over it");
+        }
       }
       if (!generated) idle = policy::Idle::NoOutput;
       if (generated) g_last_generated_tick.store(GetTickCount64(), std::memory_order_relaxed);

@@ -43,6 +43,7 @@
 #include "./ampere/provider.hpp"
 #include "./gpu_arch.hpp"
 #include "./module_session.hpp"
+#include "./sl_module.hpp"
 #include "./ngx_hook.hpp"
 #include "./ngx_requirements.hpp"
 #include "./patch_transaction.hpp"
@@ -285,12 +286,19 @@ inline void TryInstallStreamline() {
   static SRWLOCK lock = SRWLOCK_INIT;
   AcquireSRWLockExclusive(&lock);
   if (!g_support_hooked.load(std::memory_order_relaxed)) {
-    HMODULE interposer = GetModuleHandleW(L"sl.interposer.dll");
+    HMODULE interposer = slmodule::Interposer();  // 1.10.1: the host's copy while it hosts
     if (interposer != nullptr && GetProcAddress(interposer, "slIsFeatureSupported") != nullptr &&
         hook::Install(interposer, kStreamlineHooks, "sl.interposer.dll"))
       g_support_hooked.store(true, std::memory_order_release);
   }
   ReleaseSRWLockExclusive(&lock);
+}
+
+// 1.10.1 (plan item 1): Add frame generation loaded its own interposer beside another
+// one; the hook moves to the host's copy.
+inline void RehookStreamline() {
+  if (g_support_hooked.exchange(false, std::memory_order_acq_rel)) hook::Uninstall(kStreamlineHooks);
+  TryInstallStreamline();
 }
 
 // ---------------------------------------------------- NGX feature requirements

@@ -230,3 +230,71 @@ void Draw() {
   ImGui::EndDisabled();
 }
 }
+
+// 1.10.1 (plan item 8): NVIDIA's Streamline files for Add frame generation, in
+// MFGUnlock-Streamline beside the addon. Checked against the pinned catalog
+// (resource 9013); the same external helper downloads and installs them
+// (Repair-XeDependencies.ps1 -Streamline), after the game exits.
+namespace mfgunlock::dependencies {
+namespace {
+std::mutex sl_mutex;
+StreamlineStatus sl_status;
+std::atomic<bool> sl_busy{};
+void RunStreamline(bool repair) noexcept {
+  StreamlineStatus next;
+  try {
+    next.checked=true;
+    const auto catalog=nlohmann::json::parse(Resource(9013));
+    const auto root=FinalPath(backend::Directory());
+    const auto folder=root/L"MFGUnlock-Streamline";
+    for(const auto& entry:catalog.at("files")) {
+      const auto name=entry.at("name").get<std::string>();
+      const auto path=folder/std::wstring(name.begin(),name.end());
+      if(!std::filesystem::exists(path)) { if(entry.at("required").get<bool>()) ++next.missing; continue; }
+      std::string hash;
+      try { hash=Hash(path); } catch(...) {}
+      if(hash!=entry.at("sha256").get<std::string>()) ++next.different;
+    }
+    if(repair) {
+      const auto helper=Resource(9011);
+      wchar_t temp[MAX_PATH]{}; if(!GetTempPathW(MAX_PATH,temp)) throw std::runtime_error(T(Str::kCannotLocateHelperStagingDirectory_94b4));
+      const auto staging=std::filesystem::path(temp)/(L"MFG-XeHelper-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));
+      if(!std::filesystem::create_directory(staging)) throw std::runtime_error(T(Str::kCannotCreatePrivateHelperStaging_66f9));
+      const auto write=[&](const wchar_t* name,const std::string& bytes) {
+        std::ofstream output(staging/name,std::ios::binary); output.write(bytes.data(),bytes.size()); output.close();
+        std::ifstream verify(staging/name,std::ios::binary); const std::string actual((std::istreambuf_iterator<char>(verify)),{});
+        if(!verify || actual!=bytes) throw std::runtime_error(T(Str::kHelperStagingFailedVerification_bf26));
+      };
+      write(L"streamline_catalog.json",Resource(9013)); write(L"Repair-XeDependencies.ps1",helper);
+      FILETIME created{},exited{},kernel{},user{};
+      if(!GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernel,&user)) throw std::runtime_error(T(Str::kCannotIdentifyTheGameProcess_9656));
+      ULARGE_INTEGER ticks{}; ticks.LowPart=created.dwLowDateTime; ticks.HighPart=created.dwHighDateTime;
+      wchar_t system[MAX_PATH]{}; if(!GetSystemDirectoryW(system,MAX_PATH)) throw std::runtime_error(T(Str::kCannotLocatePowershell_13d9));
+      const auto exe=std::filesystem::path(system)/L"WindowsPowerShell/v1.0/powershell.exe";
+      const auto arguments=L"-NoProfile -ExecutionPolicy Bypass -File "+Quote((staging/L"Repair-XeDependencies.ps1").wstring())
+          +L" -Streamline -GameDirectory "+Quote(root.wstring())+L" -GameProcessId "+std::to_wstring(GetCurrentProcessId())
+          +L" -GameCreationTicks "+std::to_wstring(ticks.QuadPart)+L" -GameExecutable "+Quote(ModulePath(nullptr))
+          +L" -CatalogPath "+Quote((staging/L"streamline_catalog.json").wstring());
+      SHELLEXECUTEINFOW launch{sizeof(launch)}; launch.fMask=SEE_MASK_NOCLOSEPROCESS|SEE_MASK_FLAG_NO_UI;
+      launch.lpFile=exe.c_str(); launch.lpParameters=arguments.c_str(); launch.nShow=SW_SHOWNORMAL;
+      if(!ShellExecuteExW(&launch) || !launch.hProcess) throw std::runtime_error(T(Str::kCouldNotStartTheExternal_fb89));
+      next.helperRunning=true; next.message=T(Str::kExternalHelperOpenedReviewIts_b6f1);
+      { std::lock_guard guard(sl_mutex); sl_status=next; }
+      WaitForSingleObject(launch.hProcess,INFINITE); DWORD code{}; GetExitCodeProcess(launch.hProcess,&code); CloseHandle(launch.hProcess);
+      next.helperRunning=false; next.message=code==3?T(Str::kContinuingInTheAdministratorHelper_e2b4):
+          code?T(Str::kRepairStoppedReviewTheHelper_5290):T(Str::kHelperFinishedRestartAfterA_4be2);
+    }
+  } catch(const std::exception& e) { next.checked=true; next.message=e.what(); }
+  { std::lock_guard guard(sl_mutex); sl_status=std::move(next); }
+  sl_busy=false;
+}
+void QueueStreamline(bool repair) {
+  if(sl_busy.exchange(true)) return;
+  if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,reinterpret_cast<LPCWSTR>(&QueueStreamline),&self)) { sl_busy=false; return; }
+  try { std::thread(RunStreamline,repair).detach(); } catch(...) { sl_busy=false; }
+}
+}
+void InspectStreamline() { QueueStreamline(false); }
+void RepairStreamline() { QueueStreamline(true); }
+StreamlineStatus StreamlineSnapshot() { std::lock_guard guard(sl_mutex); return sl_status; }
+}

@@ -3,7 +3,7 @@
 # tests; the interactive entry point never offers an unattended confirmation.
 [CmdletBinding()]
 param([string]$GameDirectory,[int]$GameProcessId,[long]$GameCreationTicks,
-      [string]$GameExecutable,[string]$CatalogPath,[string]$RollbackJournal)
+      [string]$GameExecutable,[string]$CatalogPath,[string]$RollbackJournal,[switch]$Streamline)
 $ErrorActionPreference='Stop'
 # The log goes beside the dependency backups in the game folder. Lines written
 # before the installation root is known are buffered; a folder that needs
@@ -272,6 +272,189 @@ function Invoke-XeTransaction([string]$Root,$Plan,[scriptblock]$AssertClosed) {
   }
   return $journal
 }
+# 1.10.1 (plan item 8): NVIDIA's Streamline 2.14.16 files for Add frame generation, into
+# MFGUnlock-Streamline beside the addon. NVIDIA publishes them only inside the SDK's
+# release archive (276 MB); the helper reads the archive's directory and the listed
+# entries with HTTP range requests (about 5 MB), or downloads it whole when the
+# server ignores ranges. Every file is checked against the hash pinned here.
+$script:SlUrl='https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.14.16/streamline-sdk-v2.14.16.zip'
+$script:SlZipSize=276016170
+$script:SlPins=[ordered]@{
+  'sl.interposer.dll'=@('bin/x64/sl.interposer.dll','b1d7395aebd7b9722841d64dcf7433680020b6a8e421f851c16d5ba0c2182edf')
+  'sl.common.dll'=@('bin/x64/sl.common.dll','38eea3b4209afc455636ea372b5933d65fcc13becec6c84d101dcfc4d8648f75')
+  'sl.dlss_g.dll'=@('bin/x64/sl.dlss_g.dll','3ed9538df724993bea8a050195a6a78b9c8c8a566d5b05ade477aab3c390e90f')
+  'sl.reflex.dll'=@('bin/x64/sl.reflex.dll','443577e869352436ff7ec8f4d9c90418d3e95368436ce219261e0f4f07a38122')
+  'sl.pcl.dll'=@('bin/x64/sl.pcl.dll','5698c38e722318681f215c9fe68e45b9bedd51378acc699d8eee26e961e57770')
+  'nvngx_dlssg.dll'=@('bin/x64/nvngx_dlssg.dll','8d59d49b36410dd6b62fef2503a5871d347415bd85d943fa0848563a95dd50c7')
+  'NVIDIA-Streamline-license.txt'=@('license.txt','7b6f23e7d6f3ad6292f9308d2b42cdc3d82ae4e9b2abb55f230279d83bedd43d')
+}
+function Read-SlCatalog([string]$Path) {
+  $c=Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+  if($c.schema -ne 1 -or $c.url -cne $script:SlUrl -or [long]$c.zip_size -ne $script:SlZipSize -or
+     $c.folder -cne 'MFGUnlock-Streamline' -or @($c.files).Count -ne $script:SlPins.Count) { throw 'Untrusted Streamline catalog.' }
+  $seen=@{}
+  foreach($entry in $c.files) {
+    if(!$script:SlPins.Contains($entry.name) -or $seen.ContainsKey($entry.name)) { throw 'Unknown or duplicated catalog entry.' }
+    $seen[$entry.name]=$true; $pin=$script:SlPins[$entry.name]
+    if($entry.source -cne $pin[0] -or $entry.sha256 -cne $pin[1]) { throw 'Catalog source/hash differs from the trusted helper.' }
+    if([bool]$entry.required -ne $entry.name.EndsWith('.dll')) { throw 'Invalid required-library classification.' }
+  }
+  return $c
+}
+function Get-SlRange([string]$Url,[long]$From,[long]$To) {
+  # $null when the server does not answer the range (the caller then downloads the whole archive).
+  [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
+  $request=[Net.HttpWebRequest]::Create($Url)
+  $request.UserAgent='MFG-Unlock-helper'
+  $request.AddRange($From,$To)
+  $response=$request.GetResponse()
+  try {
+    if([int]$response.StatusCode -ne 206) { return $null }
+    $memory=New-Object IO.MemoryStream
+    $response.GetResponseStream().CopyTo($memory)
+    $bytes=$memory.ToArray()
+    if($bytes.Length -ne ($To-$From+1)) { return $null }
+    return ,$bytes
+  } finally { $response.Close() }
+}
+function Expand-SlEntry([byte[]]$Data,[int]$Method) {
+  if($Method -eq 0) { return ,$Data }
+  if($Method -ne 8) { throw ('Unsupported compression method '+$Method) }
+  $in=New-Object IO.MemoryStream(,$Data); $out=New-Object IO.MemoryStream
+  $inflate=New-Object IO.Compression.DeflateStream($in,[IO.Compression.CompressionMode]::Decompress)
+  try { $inflate.CopyTo($out) } finally { $inflate.Dispose() }
+  return ,$out.ToArray()
+}
+# The listed entries of an archive, from its bytes read by $Read (offset, last) -> byte[] or $null.
+# Returns name -> bytes, or $null when a read was refused.
+function Read-SlZipEntries([scriptblock]$Read,[long]$Size,[string[]]$Sources) {
+  $tailLength=[Math]::Min([long]65536,$Size)
+  $tail=& $Read ($Size-$tailLength) ($Size-1)
+  if($null -eq $tail) { return $null }
+  $eocd=-1
+  for($i=$tail.Length-22;$i -ge 0;$i--) {
+    if($tail[$i] -eq 0x50 -and $tail[$i+1] -eq 0x4b -and $tail[$i+2] -eq 5 -and $tail[$i+3] -eq 6) { $eocd=$i; break }
+  }
+  if($eocd -lt 0) { throw 'The Streamline archive has no end-of-directory record.' }
+  $cdSize=[BitConverter]::ToUInt32($tail,$eocd+12); $cdOffset=[BitConverter]::ToUInt32($tail,$eocd+16)
+  if($cdOffset -eq [uint32]::MaxValue) { return $null }  # ZIP64: the whole archive is read instead
+  $cd=& $Read ([long]$cdOffset) ([long]$cdOffset+$cdSize-1)
+  if($null -eq $cd) { return $null }
+  $found=@{}; $p=0
+  while($p+46 -le $cd.Length -and [BitConverter]::ToUInt32($cd,$p) -eq 0x02014b50) {
+    $method=[BitConverter]::ToUInt16($cd,$p+10); $compressed=[BitConverter]::ToUInt32($cd,$p+20)
+    $nameLength=[BitConverter]::ToUInt16($cd,$p+28); $extra=[BitConverter]::ToUInt16($cd,$p+30); $comment=[BitConverter]::ToUInt16($cd,$p+32)
+    $local=[BitConverter]::ToUInt32($cd,$p+42)
+    $name=[Text.Encoding]::UTF8.GetString($cd,$p+46,$nameLength)
+    if($Sources -ccontains $name) { $found[$name]=@($method,[long]$compressed,[long]$local) }
+    $p+=46+$nameLength+$extra+$comment
+  }
+  $result=@{}
+  foreach($source in $Sources) {
+    if(!$found.ContainsKey($source)) { throw ('The Streamline archive has no '+$source) }
+    $method,$compressed,$local=$found[$source]
+    $header=& $Read $local ($local+29)
+    if($null -eq $header -or [BitConverter]::ToUInt32($header,0) -ne 0x04034b50) { throw ('Bad local header for '+$source) }
+    $start=$local+30+[BitConverter]::ToUInt16($header,26)+[BitConverter]::ToUInt16($header,28)
+    if($compressed -gt 0) {
+      $data=& $Read $start ($start+$compressed-1)
+      if($null -eq $data) { return $null }
+    } else { $data=[byte[]]@() }
+    $result[$source]=Expand-SlEntry $data $method
+  }
+  return $result
+}
+function Get-SlZipEntriesWhole([string]$Url,[string[]]$Sources,[string]$Cache) {
+  $archive=Join-Path $Cache 'streamline-sdk.zip'
+  Write-Host 'The server did not answer partial requests; downloading the whole Streamline SDK (276 MB).'
+  [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
+  Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $archive
+  try {
+    $bytes=[IO.File]::ReadAllBytes($archive)
+    $read={ param([long]$from,[long]$to) $slice=New-Object byte[] ($to-$from+1); [Array]::Copy($bytes,$from,$slice,0,$slice.Length); ,$slice }.GetNewClosure()
+    $result=Read-SlZipEntries $read $bytes.LongLength $Sources
+    if($null -eq $result) { throw 'The Streamline archive could not be read.' }
+    return $result
+  } finally { Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue }
+}
+function Start-SlRepair {
+  Add-Type -AssemblyName System.Windows.Forms
+  Write-XeLog ('Streamline helper started. Game: '+$GameExecutable+' (process '+$GameProcessId+').')
+  if(!$GameExecutable -or !$GameDirectory) { throw 'Game identity is required.' }
+  $root=Resolve-XeFinalPath $GameDirectory
+  [void](Open-XeLog $root)
+  Clear-XeStaleStaging (Split-Path -Parent $PSCommandPath)
+  $assertClosed={
+    foreach($p in Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($GameExecutable)) -ErrorAction SilentlyContinue) {
+      try { $path=$p.Path } catch { throw 'Cannot verify running game identity. Close it and retry.' }
+      if(!$path -or $path -eq $GameExecutable) { throw 'Game is running; installation is deferred until it exits.' }
+    }
+  }.GetNewClosure()
+  if($RollbackJournal) {
+    if([Windows.Forms.MessageBox]::Show('Restore the verified Streamline backup? Game must be closed.','MFG Unlock rollback','YesNo') -eq 'Yes') {
+      Restore-XeTransaction $RollbackJournal $assertClosed
+      Write-XeLog ('Rolled back: '+$RollbackJournal)
+    } else { Write-XeLog 'Rollback declined.' }
+    return
+  }
+  $process=Get-Process -Id $GameProcessId -ErrorAction Stop
+  if($process.Path -ne $GameExecutable -or $process.StartTime.ToFileTimeUtc() -ne $GameCreationTicks) { throw 'The game process identity changed.' }
+  $catalog=Read-SlCatalog $CatalogPath
+  $folder=Join-Path $root 'MFGUnlock-Streamline'
+  [void](Assert-XePath $root (Join-Path $folder 'x'))
+  $needed=@($catalog.files | Where-Object {
+    $hash=Get-XeDigest (Join-Path $folder $_.name)
+    Write-XeLog ($_.name+': '+$(if(!$hash){'missing'}elseif($hash -eq $_.sha256){'pinned version'}else{'different file '+$hash}))
+    $hash -ne $_.sha256 })
+  if(!$needed.Count) {
+    Write-XeLog 'Nothing to install: the Streamline files are already the pinned ones.'
+    [void][Windows.Forms.MessageBox]::Show("MFGUnlock-Streamline already has NVIDIA's Streamline 2.14.16 files. Nothing to install.`r`nLog: "+$script:XeLog,'MFG Unlock'); return
+  }
+  $cache=Join-Path ([IO.Path]::GetTempPath()) ('MFG-XeRepair-'+[guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $cache | Out-Null
+  try {
+    $sources=@($needed | ForEach-Object { $_.source })
+    Write-Host "Downloading NVIDIA's Streamline 2.14.16 files from the SDK's GitHub release..."
+    Write-XeLog ('Reading '+$script:SlUrl+' for: '+($sources -join ', '))
+    $entries=$null
+    $url=$script:SlUrl
+    try { $entries=Read-SlZipEntries { param([long]$from,[long]$to) Get-SlRange $url $from $to }.GetNewClosure() $script:SlZipSize $sources }
+    catch { Write-XeLog ('Partial download failed: '+$_.Exception.Message); $entries=$null }
+    if($null -eq $entries) { Write-XeLog 'Falling back to the whole archive.'; $entries=Get-SlZipEntriesWhole $script:SlUrl $sources $cache }
+    $plan=@()
+    foreach($entry in $needed) {
+      $download=Join-Path $cache $entry.name
+      [IO.File]::WriteAllBytes($download,[byte[]]$entries[$entry.source])
+      if((Get-XeDigest $download) -ne $entry.sha256) { throw ('Official download did not match the pinned hash: '+$entry.name) }
+      Write-XeLog ('Download verified: '+$entry.name+' '+$entry.sha256)
+      $target=Join-Path $folder $entry.name
+      $plan+=[ordered]@{target=$target;before=(Get-XeDigest $target);after=$entry.sha256;stage=$download}
+    }
+    $parent=if(Test-Path -LiteralPath $folder) { $folder } else { $root }
+    if(!(Test-XeWritable $parent)) {
+      $admin=([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+      if($admin) { throw ('Cannot write to: '+$parent) }
+      Write-XeLog ('Administrator permission needed for: '+$parent)
+      $ask="Windows requires administrator permission to write to:`r`n"+$parent+"`r`n`r`nRestart this helper as administrator? You will review the same file list again."
+      if([Windows.Forms.MessageBox]::Show($ask,'MFG Unlock','YesNo','Question') -ne 'Yes') { Write-XeLog 'Administrator restart declined.'; return }
+      $arguments='-NoProfile -ExecutionPolicy Bypass -File "'+$PSCommandPath+'" -Streamline -GameDirectory "'+$GameDirectory+'" -GameProcessId '+$GameProcessId+' -GameCreationTicks '+$GameCreationTicks+' -GameExecutable "'+$GameExecutable+'" -CatalogPath "'+$CatalogPath+'"'
+      Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -Verb RunAs -ArgumentList $arguments | Out-Null
+      Write-XeLog 'Continuing in the administrator helper.'
+      return 'elevated'
+    }
+    $review=($plan | ForEach-Object { $_.target+"`r`n  Existing: "+$(if($_.before){$_.before}else{'MISSING'})+"`r`n  Install: "+$_.after }) -join "`r`n`r`n"
+    $message="Install NVIDIA's Streamline 2.14.16 files for Add frame generation? They come from NVIDIA's Streamline SDK release on GitHub and are checked against pinned hashes. Existing files are backed up.`r`n`r`n"+$review+"`r`n`r`nNVIDIA's license is installed as NVIDIA-Streamline-license.txt in the same folder.`r`nAfter confirmation this helper waits for the game to exit. It will never close the game for you."
+    if([Windows.Forms.MessageBox]::Show($message,'Review Streamline installation','YesNo','Question') -ne 'Yes') { Write-XeLog 'Review declined; nothing changed.'; return }
+    Write-XeLog ('Approved '+$plan.Count+' file(s). Waiting for the game to exit.')
+    Write-Host 'Approved. Close the game normally to continue; do not relaunch until this helper finishes.'
+    $process.WaitForExit()
+    & $assertClosed
+    if(!(Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Path $folder | Out-Null }
+    $journal=Invoke-XeTransaction $root $plan $assertClosed
+    Write-XeLog ('Streamline installed. Journal: '+$journal)
+    [void][Windows.Forms.MessageBox]::Show("Streamline files installed in MFGUnlock-Streamline. Restart the game.`r`nRollback journal: "+$journal+"`r`nLog: "+$script:XeLog,'MFG Unlock')
+  } finally { Remove-XeStaging $cache }
+}
 function Start-XeRepair {
   Add-Type -AssemblyName System.Windows.Forms
   Write-XeLog ('Helper started. Game: '+$GameExecutable+' (process '+$GameProcessId+'). Administrator: '+([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))
@@ -375,7 +558,7 @@ if($MyInvocation.InvocationName -ne '.') {
   # That copy runs this script from the same temporary folder, so the folder
   # is removed by whichever copy finishes the review.
   $outcome=$null
-  try { $outcome=Start-XeRepair } catch {
+  try { $outcome=if($Streamline) { Start-SlRepair } else { Start-XeRepair } } catch {
     Write-XeLog ('Repair stopped: '+$_.Exception.Message)
     if(!$script:XeLog) { [void](Open-XeLog $null) }
     Write-Error $_ -ErrorAction Continue

@@ -248,6 +248,31 @@
       if (ui::SectionHeader(T(Str::kGamesWithoutFg_p2), add_wanted || add_running, T(Str::kExperimentalTag_p3))) {
         ui::Card add_card("##add_fg_card");
         toggle(adv::kRoutes[3], T(Str::kAddFgToggle_p8));
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+        // 1.10.1 (plan item 8): the MFGUnlock-Streamline files, installed by the external helper.
+        if (adv::Current(adv::kRoutes[3]) == L"1") {
+          static bool inspected = false;
+          if (!inspected) {
+            inspected = true;
+            mfgunlock::dependencies::InspectStreamline();
+          }
+          const auto files = mfgunlock::dependencies::StreamlineSnapshot();
+          ui::Readout("##streamline_files", T(Str::kStreamlineFiles_s1), "MFGUnlock-Streamline", T(Str::kStreamlineFilesDesc_s2));
+          if (files.checked && files.missing == 0 && files.different == 0 && !files.helperRunning) {
+            ui::StatusChip(T(Str::kStreamlineFilesOk_s3), ui::Accent);
+          } else if (files.checked) {
+            if (files.missing != 0 || files.different != 0) {
+              char text[256];
+              std::snprintf(text, sizeof(text), T(Str::kStreamlineFilesMissing_s4), files.missing, files.different);
+              ui::StatusChip(text, ui::Warning);
+            }
+            ui::ButtonRow actions(1);
+            if (actions(T(Str::kInstallStreamlineFiles_s5), T(Str::kInstallStreamlineFilesTip_s6)))
+              mfgunlock::dependencies::RepairStreamline();
+          }
+          if (!files.message.empty()) ui::Description(files.message.c_str());
+        }
+#endif
         using H = mfgunlock::slhost::State;
         const H host = vk_host != 0 ? static_cast<H>(vk_host) : mfgunlock::slhost::Current();
         if (add_wanted != add_running) {
@@ -261,6 +286,8 @@
             default: ui::StatusChip(T(Str::kHostWaitingSwapchain_h1h), ui::Warning); break;
           }
           ui::Readout("##add_fg_route", T(Str::kRoute_p9), T(Str::kRouteHostedShort_p10), T(Str::kHostStreamlineDesc_h1b));
+          // 1.10.1: DLSS-G does not generate on an FP16 (scRGB) HDR swap chain (KCD2's HDR).
+          if (vk_host == 0 && mfgunlock::slhost::Fp16Hdr()) ui::StatusChip(T(Str::kHostFp16Hdr_s7), ui::Danger);
           // The HUD fix: the image before the HUD, for NVIDIA's generator and for XMX (D3D12 only for now).
           if (vk_host == 0) {
           toggle(adv::kHudFix, T(Str::kHudFix_p15));

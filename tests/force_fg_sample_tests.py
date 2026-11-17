@@ -26,6 +26,8 @@ ap.add_argument('--min-growth', type=int, default=200)
 ap.add_argument('--sdk-fg', type=pathlib.Path)
 ap.add_argument('--sdk-ll', type=pathlib.Path)
 a = ap.parse_args()
+last_reshade_log = ''
+last_sl_log = ''
 b = a.bin.resolve()
 if not (b / 'StreamlineSample.exe').is_file():
     print('SKIP: sample not built:', b)
@@ -48,7 +50,7 @@ def dedicated_mib(pid):
         return 0.0
 
 
-def run(name, force, xmx=False):
+def run(name, force, xmx=False, no_reflex=False):
     # Other tests leave their own add-on copy in the same _bin (xemfg_sl_sample_tests.py:
     # renodx-mfgunlock-native.addon64); two copies of the addon in one process are not this test.
     for stale in b.glob('*.addon64'):
@@ -76,6 +78,10 @@ def run(name, force, xmx=False):
                                             '[RenoDX.MFGUnlock]', 'ForceMultiplier=4', '']), encoding='ascii')
     env = dict(os.environ, MFG_SAMPLE_SR_ONLY='1', SL_LOG_LEVEL='2', SL_LOG_PATH=str(b), SL_LOG_NAME='sl.log')
     env.pop('MFG_SAMPLE_DLSSG', None)
+    if no_reflex:
+        env['MFG_SAMPLE_NO_REFLEX'] = '1'
+    else:
+        env.pop('MFG_SAMPLE_NO_REFLEX', None)
     p = subprocess.Popen([str(b / 'StreamlineSample.exe'), '-width', '2560', '-height', '1440'], cwd=b, env=env)
     try:
         time.sleep(a.seconds)
@@ -88,8 +94,12 @@ def run(name, force, xmx=False):
     unloaded = "Feature 'kFeatureDLSS_G' unloaded" in sl
     xmx_line = ''
     skipped_nvidia = False
+    global last_reshade_log, last_sl_log
+    last_sl_log = sl
+    last_reshade_log = ''
     if (b / 'ReShade.log').exists():
         reshade_log = (b / 'ReShade.log').read_text(encoding='utf-8', errors='replace')
+        last_reshade_log = reshade_log
         xmx_lines = [l for l in reshade_log.splitlines() if 'xmx summary' in l]
         xmx_line = xmx_lines[-1].split('mfgunlock: ')[-1][:120] if xmx_lines else ''
         # 1.10.0 (XmxSaveVram, on by default): XMX creates frame generation without NVIDIA's feature.
@@ -127,5 +137,20 @@ if a.sdk_fg and a.sdk_ll and a.sdk_fg.is_file() and a.sdk_ll.is_file():
     if not skipped:
         raise SystemExit("forced-xmx: NVIDIA's unused frame generation feature was created (XmxSaveVram)")
     xmx_note = f"; XMX generated in it without NVIDIA's feature, {xmib:.0f} MiB ({summary})"
+# 1.10.1 (plan item 2): a game without Reflex (Ninja Gaiden 4). The addon turns Reflex on and marks
+# the game's frames, so the added DLSS-G runs; before, it stayed off ("the game does not use Reflex").
+nok, nmasks, nunloaded, nmib, _, _ = run('forced-no-reflex', True, no_reflex=True)
+if not nok:
+    raise SystemExit('forced-no-reflex: no sl.log')
+if 'Route A Reflex: the game does not use Reflex; MFG Unlock turned it on' not in last_reshade_log:
+    raise SystemExit("forced-no-reflex: the addon did not turn Reflex on for a game without it")
+if nunloaded or '0x1' not in nmasks:
+    raise SystemExit('forced-no-reflex: Streamline did not keep DLSS-G loaded with the adapter')
+if nmib - base < a.min_growth:
+    raise SystemExit(f'forced-no-reflex: video memory grew {nmib - base:.0f} MiB, under {a.min_growth}: DLSS-G did not run')
+not_detected = last_sl_log.count('ReflexNotDetectedAtRuntime')
+if not_detected > 30:
+    raise SystemExit(f'forced-no-reflex: DLSS-G reported Reflex not detected {not_detected} times')
+no_reflex_note = f"; without the game's Reflex too (+{nmib - base:.0f} MiB, Reflex not detected {not_detected}x)"
 print(f'PASS: the SR-only sample ran DLSS-G with the addon (+{forced - base:.0f} MiB, sl.dlss_g mask 0x1); '
-      'the control loaded no DLSS-G' + xmx_note)
+      'the control loaded no DLSS-G' + xmx_note + no_reflex_note)

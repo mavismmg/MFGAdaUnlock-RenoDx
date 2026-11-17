@@ -37,6 +37,9 @@
 #include <sl_pcl.h>
 #include <sl_reflex.h>
 #include "backend_selection.hpp"
+#include "force_fg.hpp"
+#include "sl_module.hpp"
+#include "swapchain_format_guard.hpp"
 #include "ngx_hook.hpp"
 
 namespace mfgunlock::slhost {
@@ -73,6 +76,11 @@ inline PFun_slReflexSetOptions* reflex_options = nullptr;
 inline PFun_slPCLSetMarker* marker = nullptr;
 inline PFun_slReflexSleep* reflex_sleep = nullptr;
 inline std::atomic<int> backbuffer_format{0};  // DXGI_FORMAT of the game's swap chain
+// 1.10.1: the swap chain is RGBA16F (scRGB HDR) now. DLSS-G does not generate
+// there (DLSS-G programming guide 2.14.16, section 11: "DLSS-G currently does NOT
+// support FP16 pixel format and scRGB color space"); it reports nothing either
+// (status 0, one frame per game frame: Kingdom Come: Deliverance II in HDR).
+inline std::atomic_bool fp16_hdr{false};
 inline std::atomic<uint32_t> hud_arm_index{0};  // the frame whose image before the HUD is still to be found
 inline std::atomic<uint64_t> hud_captures{0};
 inline std::atomic<uint64_t> evaluations{0}, tagged{0}, frames{0};
@@ -219,6 +227,20 @@ inline IDXGIFactory2* Proxy(IDXGIFactory* native) {
   proxy_factory = static_cast<IDXGIFactory2*>(upgraded);
   return proxy_factory;
 }
+// 1.10.1 (plan item 7): another addon (RenoDX's HDR upgrade) changed the real swap chain's format
+// under Streamline, whose buffers keep the game's. Streamline's swap chain is released and the
+// game gets a plain one; Add frame generation stays off for the session.
+inline bool StepAside(const scguard::Watch& watch, IUnknown** chain) {
+  if (!watch.Changed()) return false;
+  if (chain != nullptr && *chain != nullptr) {
+    (*chain)->Release();
+    *chain = nullptr;
+  }
+  state = State::kFailed;
+  SetReport("not used: another addon changed the swap chain's format under Streamline (" + watch.Text() +
+            "; RenoDX's HDR upgrade?). Use the game's own HDR, or turn the other addon's swap chain upgrade off");
+  return true;
+}
 inline HRESULT STDMETHODCALLTYPE CreateForHwnd(IDXGIFactory2* self, IUnknown* queue, HWND window,
                                                const DXGI_SWAP_CHAIN_DESC1* desc,
                                                const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreen, IDXGIOutput* output,
@@ -232,8 +254,11 @@ inline HRESULT STDMETHODCALLTYPE CreateForHwnd(IDXGIFactory2* self, IUnknown* qu
     return real_hwnd(self, queue, window, desc, fullscreen, output, chain);
   }
   inside_creation = true;
+  const scguard::Watch watch;
   const HRESULT hr = proxy->CreateSwapChainForHwnd(queue, window, desc, fullscreen, output, chain);
   inside_creation = false;
+  if (SUCCEEDED(hr) && StepAside(watch, reinterpret_cast<IUnknown**>(chain)))
+    return real_hwnd(self, queue, window, desc, fullscreen, output, chain);
   if (SUCCEEDED(hr)) {
     game_chain = *chain;
     backbuffer_format = desc ? static_cast<int>(desc->Format) : 0;
@@ -254,8 +279,10 @@ inline HRESULT STDMETHODCALLTYPE CreateLegacy(IDXGIFactory* self, IUnknown* queu
   IDXGIFactory2* proxy = Proxy(self);
   if (proxy == nullptr) return real_legacy(self, queue, desc, chain);
   inside_creation = true;
+  const scguard::Watch watch;
   const HRESULT hr = proxy->CreateSwapChain(queue, desc, chain);
   inside_creation = false;
+  if (SUCCEEDED(hr) && StepAside(watch, reinterpret_cast<IUnknown**>(chain))) return real_legacy(self, queue, desc, chain);
   if (SUCCEEDED(hr)) {
     game_chain = *chain;
     backbuffer_format = desc ? static_cast<int>(desc->BufferDesc.Format) : 0;
@@ -315,7 +342,9 @@ inline void OnDevice(ID3D12Device* device) {
   if (!Wanted() || device == nullptr) return;
   static std::atomic_bool once{false};
   if (once.exchange(true)) return;
-  if (GetModuleHandleW(L"sl.interposer.dll") != nullptr) {
+  // 1.10.1 (plan item 1): only a Streamline that was started (slInit maps sl.common.dll) is the
+  // game's. Shadow of the Tomb Raider had an interposer mapped by RenoDX's DLSS addon, never started.
+  if (slmodule::StartedByAnother()) {
     state = State::kGameStreamline;
     SetReport("the game has its own Streamline; not hosting");
     return;
@@ -336,6 +365,7 @@ inline void OnDevice(ID3D12Device* device) {
     SetReport("sl.interposer.dll did not load (" + std::to_string(GetLastError()) + ")");
     return;
   }
+  slmodule::HostLoaded(module);
   const auto get = [&](const char* name) { return GetProcAddress(module, name); };
   init = reinterpret_cast<PFun_slInit*>(get("slInit"));
   set_device = reinterpret_cast<PFun_slSetD3DDevice*>(get("slSetD3DDevice"));
@@ -365,7 +395,7 @@ inline void OnDevice(ID3D12Device* device) {
   preferences.engine = sl::EngineType::eCustom;
   preferences.engineVersion = "1.10.0";
   // MFG Unlock's own project identity, not the game's.
-  preferences.projectId = "3c5b0a51-6f2e-4b8d-9d17-4f0b6e2a8c19";
+  preferences.projectId = forcefg::kHostProjectId;
   preferences.renderAPI = sl::RenderAPI::eD3D12;
   sl::Result result = init(preferences, sl::kSDKVersion);
   if (result != sl::Result::eOk) {
@@ -472,10 +502,40 @@ inline void BeforePresent() {
     if (SUCCEEDED(chain->GetDesc(&d))) {
       backbuffer_width = d.BufferDesc.Width;
       backbuffer_height = d.BufferDesc.Height;
+      const bool fp16 = d.BufferDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+      if (fp16 != fp16_hdr.exchange(fp16))
+        SetReport(fp16 ? "the game's HDR uses an FP16 (scRGB) swap chain, which DLSS-G does not support: no frames are "
+                         "generated. Turn the game's HDR off, or use the XeMFG method"
+                       : "the game's swap chain left FP16 HDR; DLSS-G can generate again");
     }
   }
   const uint32_t index = PresentFrame();
-  if (index == 0) return;  // not a frame the game rendered with DLSS SR
+  // 1.10.1 (plan item 6): a loading screen renders without DLSS SR, so these frames get no
+  // Reflex markers; DLSS-G stayed on and logged "Reflex not detected" ~300 times (Metro Exodus).
+  // After a few such frames in a row DLSS-G is paused; the next DLSS SR frame turns it back on.
+  static uint32_t without_sr = 0;
+  static bool paused = false;
+  if (index == 0) {  // not a frame the game rendered with DLSS SR
+    if (options_on.load(std::memory_order_acquire) && !paused && ++without_sr >= 3) {
+      sl::DLSSGOptions options{};
+      options.mode = sl::DLSSGMode::eOff;
+      dlssg_options(sl::ViewportHandle{0}, options);
+      paused = true;
+      static std::atomic_int logged{0};
+      if (logged.fetch_add(1) < 5)
+        reshade::log::message(reshade::log::level::info,
+                              "mfgunlock: Streamline host: frames without DLSS Super Resolution (a loading screen?); "
+                              "DLSS-G paused until the game uses DLSS SR again.");
+    }
+    return;
+  }
+  without_sr = 0;
+  if (paused) {
+    paused = false;  // the eOn call below every frame turns it back on
+    static std::atomic_int logged{0};
+    if (logged.fetch_add(1) < 5)
+      reshade::log::message(reshade::log::level::info, "mfgunlock: Streamline host: DLSS SR is back; DLSS-G resumed.");
+  }
   Mark(sl::PCLMarker::eRenderSubmitEnd, index);
   Mark(sl::PCLMarker::ePresentStart, index);
   const uint64_t presents = frames.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -830,6 +890,7 @@ inline void TagHudless(ID3D12Resource* copy, ID3D12GraphicsCommandList* list, ui
     SetReport("HUD fix: the image before the HUD was found and is tagged every frame");
 }
 inline int BackbufferFormat() { return internal::backbuffer_format.load(); }
+inline bool Fp16Hdr() { return internal::fp16_hdr.load(); }
 inline uint32_t BackbufferWidth() { return internal::backbuffer_width.load(); }
 inline uint32_t BackbufferHeight() { return internal::backbuffer_height.load(); }
 inline uint32_t HudArmIndex() { return internal::hud_arm_index.load(std::memory_order_acquire); }

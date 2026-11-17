@@ -144,6 +144,7 @@
 #include <nvsdk_ngx.h>
 #include "xmx_hook.hpp"
 #include "preada_admission.hpp"
+#include "swapchain_format_guard.hpp"
 #include "drs_override.hpp"
 #include "drs_report.hpp"
 #include "advanced_settings.hpp"
@@ -876,6 +877,7 @@ void OnFinishPresent(reshade::api::command_queue* /*queue*/,
 }
 
 void OnInitSwapchain(reshade::api::swapchain* swapchain, bool /*resize*/) {
+  mfgunlock::scguard::OnInitSwapchain(swapchain);  // 1.10.1 (plan item 7)
   bool primary_transition = false;
   if (swapchain != nullptr) {
     if (auto* device = swapchain->get_device(); device != nullptr) {
@@ -1488,7 +1490,7 @@ void LoadConfig() {
 extern "C" __declspec(dllexport) constexpr const char* NAME = "MFG Unlock";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
-    "MFG Unlock 1.10.0 - DLSS-G and XeMFG backends";
+    "MFG Unlock 1.10.1 - DLSS-G and XeMFG backends";
 #elif defined(MFGUNLOCK_DUAL_BACKEND)
     "Dual Backend Preview X1 - official 1.4.5 base; DLSS-G and XeMFG via OptiScaler; gameplay validation pending";
 #elif defined(MFGUNLOCK_RELEASE_1_4_5)
@@ -1689,6 +1691,17 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
         mfgunlock::xmx::preada::TryInstallStreamline();
       };
       mfgunlock::loadhook::g_on_dlssg_loaded = ProcessLoadedDlssgModule;
+      // 1.10.1 (plan item 1): Add frame generation's own interposer beside another addon's.
+      mfgunlock::slmodule::g_rehook.store(
+          []() {
+            mfgunlock::framecount::Uninstall();
+            mfgunlock::framecount::TryInstall();
+            mfgunlock::xmx::preada::RehookStreamline();
+            reshade::log::message(reshade::log::level::info,
+                                  "mfgunlock: another sl.interposer.dll is loaded without Streamline started; "
+                                  "the Streamline hooks moved to MFG Unlock's own copy (Add frame generation).");
+          },
+          std::memory_order_release);
       mfgunlock::framecount::internal::g_before_frame_generation.store(BeforeFrameGeneration, std::memory_order_release);
       // 1.10.0 (dashdogy A3): Off once NVIDIA's runtime keeps refusing on RTX 20/30.
       mfgunlock::framecount::internal::g_hold_off.store(&mfgunlock::xmx::preada::HoldOff, std::memory_order_release);
@@ -1730,6 +1743,8 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       reshade::register_event<reshade::addon_event::init_device>(OnInitDevice);
       // 1.10.0 (hud_capture.hpp): the HUD fix of the Streamline host.
       if (mfgunlock::slhost::Wanted()) mfgunlock::hudcapture::Register(mfgunlock::backend::Directory() / L"MFGAdaUnlock.ini");
+      // 1.10.1 (plan item 7): the game's swap chain request, before other addons change it.
+      if (mfgunlock::slhost::Wanted()) mfgunlock::scguard::Register();
 #if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
       if (mfgunlock::xemfg::native::vulkan::XmxProviderWanted() || mfgunlock::xemfg::native::vulkan::StreamlineHostWanted())
         reshade::register_event<reshade::addon_event::create_device>(OnCreateDeviceXmxVulkan);
@@ -1766,6 +1781,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       reshade::unregister_event<reshade::addon_event::init_command_queue>(OnInitCommandQueue);
       reshade::unregister_event<reshade::addon_event::destroy_swapchain>(OnDestroySwapchain);
       reshade::unregister_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
+      if (mfgunlock::slhost::Wanted()) mfgunlock::scguard::Unregister();
       reshade::unregister_event<reshade::addon_event::init_device>(OnInitDevice);
       reshade::unregister_overlay("MFG Unlock", OnRegisterOverlay);
       AcquireSRWLockExclusive(&g_reflex_waitable.lock);

@@ -989,6 +989,13 @@ enum class Str : unsigned {
   kXmxVulkanPacingDesc_q2,
   kXmxVulkanPacingLimit_q3,
   kXmxVulkanPacingIdle_q4,
+  kStreamlineFiles_s1,
+  kStreamlineFilesDesc_s2,
+  kStreamlineFilesOk_s3,
+  kStreamlineFilesMissing_s4,
+  kInstallStreamlineFiles_s5,
+  kInstallStreamlineFilesTip_s6,
+  kHostFp16Hdr_s7,
   kCount
 };
 }  // namespace mfgunlock::i18n

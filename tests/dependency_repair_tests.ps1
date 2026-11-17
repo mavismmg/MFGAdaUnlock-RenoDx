@@ -114,4 +114,33 @@ Check (Test-Path -LiteralPath $outsideStage) 'folder outside the temporary folde
 $bad=Get-Content -LiteralPath $catalog -Raw | ConvertFrom-Json;$bad.files[0].sha256='0000'
 $badPath=Join-Path $cache 'bad.json';$bad | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $badPath -Encoding UTF8
 Reject { Read-XeCatalog $badPath } 'tampered catalog accepted'
-Write-Output 'PASS: install/rollback, new files, closed-game gate, unknown edits, hash failure, locked target, interrupted recovery, junction resolution, install roots, shipped copies, install plan, helper log, temporary cleanup, pinned catalog'
+# 1.10.1 (plan item 8): the Streamline catalog is pinned, and the archive reader takes only the listed
+# entries (stored and deflated) from byte ranges, giving up when a range is refused.
+$slCatalog=Join-Path $PSScriptRoot '../src/addons/mfgunlock/xemfg/streamline_catalog.json'
+$sl=Read-SlCatalog $slCatalog
+Check (@($sl.files).Count -eq 7 -and @($sl.files | Where-Object { $_.required }).Count -eq 6) 'Streamline catalog files'
+$slBad=Get-Content -LiteralPath $slCatalog -Raw | ConvertFrom-Json;$slBad.files[2].sha256='0000'
+$slBadPath=Join-Path $cache 'sl-bad.json';$slBad | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $slBadPath -Encoding UTF8
+Reject { Read-SlCatalog $slBadPath } 'tampered Streamline catalog accepted'
+$slBad=Get-Content -LiteralPath $slCatalog -Raw | ConvertFrom-Json;$slBad.url='https://example.com/streamline.zip'
+$slBad | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $slBadPath -Encoding UTF8
+Reject { Read-SlCatalog $slBadPath } 'Streamline catalog with another URL accepted'
+Add-Type -AssemblyName System.IO.Compression
+$zipPath=Join-Path $cache 'fixture.zip'
+$zipStream=[IO.File]::Open($zipPath,[IO.FileMode]::Create)
+$zip=New-Object IO.Compression.ZipArchive($zipStream,[IO.Compression.ZipArchiveMode]::Create)
+$payload=[Text.Encoding]::ASCII.GetBytes(('streamline fixture ' * 400))
+foreach($item in @(@('bin/x64/sl.common.dll',[IO.Compression.CompressionLevel]::Optimal),@('bin/x64/other.dll',[IO.Compression.CompressionLevel]::Optimal),@('license.txt',[IO.Compression.CompressionLevel]::NoCompression))) {
+  $e=$zip.CreateEntry($item[0],$item[1]); $w=$e.Open(); $w.Write($payload,0,$payload.Length); $w.Dispose()
+}
+$zip.Dispose();$zipStream.Dispose()
+$zipBytes=[IO.File]::ReadAllBytes($zipPath)
+$reader={ param([long]$from,[long]$to) $slice=New-Object byte[] ($to-$from+1); [Array]::Copy($zipBytes,$from,$slice,0,$slice.Length); ,$slice }.GetNewClosure()
+$read=Read-SlZipEntries $reader $zipBytes.LongLength @('bin/x64/sl.common.dll','license.txt')
+Check ($read.Count -eq 2) 'archive reader returned other entries'
+Check ([Convert]::ToBase64String([byte[]]$read['bin/x64/sl.common.dll']) -eq [Convert]::ToBase64String($payload)) 'deflated entry differs'
+Check ([Convert]::ToBase64String([byte[]]$read['license.txt']) -eq [Convert]::ToBase64String($payload)) 'stored entry differs'
+Reject { Read-SlZipEntries $reader $zipBytes.LongLength @('bin/x64/missing.dll') } 'missing archive entry accepted'
+$refused={ param([long]$from,[long]$to) $null }
+Check ($null -eq (Read-SlZipEntries $refused $zipBytes.LongLength @('license.txt'))) 'refused range not reported'
+Write-Output 'PASS: install/rollback, new files, closed-game gate, unknown edits, hash failure, locked target, interrupted recovery, junction resolution, install roots, shipped copies, install plan, helper log, temporary cleanup, pinned catalog, Streamline catalog and archive reader'

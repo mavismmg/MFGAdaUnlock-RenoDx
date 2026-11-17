@@ -2,6 +2,9 @@
 #include "sl_vulkan.hpp"
 #include "vendor/xess_mod.h"
 #include "../backend_selection.hpp"
+#include "../force_fg.hpp"
+#include "../sl_module.hpp"
+#include "../swapchain_format_guard.hpp"
 #include <reshade.hpp>
 #include <sl.h>
 #include <sl_dlss_g.h>
@@ -81,6 +84,9 @@ PFN_vkAcquireNextImageKHR proxyAcquireNextImage{};
 PFN_vkQueuePresentKHR proxyQueuePresent{};
 PFN_vkDeviceWaitIdle proxyDeviceWaitIdle{};
 std::atomic<bool> deviceReady{};
+// 1.10.1 (plan item 7): Streamline steps aside for the session (swap chain format changed under it).
+std::atomic<bool> bypassed{};
+bool Routing() { return deviceReady.load() && !bypassed.load(); }
 std::mutex queueLock;
 std::map<VkQueue, VkDevice> queueDevice;  // filled lazily: Streamline's present proxy takes any queue of its device
 
@@ -136,7 +142,8 @@ bool Start() noexcept {
   [] {
     try {
       if (!Wanted()) return;
-      if (GetModuleHandleW(L"sl.interposer.dll")) { SetReport("the game has its own Streamline; not hosting"); return; }
+      // 1.10.1 (plan item 1): only a started Streamline (sl.common.dll mapped) is the game's.
+      if (slmodule::StartedByAnother()) { SetReport("the game has its own Streamline; not hosting"); return; }
       // ReShade's layer loads before a Vulkan game maps its own Streamline (DOOM: The Dark Ages ships it in
       // streamline\production\): a game that ships sl.interposer.dll is never hosted.
       {
@@ -163,6 +170,7 @@ bool Start() noexcept {
       }
       module = LoadLibraryExW((folder / L"sl.interposer.dll").c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
       if (!module) { SetReport("sl.interposer.dll did not load (" + std::to_string(GetLastError()) + ")"); return; }
+      slmodule::HostLoaded(module);
       const auto get = [](const char* name) { return GetProcAddress(module, name); };
       init = reinterpret_cast<PFun_slInit*>(get("slInit"));
       setVulkanInfo = reinterpret_cast<PFun_slSetVulkanInfo*>(get("slSetVulkanInfo"));
@@ -189,7 +197,7 @@ bool Start() noexcept {
       p.flags = sl::PreferenceFlags::eUseManualHooking | sl::PreferenceFlags::eUseFrameBasedResourceTagging;
       p.engine = sl::EngineType::eCustom;
       p.engineVersion = "1.10.0";
-      p.projectId = "3c5b0a51-6f2e-4b8d-9d17-4f0b6e2a8c19";
+      p.projectId = forcefg::kHostProjectId;
       p.renderAPI = sl::RenderAPI::eVulkan;
       const sl::Result result = init(p, sl::kSDKVersion);
       if (result != sl::Result::eOk) { SetReport("slInit (Vulkan) failed (" + std::to_string(int(result)) + ")"); return; }
@@ -504,37 +512,49 @@ void ShowSurface(VkSurfaceKHR surface) noexcept {
 }
 bool CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR* info, const VkAllocationCallbacks* allocator,
                      VkSwapchainKHR* output, VkResult& result) noexcept {
-  if (!deviceReady.load() || device != slDevice) return false;
+  if (!Routing() || device != slDevice) return false;
   if (info) ShowSurface(info->surface);
+  const scguard::Watch watch;
   result = proxyCreateSwapchain(device, info, allocator, output);
+  // 1.10.1 (plan item 7): another addon (RenoDX's HDR upgrade) changed the real swap chain's
+  // format under Streamline, whose buffers keep the game's: the game would draw in one format
+  // and present in another (RDR2 crashed). Streamline steps aside; the game runs without it.
+  if (result == VK_SUCCESS && watch.Changed()) {
+    if (proxyDestroySwapchain) proxyDestroySwapchain(device, *output, allocator);
+    *output = VK_NULL_HANDLE;
+    bypassed = true;
+    SetReport("not used: another addon changed the swap chain's format under Streamline (" + watch.Text() +
+              "; RenoDX's HDR upgrade?). Use the game's own HDR, or turn the other addon's swap chain upgrade off");
+    return false;
+  }
   if (result == VK_SUCCESS && !swapchainSeen.exchange(true))
     SetReport("the game's swap chain is Streamline's (" + std::to_string(info ? info->imageExtent.width : 0) + "x" +
               std::to_string(info ? info->imageExtent.height : 0) + ")");
   return true;
 }
 bool DestroySwapchain(VkDevice device, VkSwapchainKHR swapchain, const VkAllocationCallbacks* allocator) noexcept {
-  if (!deviceReady.load() || device != slDevice || !proxyDestroySwapchain) return false;
+  if (!Routing() || device != slDevice || !proxyDestroySwapchain) return false;
   proxyDestroySwapchain(device, swapchain, allocator);
   return true;
 }
 bool GetSwapchainImages(VkDevice device, VkSwapchainKHR swapchain, uint32_t* count, VkImage* images, VkResult& result) noexcept {
-  if (!deviceReady.load() || device != slDevice) return false;
+  if (!Routing() || device != slDevice) return false;
   result = proxyGetSwapchainImages(device, swapchain, count, images);
   return true;
 }
 bool AcquireNextImage(VkDevice device, VkSwapchainKHR swapchain, uint64_t timeout, VkSemaphore semaphore, VkFence fence,
                       uint32_t* index, VkResult& result) noexcept {
-  if (!deviceReady.load() || device != slDevice) return false;
+  if (!Routing() || device != slDevice) return false;
   result = proxyAcquireNextImage(device, swapchain, timeout, semaphore, fence, index);
   return true;
 }
 bool DeviceWaitIdle(VkDevice device, VkResult& result) noexcept {
-  if (!deviceReady.load() || device != slDevice || !proxyDeviceWaitIdle) return false;
+  if (!Routing() || device != slDevice || !proxyDeviceWaitIdle) return false;
   result = proxyDeviceWaitIdle(device);
   return true;
 }
 bool QueuePresent(VkQueue queue, const VkPresentInfoKHR* info, VkResult& result) noexcept {
-  if (!deviceReady.load() || !swapchainSeen.load()) return false;
+  if (!Routing() || !swapchainSeen.load()) return false;
   const uint32_t index = PresentFrame();
   if (index) {
     Mark(sl::PCLMarker::eRenderSubmitEnd, index);
@@ -588,7 +608,7 @@ void FeatureCreated(const NVSDK_NGX_Handle* handle, const NVSDK_NGX_Parameter* p
 
 void AfterEvaluate(VkCommandBuffer command, const NVSDK_NGX_Handle* handle, const NVSDK_NGX_Parameter* p,
                    uint32_t depthUsage, uint32_t motionUsage) noexcept {
-  if (!deviceReady.load() || !swapchainSeen.load() || !command || !p) return;
+  if (!Routing() || !swapchainSeen.load() || !command || !p) return;
   try {
     int flags = -1;
     {
@@ -698,7 +718,7 @@ int PanelState() noexcept {
   for (const char* bad : {"failed", "did not", "lacks", "exception", "no room", "no graphics", "gave no"})
     if (text.find(bad) != std::string::npos) return kFailed;
   if (!Active()) return text == "not started" ? kWaiting : kFailed;
-  if (!deviceReady.load() || !swapchainSeen.load()) return kReady;
+  if (!Routing() || !swapchainSeen.load()) return kReady;
   return optionsOn.load() && tagged.load() > 0 ? kGenerating : kSwapChain;
 }
 std::string Describe() {

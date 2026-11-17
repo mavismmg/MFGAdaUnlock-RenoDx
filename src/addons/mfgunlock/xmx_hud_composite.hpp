@@ -16,6 +16,9 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <utility>
+
+#include "xmx_policy.hpp"
 
 namespace mfgunlock::xmx::hudcomposite {
 using Microsoft::WRL::ComPtr;
@@ -24,6 +27,7 @@ inline constexpr char kShader[] = R"(
 Texture2D<float4> Real : register(t0);
 Texture2D<float4> Hudless : register(t1);
 RWTexture2D<float4> Output : register(u0);
+RWByteAddressBuffer Count : register(u1);
 cbuffer Params : register(b0) { uint2 size; float tolerance; uint debug; };
 bool Hud(int2 p) {
   const float3 d = abs(Real[p].rgb - Hudless[p].rgb);
@@ -38,12 +42,18 @@ void main(uint3 id : SV_DispatchThreadID) {
       const int2 q = clamp(int2(id.xy) + int2(x, y), int2(0, 0), int2(size) - 1);
       hud = hud || Hud(q);
     }
+  // 1.10.1: one pixel in 16 is counted, for the guard against a HUD-less color that
+  // does not match the back buffer (RenoDX).
+  if (hud && (id.x & 3) == 0 && (id.y & 3) == 0) Count.InterlockedAdd(0, 1);
   if (debug != 0) { if (hud) Output[id.xy] = float4(1, 0, 1, 1); }
   else if (hud) Output[id.xy] = Real[id.xy];
 }
 )";
 
-inline constexpr uint32_t kSlots = 64;  // descriptor sets in flight (3 per slot)
+inline constexpr uint32_t kSlots = 64;  // descriptor sets in flight (kPerSlot per slot)
+inline constexpr uint32_t kPerSlot = 4;  // real, HUD-less, output, counter
+inline constexpr uint32_t kReadbacks = 8;  // counter copies in flight
+inline constexpr uint32_t kReadLag = 6;    // a copy this many passes old is done on the GPU
 inline constexpr float kTolerance = 3.0f / 255.0f;
 
 struct Pass {
@@ -53,6 +63,16 @@ struct Pass {
   ComPtr<ID3D12DescriptorHeap> heap;
   UINT increment{};
   uint32_t next{};
+  // 1.10.1: the HUD-pixel counter. Never cleared: the CPU takes the difference
+  // between two copies (wrap-around is harmless in unsigned arithmetic).
+  ComPtr<ID3D12Resource> counter;
+  ComPtr<ID3D12Resource> readback;
+  const volatile uint32_t* mapped{};
+  uint64_t passes{};
+  uint64_t samples[kReadbacks]{};
+  uint32_t lastTotal{};
+  bool haveLast{};
+  policy::HudGuard guard;
   bool failed{};
   std::string fault;
 };
@@ -92,7 +112,7 @@ inline bool Initialize(Pass& pass, ID3D12Device* device) {
     return Fail(pass, "the shader did not compile");
   D3D12_DESCRIPTOR_RANGE ranges[2]{};
   ranges[0] = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 0, 0};
-  ranges[1] = {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 2};
+  ranges[1] = {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0, 0, 2};
   D3D12_ROOT_PARAMETER parameters[2]{};
   parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
   parameters[0].Constants = {0, 0, 4};
@@ -111,12 +131,53 @@ inline bool Initialize(Pass& pass, ID3D12Device* device) {
   pso.pRootSignature = pass.root.Get();
   pso.CS = {code->GetBufferPointer(), code->GetBufferSize()};
   if (FAILED(device->CreateComputePipelineState(&pso, IID_PPV_ARGS(&pass.pipeline)))) return Fail(pass, "pipeline");
-  D3D12_DESCRIPTOR_HEAP_DESC heap{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kSlots * 3,
+  D3D12_DESCRIPTOR_HEAP_DESC heap{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kSlots * kPerSlot,
                                   D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
   if (FAILED(device->CreateDescriptorHeap(&heap, IID_PPV_ARGS(&pass.heap)))) return Fail(pass, "descriptor heap");
   pass.increment = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+  const auto buffer = [&](D3D12_HEAP_TYPE type, UINT64 size, D3D12_RESOURCE_FLAGS flags, D3D12_RESOURCE_STATES state,
+                          ComPtr<ID3D12Resource>& out) {
+    D3D12_HEAP_PROPERTIES props{type};
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    desc.Width = size;
+    desc.Height = 1;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.SampleDesc.Count = 1;
+    desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    desc.Flags = flags;
+    return SUCCEEDED(device->CreateCommittedResource(&props, D3D12_HEAP_FLAG_NONE, &desc, state, nullptr, IID_PPV_ARGS(&out)));
+  };
+  if (!buffer(D3D12_HEAP_TYPE_DEFAULT, 256, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+              D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pass.counter) ||
+      !buffer(D3D12_HEAP_TYPE_READBACK, kReadbacks * sizeof(uint32_t), D3D12_RESOURCE_FLAG_NONE,
+              D3D12_RESOURCE_STATE_COPY_DEST, pass.readback))
+    return Fail(pass, "HUD counter buffers");
+  void* mapped = nullptr;
+  const D3D12_RANGE everything{0, kReadbacks * sizeof(uint32_t)};
+  if (FAILED(pass.readback->Map(0, &everything, &mapped))) return Fail(pass, "HUD counter readback");
+  pass.mapped = static_cast<const volatile uint32_t*>(mapped);
   return true;
 }
+
+// 1.10.1: the guard's reading of a pass kReadLag passes back (done on the GPU by then).
+// Returns true when this reading turned the composition off.
+inline bool Measure(Pass& pass) {
+  if (pass.mapped == nullptr || pass.passes <= kReadLag) return false;
+  const uint64_t index = pass.passes - kReadLag;  // the pass whose copy is read
+  const uint32_t total = pass.mapped[index % kReadbacks];
+  const uint64_t samples = pass.samples[index % kReadbacks];
+  const bool had = pass.haveLast;
+  const uint32_t previous = pass.lastTotal;
+  pass.lastTotal = total;
+  pass.haveLast = true;
+  if (!had || samples == 0) return false;
+  const uint32_t hud = total - previous;
+  if (hud > samples) { pass.haveLast = false; return false; }  // a copy not finished yet; start over
+  return pass.guard.Feed(static_cast<double>(hud) / static_cast<double>(samples));
+}
+inline bool Tripped() { return Get().guard.tripped; }
 
 // `output` in UNORDERED_ACCESS, `real` and `hudless` in NON_PIXEL_SHADER_RESOURCE,
 // all the same size; states are left as they were.
@@ -130,8 +191,8 @@ inline bool Apply(ID3D12GraphicsCommandList* list, ID3D12Device* device, ID3D12R
   const uint32_t slot = pass.next++ % kSlots;
   auto cpu = pass.heap->GetCPUDescriptorHandleForHeapStart();
   auto gpu = pass.heap->GetGPUDescriptorHandleForHeapStart();
-  cpu.ptr += static_cast<SIZE_T>(slot) * 3 * pass.increment;
-  gpu.ptr += static_cast<UINT64>(slot) * 3 * pass.increment;
+  cpu.ptr += static_cast<SIZE_T>(slot) * kPerSlot * pass.increment;
+  gpu.ptr += static_cast<UINT64>(slot) * kPerSlot * pass.increment;
   D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
   srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
   srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -146,6 +207,13 @@ inline bool Apply(ID3D12GraphicsCommandList* list, ID3D12Device* device, ID3D12R
   uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
   uav.Format = UavFormat(out.Format);
   device->CreateUnorderedAccessView(output, nullptr, &uav, cpu);
+  cpu.ptr += pass.increment;
+  D3D12_UNORDERED_ACCESS_VIEW_DESC raw{};
+  raw.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+  raw.Format = DXGI_FORMAT_R32_TYPELESS;
+  raw.Buffer.NumElements = 1;
+  raw.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+  device->CreateUnorderedAccessView(pass.counter.Get(), nullptr, &raw, cpu);
   ID3D12DescriptorHeap* heaps[] = {pass.heap.Get()};
   list->SetDescriptorHeaps(1, heaps);
   list->SetComputeRootSignature(pass.root.Get());
@@ -163,6 +231,20 @@ inline bool Apply(ID3D12GraphicsCommandList* list, ID3D12Device* device, ID3D12R
   list->ResourceBarrier(1, &barrier);
   list->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
   list->ResourceBarrier(1, &barrier);
+  // The counter's running total goes to this pass's readback slot.
+  D3D12_RESOURCE_BARRIER to_copy{};
+  to_copy.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+  to_copy.Transition.pResource = pass.counter.Get();
+  to_copy.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+  to_copy.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+  to_copy.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+  list->ResourceBarrier(1, &to_copy);
+  const uint64_t index = ++pass.passes;
+  list->CopyBufferRegion(pass.readback.Get(), (index % kReadbacks) * sizeof(uint32_t), pass.counter.Get(), 0,
+                         sizeof(uint32_t));
+  std::swap(to_copy.Transition.StateBefore, to_copy.Transition.StateAfter);
+  list->ResourceBarrier(1, &to_copy);
+  pass.samples[index % kReadbacks] = uint64_t{(width + 3) / 4} * ((height + 3) / 4);
   return true;
 }
 }  // namespace mfgunlock::xmx::hudcomposite
