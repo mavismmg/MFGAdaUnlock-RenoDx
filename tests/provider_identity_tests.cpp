@@ -8,8 +8,7 @@ namespace bw=mfgunlock::blackwell;
 // which CI does not have; without them there is nothing to check.
 #if !MFGUNLOCK_HAS_GENERATED_BLACKWELL_CUBINS
 int wmain(int,wchar_t**) {
-  std::cout<<"SKIP: blackwell_cubins.generated.hpp is a local input
-";
+  std::cout<<"SKIP: blackwell_cubins.generated.hpp is a local input\n";
   return 77;
 }
 #else
