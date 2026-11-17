@@ -400,9 +400,8 @@ necessarily been tested with the other.
 | Call of Duty Modern Warfare 4 | Working |
 | Kingdom Come: Deliverance II | Working — DLSS-G added by MFG Unlock (1.10.0, **Add frame generation**; the game has DLSS Super Resolution only) |
 | Red Dead Redemption 2 | Working — DX12 and Vulkan; DLSS-G added by MFG Unlock (1.10.0, **Add frame generation**; the game has DLSS Super Resolution only) |
-| Uncharted: Legacy of Thieves Collection | Working |
-| Shadow of the Tomb Raider | Working |
-| Silent Hill f | Working |
+| Uncharted: Legacy of Thieves Collection | Working — DLSS-G added by MFG Unlock (1.10.0, **Add frame generation**; the game has DLSS Super Resolution only) |
+| Shadow of the Tomb Raider | Working — DLSS-G added by MFG Unlock (1.10.0, **Add frame generation**; the game has DLSS Super Resolution only) |
 
 These are the games personally tested with this fork; this is not a claim of
 universal compatibility. Results may vary with the game version, DLSS and
@@ -441,6 +440,9 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Red Dead Redemption 2 | DX12, Vulkan | Working | Working | XeMFG: DX12 with the DLSS-SR input (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)); Vulkan (experimental, 1.7) generates with DLSS on, but pacing is poor (see [Red Dead Redemption 2: use DX12](#red-dead-redemption-2-use-dx12)). XeMFG DLSS-G since 1.10.0, DX12 and Vulkan: turn on **Add frame generation** (MFG Unlock starts Streamline for this game). The HUD fix is DX12 only |
 | Elden Ring | DX12 | Working | Maybe | XeMFG: with the DLSS-SR input and the EldenRingDLSS addon, offline with Easy Anti-Cheat off; turn on **Force game VSync off** in the panel for correct frame pacing (see [Elden Ring](#elden-ring)). XeMFG DLSS-G: **Add frame generation** (1.10.0) may work with the DLSS addon; not tested yet |
 | Metro Exodus Enhanced Edition | DX12 | Working | Maybe | XeMFG: with the DLSS-SR input (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)). XeMFG DLSS-G with **Add frame generation** (1.10.0): works per a tester; a dim, flickering image in HDR was fixed in 1.10.0 and awaits the tester's confirmation |
+| Uncharted: Legacy of Thieves Collection | DX12 | Working | Working | XeMFG: with the DLSS-SR input (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)). XeMFG DLSS-G: turn on **Add frame generation** (MFG Unlock starts Streamline for this game) |
+| Shadow of the Tomb Raider | DX12 | Working | Working | XeMFG: with the DLSS-SR input (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)). XeMFG DLSS-G: turn on **Add frame generation** (MFG Unlock starts Streamline for this game) |
+| Silent Hill f | DX12 | Not tested | Working |  |
 | Indiana Jones and the Great Circle | Vulkan | Working | Maybe | XeMFG experimental (1.7): turn DLSS on (Super Resolution or Ray Reconstruction); the game's Frame Generation switch turns XeMFG on and off. XeMFG DLSS-G in Vulkan games since 1.10.0; not tested in this game yet. Launch with `+r_allowBlackListedLayers 1` so ReShade can load |
 | DOOM: The Dark Ages | Vulkan | Working | Working | XeMFG DLSS-G in Vulkan since 1.10.0, with **Pacing in Vulkan games** (with path tracing it holds ~120 fps at 4x on an RTX 4070 SUPER, about 20 fps under NVIDIA's generator). XeMFG reads DLSS Ray Reconstruction's inputs. Launch with `+r_allowBlackListedLayers 1` so ReShade can load |
 | Arknights: Endfield | Vulkan | Not tested | Working | XeMFG DLSS-G in Vulkan (1.10.0 test build, user report on an RTX 4060 Laptop) |
