@@ -1,5 +1,13 @@
 # MFG Unlock
 
+<p align="center">
+  <a href="https://ko-fi.com/mavismmg"><img src="https://img.shields.io/badge/Support%20MFG%20Unlock%20on-Ko--fi-FF5E5B?style=for-the-badge&amp;logo=ko-fi&amp;logoColor=white" alt="Support MFG Unlock on Ko-fi" height="36"></a>
+</p>
+<p align="center">
+  MFG Unlock is free. If it gave your GPU more frames, a
+  <a href="https://ko-fi.com/mavismmg"><b>Ko-fi</b></a> helps keep the fixes and new game support coming. Thank you!
+</p>
+
 > [!NOTE]
 > ### New in 1.10.1
 >
@@ -103,10 +111,6 @@
 > **Local Stable geometry + V2 Compatibility inpaint**, native pacing and the
 > existing HUD/UI behavior are retained. See the [1.4.5 release notes](docs/releases/1.4.5.md).
 > In-game performance and image-quality gains have not been established.
-
-<p align="center">
-  <a href="https://ko-fi.com/mavismmg"><img src="https://img.shields.io/badge/Support%20me%20on-Ko--fi-FF5E5B?logo=ko-fi&amp;logoColor=white" alt="Support me on Ko-fi"></a>
-</p>
 
 A [ReShade](https://reshade.me/) addon that enables **DLSS multi-frame generation
 (3x / 4x and above) on GeForce RTX 40-series** cards, which NVIDIA ships gated to
