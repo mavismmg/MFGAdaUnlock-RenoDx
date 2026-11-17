@@ -4,7 +4,7 @@
 One row per report. The same game can appear more than once: per backend, per GPU, per runtime version.
 A row from the README before 1.10.0 was tested on an RTX 40 unless its notes say otherwise.
 
-144 reports; 118 working, 2 partially, 9 not working.
+147 reports; 121 working, 2 partially, 9 not working.
 
 | Game | Backend | API | GPU | Streamline | Frame generation file | Result | Notes | Source | Date |
 |---|---|---|---|---|---|---|---|---|---|
@@ -126,9 +126,11 @@ A row from the README before 1.10.0 was tested on an RTX 40 unless its notes say
 | S.T.A.L.K.E.R. 2: Heart of Chornobyl | XeMFG DLSS-G | DX12 | RTX 40 |  |  | Untested | Maybe | README (before 1.10.0) |  |
 | Samson | XeMFG DLSS-G | DX12 | RTX 3060 Ti | 2.14.16+ |  | Working |  | Calledme_kev's RTX 3060 Ti list (Opti Discord), MFG Unlock 1.9.0 | 2026-11-10 |
 | Senua's Saga: Hellblade II | XeMFG DLSS-G | DX12 | RTX 3060 Ti | 2.14.16+ |  | Working |  | Calledme_kev's RTX 3060 Ti list (Opti Discord), MFG Unlock 1.9.0 | 2026-11-10 |
+| Shadow of the Tomb Raider | DLSS-G | DX12 |  |  |  | Working |  | mavismmg, MFG Unlock 1.10.1 | 2026-11-17 |
 | Silent Hill 2 | DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
 | Silent Hill 2 Remake | XeMFG | DX12 | RTX 40 |  |  | Not working |  | README (before 1.10.0) |  |
 | Silent Hill 2 Remake | XeMFG DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
+| Silent Hill f | DLSS-G | DX12 |  |  |  | Working |  | mavismmg, MFG Unlock 1.10.1 | 2026-11-17 |
 | Star Wars Outlaws | DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
 | STAR WARS: Galactic Racer | XeMFG | DX12 | RTX 40 |  |  | Untested |  | README (before 1.10.0) |  |
 | STAR WARS: Galactic Racer | XeMFG DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
@@ -149,6 +151,7 @@ A row from the README before 1.10.0 was tested on an RTX 40 unless its notes say
 | Titans of The Tide | XeMFG | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
 | Titans of the Tide | XeMFG DLSS-G | DX12 | RTX 3060 Ti | 2.14.16+ |  | Working |  | Calledme_kev's RTX 3060 Ti list (Opti Discord), MFG Unlock 1.9.0 | 2026-11-10 |
 | Titans of The Tide | XeMFG DLSS-G | DX12 | RTX 40 |  |  | Untested | Maybe | README (before 1.10.0) |  |
+| Uncharted: Legacy of Thieves Collection | DLSS-G | DX12 |  |  |  | Working |  | mavismmg, MFG Unlock 1.10.1 | 2026-11-17 |
 | Valor Mortis | XeMFG DLSS-G | DX12 | RTX 3060 Ti | 2.14.16+ |  | Working |  | Calledme_kev's RTX 3060 Ti list (Opti Discord), MFG Unlock 1.9.0 | 2026-11-10 |
 | Warhammer 40,000: Darktide | XeMFG | DX12 | RTX 40 |  |  | Working | Fixed in 1.5.1; on 1.5.0, add `[Adapters] FidelityFX=0` to `MFGAdaUnlock.ini` | README (before 1.10.0) |  |
 | Warhammer 40,000: Darktide | XeMFG DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |

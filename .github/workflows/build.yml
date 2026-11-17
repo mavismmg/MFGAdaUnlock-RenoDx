@@ -16,9 +16,11 @@ jobs:
   windows:
     runs-on: windows-2022
     env:
-      # The RenoDX checkout the local gate uses (its external/ submodules pin
-      # Streamline, ReShade, Detours, DLSS, json, frozen and gtl).
-      RENODX_COMMIT: 98934e0f68d1d3ae2027fc6299fb3e8631cc66b4
+      # A public RenoDX commit (clshortfuse/renodx main) whose external/ submodules
+      # pin Streamline, ReShade, Detours, DLSS, json, frozen and gtl. The same pins
+      # as the local gate's checkout; that one sits on an unpublished branch, which
+      # GitHub cannot fetch ("not our ref", every run since 1.10.0).
+      RENODX_COMMIT: 66f4a40362cd7840bc0647734c434670539addb0
     steps:
       - uses: actions/checkout@v4
 

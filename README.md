@@ -1,5 +1,23 @@
 # MFG Unlock
 
+> [!NOTE]
+> ### New in 1.10.1
+>
+> - **XeMFG DLSS-G with RenoDX HDR**: the artifacts and the generated frames that
+>   looked like copies of the real ones in 1.10.0 (Phantom Blade Zero, NTE,
+>   Wuthering Waves) are fixed. The HUD composition now turns itself off when the
+>   game's image before the HUD does not match the final image.
+> - **Add frame generation**: the Streamline files install from the panel
+>   (**Install / update Streamline files**); games without Reflex (Ninja Gaiden 4)
+>   get Reflex from MFG Unlock; another addon's unused Streamline no longer blocks
+>   it (Shadow of the Tomb Raider); with RenoDX's HDR upgrade in a game running in
+>   SDR it now steps aside instead of crashing (Red Dead Redemption 2 in Vulkan).
+> - The support report names MFG Unlock's own Streamline and Streamline 1.x games, and
+>   the panel says when a game's HDR uses FP16 (scRGB), which NVIDIA's DLSS-G does not
+>   support (Kingdom Come: Deliverance II's HDR).
+>
+> See the [1.10.1 release notes](docs/releases/1.10.1.md).
+
 > [!IMPORTANT]
 > ### 1.10.0: XMX is now called XeMFG DLSS-G
 >
@@ -20,24 +38,6 @@
 >
 > The INI keys keep their names (`[DLSSG] XmxGenerator`, `XmxVulkan`, ...), so
 > existing settings still apply. Older release notes keep the old name.
-
-> [!NOTE]
-> ### New in 1.10.1
->
-> - **XeMFG DLSS-G with RenoDX HDR**: the artifacts and the generated frames that
->   looked like copies of the real ones in 1.10.0 (Phantom Blade Zero, NTE,
->   Wuthering Waves) are fixed. The HUD composition now turns itself off when the
->   game's image before the HUD does not match the final image.
-> - **Add frame generation**: the Streamline files install from the panel
->   (**Install / update Streamline files**); games without Reflex (Ninja Gaiden 4)
->   get Reflex from MFG Unlock; another addon's unused Streamline no longer blocks
->   it (Shadow of the Tomb Raider); with RenoDX's HDR upgrade in a game running in
->   SDR it now steps aside instead of crashing (Red Dead Redemption 2 in Vulkan).
-> - The support report names MFG Unlock's own Streamline and Streamline 1.x games, and
->   the panel says when a game's HDR uses FP16 (scRGB), which NVIDIA's DLSS-G does not
->   support (Kingdom Come: Deliverance II's HDR).
->
-> See the [1.10.1 release notes](docs/releases/1.10.1.md).
 
 > [!NOTE]
 > ### New in 1.10.0
@@ -400,6 +400,9 @@ necessarily been tested with the other.
 | Call of Duty Modern Warfare 4 | Working |
 | Kingdom Come: Deliverance II | Working — DLSS-G added by MFG Unlock (1.10.0, **Add frame generation**; the game has DLSS Super Resolution only) |
 | Red Dead Redemption 2 | Working — DX12 and Vulkan; DLSS-G added by MFG Unlock (1.10.0, **Add frame generation**; the game has DLSS Super Resolution only) |
+| Uncharted: Legacy of Thieves Collection | Working |
+| Shadow of the Tomb Raider | Working |
+| Silent Hill f | Working |
 
 These are the games personally tested with this fork; this is not a claim of
 universal compatibility. Results may vary with the game version, DLSS and

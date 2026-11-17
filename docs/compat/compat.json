@@ -1746,6 +1746,42 @@
    "notes": "base frame rate 60-70 fps at 3x; the slowdown fix (Pacing in Vulkan games) came after this report",
    "source": "Shen_Xuan233, MFG Unlock 1.10.0 test build",
    "date": "2026-11-16"
+  },
+  {
+   "game": "Uncharted: Legacy of Thieves Collection",
+   "backend": "DLSS-G",
+   "api": "DX12",
+   "gpu": "",
+   "streamline": "",
+   "provider": "",
+   "result": "Working",
+   "notes": "",
+   "source": "mavismmg, MFG Unlock 1.10.1",
+   "date": "2026-11-17"
+  },
+  {
+   "game": "Shadow of the Tomb Raider",
+   "backend": "DLSS-G",
+   "api": "DX12",
+   "gpu": "",
+   "streamline": "",
+   "provider": "",
+   "result": "Working",
+   "notes": "",
+   "source": "mavismmg, MFG Unlock 1.10.1",
+   "date": "2026-11-17"
+  },
+  {
+   "game": "Silent Hill f",
+   "backend": "DLSS-G",
+   "api": "DX12",
+   "gpu": "",
+   "streamline": "",
+   "provider": "",
+   "result": "Working",
+   "notes": "",
+   "source": "mavismmg, MFG Unlock 1.10.1",
+   "date": "2026-11-17"
   }
  ]
 }
