@@ -52,6 +52,22 @@ int main() {
   CHECK(PanelStatus(true, true, true, 30000, Decision::kAdded, Apply::kAlreadyOn) == Status::kActive);
   CHECK(PanelStatus(true, true, true, 30000, Decision::kAdded, Apply::kNotAdded) == Status::kWaiting);
 
+  // 1.11.0 (F2, Ninja Gaiden 4): the game's Streamline has no sl.dlss_g.dll.
+  CHECK(DecidePluginSource(true, false, 2, 4, 0, 0) == PluginSource::kGame);
+  CHECK(DecidePluginSource(true, true, 2, 4, 2, 14) == PluginSource::kGame);
+  CHECK(DecidePluginSource(false, false, 2, 14, 0, 0) == PluginSource::kMissing);
+  CHECK(DecidePluginSource(false, true, 2, 14, 2, 14) == PluginSource::kOurs);
+  CHECK(DecidePluginSource(false, true, 2, 9, 2, 14) == PluginSource::kOtherVersion);
+  CHECK(DecidePluginSource(false, true, 0, 0, 2, 14) == PluginSource::kOtherVersion);  // unknown version: not lent
+  CHECK(AfterPluginCheck(Decision::kAdded, PluginSource::kGame) == Decision::kAdded);
+  CHECK(AfterPluginCheck(Decision::kAdded, PluginSource::kOurs) == Decision::kAdded);
+  CHECK(AfterPluginCheck(Decision::kAdded, PluginSource::kMissing) == Decision::kNoPlugin);
+  CHECK(AfterPluginCheck(Decision::kAdded, PluginSource::kOtherVersion) == Decision::kPluginVersion);
+  CHECK(AfterPluginCheck(Decision::kGameHasFrameGeneration, PluginSource::kMissing) == Decision::kGameHasFrameGeneration);
+  CHECK(!Added(Decision::kNoPlugin) && !Added(Decision::kPluginVersion));
+  CHECK(PanelStatus(true, true, true, 30000, Decision::kNoPlugin, Apply::kNotAdded) == Status::kNoPlugin);
+  CHECK(PanelStatus(true, true, true, 30000, Decision::kPluginVersion, Apply::kNotAdded) == Status::kNoPlugin);
+
   // 1.10.1 (plan item 5): Add frame generation's own slInit is recognized; a game's is not.
   {
     sl::Preferences host{};

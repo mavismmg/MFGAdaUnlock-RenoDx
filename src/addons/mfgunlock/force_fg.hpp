@@ -39,7 +39,10 @@ inline bool IsHostInit(const sl::Preferences& pref) {
          std::strcmp(pref.projectId, kHostProjectId) == 0;
 }
 
-enum class Decision : uint8_t { kOff, kGameHasFrameGeneration, kNoSuperResolution, kUnknownAbi, kAdded, kAllFeatures };
+// kNoPlugin and kPluginVersion (1.11.0, F2) come last: the value is stored as an int.
+enum class Decision : uint8_t {
+  kOff, kGameHasFrameGeneration, kNoSuperResolution, kUnknownAbi, kAdded, kAllFeatures, kNoPlugin, kPluginVersion
+};
 
 constexpr const char* DecisionText(Decision decision) {
   switch (decision) {
@@ -48,8 +51,30 @@ constexpr const char* DecisionText(Decision decision) {
     case Decision::kNoSuperResolution: return "not available: the game does not ask Streamline for DLSS Super Resolution";
     case Decision::kUnknownAbi: return "not applied: unknown slInit preferences layout";
     case Decision::kAllFeatures: return "not applied: the game loads every Streamline feature, so it may have its own frame generation";
+    case Decision::kNoPlugin: return "not applied: the game's Streamline has no DLSS-G plugin (sl.dlss_g.dll), and MFG Unlock's is missing";
+    case Decision::kPluginVersion: return "not applied: the game's Streamline has no DLSS-G plugin (sl.dlss_g.dll), and MFG Unlock's is for another Streamline version";
     default: return "DLSS frame generation added to the game's Streamline features";
   }
+}
+
+// 1.11.0 (F2): where sl.dlss_g.dll comes from once DLSS-G is added. Ninja Gaiden 4
+// (2026-11-18): DLSS-G was added to slInit, but the game ships no sl.dlss_g.dll,
+// so its Streamline loaded nothing and said nothing. MFG Unlock's own plugin is
+// lent only to the same Streamline major.minor, from a folder that holds nothing
+// else (its full folder would offer a second sl.common.dll). Pure, for the test.
+enum class PluginSource : uint8_t { kGame, kOurs, kMissing, kOtherVersion };
+constexpr PluginSource DecidePluginSource(bool game_has_plugin, bool ours_present, uint16_t game_major,
+                                          uint16_t game_minor, uint16_t our_major, uint16_t our_minor) {
+  if (game_has_plugin) return PluginSource::kGame;
+  if (!ours_present) return PluginSource::kMissing;
+  if (game_major == 0 || game_major != our_major || game_minor != our_minor) return PluginSource::kOtherVersion;
+  return PluginSource::kOurs;
+}
+constexpr Decision AfterPluginCheck(Decision decision, PluginSource source) {
+  if (decision != Decision::kAdded) return decision;
+  if (source == PluginSource::kMissing) return Decision::kNoPlugin;
+  if (source == PluginSource::kOtherVersion) return Decision::kPluginVersion;
+  return decision;
 }
 
 struct Plan {
@@ -123,7 +148,7 @@ constexpr const char* ApplyText(Apply apply) {
 // absence of Streamline after the game has been up a while is a status of its own.
 enum class Status : uint8_t {
   kOff, kWaiting, kNoStreamline, kInitMissed, kGameHasFrameGeneration, kAllFeatures, kNoSuperResolution, kNoReflex,
-  kActive
+  kActive, kNoPlugin
 };
 constexpr uint64_t kNoStreamlineAfterMs = 20000;
 constexpr Status PanelStatus(bool enabled, bool streamline_loaded, bool init_seen, uint64_t uptime_ms,
@@ -137,6 +162,7 @@ constexpr Status PanelStatus(bool enabled, bool streamline_loaded, bool init_see
     case Decision::kGameHasFrameGeneration: return Status::kGameHasFrameGeneration;
     case Decision::kAllFeatures: return Status::kAllFeatures;
     case Decision::kNoSuperResolution: return Status::kNoSuperResolution;
+    case Decision::kNoPlugin: case Decision::kPluginVersion: return Status::kNoPlugin;
     case Decision::kAdded: break;
     default: return Status::kWaiting;
   }

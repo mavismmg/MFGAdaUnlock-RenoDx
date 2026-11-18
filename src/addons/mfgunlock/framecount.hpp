@@ -651,6 +651,87 @@ inline std::atomic_bool g_game_set_options{false};
 inline thread_local bool g_force_fg_calling = false;
 inline std::atomic<unsigned int> g_force_fg_applied_multiplier{0};
 inline std::vector<sl::Feature> g_force_fg_features;  // kept for the process: Streamline may keep the pointer
+// 1.11.0 (F2, force_fg.hpp PluginSource): MFG Unlock's Streamline folder (set by
+// addon.cpp), and the plugin paths handed to the game's slInit when its
+// sl.dlss_g.dll is missing; kept for the process like the features.
+inline std::wstring g_force_fg_our_streamline;
+inline std::vector<std::wstring> g_force_fg_path_storage;
+inline std::vector<const wchar_t*> g_force_fg_paths;
+inline std::atomic<int> g_force_fg_plugin_source{-1};  // forcefg::PluginSource, -1 before slInit
+
+inline bool FileExists(const std::wstring& path) {
+  const DWORD attributes = GetFileAttributesW(path.c_str());
+  return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+inline std::wstring Directory(std::wstring path) {
+  const size_t slash = path.find_last_of(L"\\/");
+  return slash == std::wstring::npos ? std::wstring() : path.substr(0, slash);
+}
+// Once DLSS-G was added: finds the game's sl.dlss_g.dll, or lends MFG Unlock's
+// from a folder of its own (copied there once), by adding that folder to the
+// plugin paths. Returns the decision to report (kNoPlugin/kPluginVersion when
+// neither works, and then the game's request goes through unchanged).
+// The sl.interposer.dll whose slInit is hooked (g_real_init is a Detours trampoline, outside it).
+inline std::atomic<HMODULE> g_hooked_interposer{nullptr};
+inline forcefg::Decision LendPlugin(const sl::Preferences& pref, sl::Preferences& forced) {
+  const HMODULE interposer = g_hooked_interposer.load(std::memory_order_acquire);
+  const auto game_version = runtimeversion::FromModule(interposer);
+  std::vector<std::wstring> searched;
+  if (pref.pathsToPlugins != nullptr && pref.numPathsToPlugins > 0) {
+    for (uint32_t i = 0; i < pref.numPathsToPlugins; ++i)
+      if (pref.pathsToPlugins[i] != nullptr) searched.emplace_back(pref.pathsToPlugins[i]);
+  } else if (interposer != nullptr) {
+    // Without paths, Streamline looks beside sl.interposer.dll.
+    std::wstring path(32768, L'\0');
+    path.resize(GetModuleFileNameW(interposer, path.data(), static_cast<DWORD>(path.size())));
+    searched.push_back(Directory(path));
+  }
+  bool game_has = false;
+  for (const auto& dir : searched) game_has = game_has || FileExists(dir + L"\\sl.dlss_g.dll");
+  const std::wstring ours = g_force_fg_our_streamline + L"\\sl.dlss_g.dll";
+  const bool ours_present = !g_force_fg_our_streamline.empty() && FileExists(ours);
+  const auto our_version = ours_present ? runtimeversion::FromFile(ours.c_str()) : runtimeversion::Version{};
+  const auto source = forcefg::DecidePluginSource(game_has, ours_present, game_version.major, game_version.minor,
+                                                  our_version.major, our_version.minor);
+  g_force_fg_plugin_source.store(static_cast<int>(source), std::memory_order_release);
+  {
+    std::stringstream s;
+    s << "mfgunlock: forced DLSS frame generation: the game's Streamline " << game_version.major << "."
+      << game_version.minor << "." << game_version.patch << " "
+      << (game_has ? "has its sl.dlss_g.dll"
+          : source == forcefg::PluginSource::kOurs ? "has no sl.dlss_g.dll; lending MFG Unlock's "
+          : source == forcefg::PluginSource::kOtherVersion ? "has no sl.dlss_g.dll, and MFG Unlock's is for Streamline "
+          : "has no sl.dlss_g.dll, and MFG Unlock's is missing")
+      << (source == forcefg::PluginSource::kOurs || source == forcefg::PluginSource::kOtherVersion
+              ? std::to_string(our_version.major) + "." + std::to_string(our_version.minor) + "." +
+                    std::to_string(our_version.patch)
+              : std::string())
+      << ".";
+    reshade::log::message(game_has || source == forcefg::PluginSource::kOurs ? reshade::log::level::info
+                                                                             : reshade::log::level::warning,
+                          s.str().c_str());
+  }
+  if (source != forcefg::PluginSource::kOurs) return forcefg::AfterPluginCheck(forcefg::Decision::kAdded, source);
+  // A folder with only the plugin: MFG Unlock's own folder would also offer its sl.common.dll.
+  const std::wstring lent = g_force_fg_our_streamline + L"\\dlss_g-only";
+  CreateDirectoryW(lent.c_str(), nullptr);
+  const std::wstring copy = lent + L"\\sl.dlss_g.dll";
+  if (runtimeversion::Pack(runtimeversion::FromFile(copy.c_str())) != runtimeversion::Pack(our_version) &&
+      !CopyFileW(ours.c_str(), copy.c_str(), FALSE)) {
+    reshade::log::message(reshade::log::level::warning,
+                          ("mfgunlock: forced DLSS frame generation: could not copy sl.dlss_g.dll (error " +
+                           std::to_string(GetLastError()) + ").").c_str());
+    g_force_fg_plugin_source.store(static_cast<int>(forcefg::PluginSource::kMissing), std::memory_order_release);
+    return forcefg::Decision::kNoPlugin;
+  }
+  g_force_fg_path_storage = searched;
+  g_force_fg_path_storage.push_back(lent);
+  g_force_fg_paths.clear();
+  for (const auto& dir : g_force_fg_path_storage) g_force_fg_paths.push_back(dir.c_str());
+  forced.pathsToPlugins = g_force_fg_paths.data();
+  forced.numPathsToPlugins = static_cast<uint32_t>(g_force_fg_paths.size());
+  return forcefg::Decision::kAdded;
+}
 inline std::atomic<GetStateFn> g_real_get_state{nullptr};
 inline thread_local bool g_get_state_call_active = false;
 inline std::atomic_bool g_get_state_reentry_seen{false};
@@ -2339,6 +2420,8 @@ inline sl::Result HookedInit(const sl::Preferences& pref, uint64_t sdk_version) 
     const bool known = pref.structType == sl::Preferences::s_structType && pref.structVersion == sl::kStructVersion1;
     auto plan = forcefg::PlanFeatures(known ? pref.featuresToLoad : nullptr, known ? pref.numFeaturesToLoad : 0,
                                       g_force_fg_enabled.load(std::memory_order_relaxed), known);
+    if (plan.decision == forcefg::Decision::kAdded)
+      plan.decision = LendPlugin(pref, forced);
     g_force_fg_decision.store(static_cast<int>(plan.decision), std::memory_order_release);
     if (plan.decision == forcefg::Decision::kAdded) {
       g_force_fg_features = std::move(plan.features);
@@ -3360,6 +3443,7 @@ inline void TryInstall() {
         {"slInit", reinterpret_cast<void**>(&internal::g_real_init),
          reinterpret_cast<void*>(&internal::HookedInit)});
   }
+  internal::g_hooked_interposer.store(interposer, std::memory_order_release);
   if (!hook::Install(interposer, hooks, "sl.interposer.dll")) {
     internal::g_installing.store(false, std::memory_order_release);
     return;

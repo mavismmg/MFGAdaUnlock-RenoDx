@@ -73,20 +73,15 @@ inline bool IsMappedImage(HMODULE module) {
          info.State == MEM_COMMIT;
 }
 
-inline Version FromModule(HMODULE module) {
+// 1.11.0 (F2): a file that is not loaded (MFG Unlock's sl.dlss_g.dll, lent to a game).
+inline Version FromFile(const wchar_t* path) {
   Version result{};
-  if (!IsMappedImage(module)) return result;
-
-  std::vector<wchar_t> path(32768);
-  const DWORD length =
-      GetModuleFileNameW(module, path.data(), static_cast<DWORD>(path.size()));
-  if (length == 0 || length >= path.size()) return result;
-
+  if (path == nullptr || *path == L'\0') return result;
   DWORD ignored = 0;
-  const DWORD bytes = GetFileVersionInfoSizeW(path.data(), &ignored);
+  const DWORD bytes = GetFileVersionInfoSizeW(path, &ignored);
   if (bytes == 0) return result;
   std::vector<unsigned char> storage(bytes);
-  if (!GetFileVersionInfoW(path.data(), 0, bytes, storage.data())) return result;
+  if (!GetFileVersionInfoW(path, 0, bytes, storage.data())) return result;
 
   VS_FIXEDFILEINFO* fixed = nullptr;
   UINT fixed_size = 0;
@@ -103,6 +98,14 @@ inline Version FromModule(HMODULE module) {
   result.revision = LOWORD(fixed->dwFileVersionLS);
   result.valid = true;
   return result;
+}
+
+inline Version FromModule(HMODULE module) {
+  if (!IsMappedImage(module)) return {};
+  std::vector<wchar_t> path(32768);
+  const DWORD length = GetModuleFileNameW(module, path.data(), static_cast<DWORD>(path.size()));
+  if (length == 0 || length >= path.size()) return {};
+  return FromFile(path.data());
 }
 
 inline Version FromAddress(const void* address, HMODULE* owner = nullptr) {

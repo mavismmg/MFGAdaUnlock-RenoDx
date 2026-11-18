@@ -1535,6 +1535,9 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
             GetPrivateProfileIntW(L"DLSSG", L"ForceFrameGeneration", 0, ini.c_str()) != 0 ||
                 GetPrivateProfileIntW(L"DLSSG", L"AddFrameGeneration", 0, ini.c_str()) != 0,
             std::memory_order_relaxed);
+        // 1.11.0 (F2): MFG Unlock's sl.dlss_g.dll may be lent to a game that ships none.
+        mfgunlock::framecount::internal::g_force_fg_our_streamline =
+            (mfgunlock::backend::Directory() / L"MFGUnlock-Streamline").wstring();
       }
       // 1.10.0 (dashdogy B1): opt-in crash record and dump (crash_record.hpp).
       if (mfgunlock::crash::Enabled(mfgunlock::backend::Directory() / L"MFGAdaUnlock.ini"))

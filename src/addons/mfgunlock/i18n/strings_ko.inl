@@ -993,3 +993,4 @@
 /* kInstallStreamlineFiles_s5 */ "Streamline 파일 설치/업데이트",
 /* kInstallStreamlineFilesTip_s6 */ "외부 도우미를 엽니다. NVIDIA 파일을 내려받고, 설치할 내용을 보여 준 뒤, 게임이 종료되기를 기다립니다.",
 /* kHostFp16Hdr_s7 */ "게임의 HDR이 FP16(scRGB) 스왑 체인을 사용하며, NVIDIA DLSS-G는 이를 지원하지 않아 프레임이 생성되지 않습니다. 게임의 HDR을 끄거나 XeMFG 방식을 사용하세요.",
+/* kForcedFgNoPlugin_s8 */ "켜지지 않음: 게임의 Streamline에 DLSS-G 플러그인(sl.dlss_g.dll)이 없고, MFG Unlock의 것도 빌려줄 수 없었습니다(없거나 다른 Streamline 버전용). 로그를 확인하세요.",

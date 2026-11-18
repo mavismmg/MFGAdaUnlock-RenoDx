@@ -996,6 +996,7 @@ enum class Str : unsigned {
   kInstallStreamlineFiles_s5,
   kInstallStreamlineFilesTip_s6,
   kHostFp16Hdr_s7,
+  kForcedFgNoPlugin_s8,
   kCount
 };
 }  // namespace mfgunlock::i18n

@@ -991,3 +991,4 @@
 /* kInstallStreamlineFiles_s5 */ "Install / update Streamline files",
 /* kInstallStreamlineFilesTip_s6 */ "Opens the external helper: it downloads NVIDIA's files, shows what it will install, and waits for the game to exit.",
 /* kHostFp16Hdr_s7 */ "The game's HDR uses an FP16 (scRGB) swap chain, which NVIDIA's DLSS-G does not support: no frames are generated. Turn the game's HDR off, or use the XeMFG method.",
+/* kForcedFgNoPlugin_s8 */ "Not turned on: the game's Streamline has no DLSS-G plugin (sl.dlss_g.dll), and MFG Unlock's could not be lent (missing, or for another Streamline version). See the log.",

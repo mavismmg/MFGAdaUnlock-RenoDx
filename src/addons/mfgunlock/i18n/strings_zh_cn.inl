@@ -993,3 +993,4 @@
 /* kInstallStreamlineFiles_s5 */ "安装/更新 Streamline 文件",
 /* kInstallStreamlineFilesTip_s6 */ "打开外部助手：它会下载 NVIDIA 的文件，显示将要安装的内容，并等待游戏退出。",
 /* kHostFp16Hdr_s7 */ "游戏的 HDR 使用 FP16（scRGB）交换链，NVIDIA 的 DLSS-G 不支持：不会生成帧。请关闭游戏的 HDR，或使用 XeMFG 方式。",
+/* kForcedFgNoPlugin_s8 */ "未开启：游戏的 Streamline 没有 DLSS-G 插件（sl.dlss_g.dll），也无法借用 MFG Unlock 的插件（缺失，或属于其他 Streamline 版本）。请查看日志。",

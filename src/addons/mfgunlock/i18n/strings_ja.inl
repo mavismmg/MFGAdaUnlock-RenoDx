@@ -993,3 +993,4 @@
 /* kInstallStreamlineFiles_s5 */ "Streamline ファイルをインストール/更新",
 /* kInstallStreamlineFilesTip_s6 */ "外部ヘルパーを開きます。NVIDIA のファイルをダウンロードし、インストール内容を表示して、ゲームの終了を待ちます。",
 /* kHostFp16Hdr_s7 */ "ゲームの HDR は FP16 (scRGB) のスワップチェーンを使っており、NVIDIA の DLSS-G は対応していません。フレームは生成されません。ゲームの HDR をオフにするか、XeMFG 方式を使ってください。",
+/* kForcedFgNoPlugin_s8 */ "有効化されていません: ゲームの Streamline に DLSS-G プラグイン (sl.dlss_g.dll) がなく、MFG Unlock のものも使えませんでした (見つからないか、別の Streamline バージョン用)。ログを確認してください。",

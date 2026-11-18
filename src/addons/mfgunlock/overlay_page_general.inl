@@ -337,6 +337,7 @@
           case S::kAllFeatures: ui::StatusChip(T(Str::kGameLoadsEveryFeature_r1f)); break;
           case S::kNoSuperResolution: ui::StatusChip(T(Str::kNoSuperResolution_r1g), ui::Warning); break;
           case S::kNoReflex: ui::StatusChip(T(Str::kNoReflex_r1h), ui::Warning); break;
+          case S::kNoPlugin: ui::StatusChip(T(Str::kForcedFgNoPlugin_s8), ui::Warning); break;
           case S::kWaiting: ui::StatusChip(T(Str::kWaitingForTheGame_r1j)); break;
           default: break;
         }
