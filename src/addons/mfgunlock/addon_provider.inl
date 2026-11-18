@@ -56,7 +56,11 @@ NVSDK_NGX_Result NVSDK_CONV HookedGetParameters(NVSDK_NGX_Parameter** out_parame
 // when "Game default" is selected again.
 using NgxCreateFeatureFn = NVSDK_NGX_Result(NVSDK_CONV*)(ID3D12GraphicsCommandList*, NVSDK_NGX_Feature,
                                                          NVSDK_NGX_Parameter*, NVSDK_NGX_Handle**);
-NgxCreateFeatureFn g_real_create_feature = nullptr;
+NVSDK_NGX_Result NVSDK_CONV HookedCreateFeature(ID3D12GraphicsCommandList*, NVSDK_NGX_Feature, NVSDK_NGX_Parameter*,
+                                                NVSDK_NGX_Handle**);
+// 1.11.0 (F1): installed again when another module removes it (ngx_hook.hpp, Rehookable).
+mfgunlock::hook::Rehookable g_create_hook{"NVSDK_NGX_D3D12_CreateFeature", reinterpret_cast<void*>(&HookedCreateFeature)};
+thread_local int t_create_depth = 0;
 constexpr const char* kNgxPresetHints[] = {
     NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_DLAA, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality,
     NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Balanced, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Performance,
@@ -97,18 +101,30 @@ using NgxEvaluateFn = NVSDK_NGX_Result(NVSDK_CONV*)(ID3D12GraphicsCommandList*, 
                                                     const NVSDK_NGX_Parameter*, void*);
 using NgxReleaseFn = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Handle*);
 // _nvngx.dll exports no EvaluateFeature_C (driver 6xx), so only these two.
-NgxEvaluateFn g_real_core_evaluate = nullptr;
-NgxReleaseFn g_real_core_release = nullptr;
+NVSDK_NGX_Result NVSDK_CONV HookedCoreEvaluate(ID3D12GraphicsCommandList*, const NVSDK_NGX_Handle*,
+                                               const NVSDK_NGX_Parameter*, void*);
+NVSDK_NGX_Result NVSDK_CONV HookedCoreRelease(NVSDK_NGX_Handle*);
+mfgunlock::hook::Rehookable g_core_evaluate_hook{"NVSDK_NGX_D3D12_EvaluateFeature",
+                                                 reinterpret_cast<void*>(&HookedCoreEvaluate)};
+mfgunlock::hook::Rehookable g_core_release_hook{"NVSDK_NGX_D3D12_ReleaseFeature",
+                                                reinterpret_cast<void*>(&HookedCoreRelease)};
+thread_local int t_evaluate_depth = 0, t_release_depth = 0;
 NVSDK_NGX_Result NVSDK_CONV HookedCoreEvaluate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Handle* handle,
                                                const NVSDK_NGX_Parameter* params, void* callback) {
+  const mfgunlock::hook::Nesting nest(t_evaluate_depth);
+  const auto real = reinterpret_cast<NgxEvaluateFn>(mfgunlock::hook::Trampoline(g_core_evaluate_hook, nest.level));
+  if (nest.level > 0) return real != nullptr ? real(list, handle, params, callback) : NVSDK_NGX_Result_Fail;
   if (handle == XmxHandle()) return mfgunlock::xmx::EvaluateWithoutNvidia(list, params);
-  if (g_real_core_evaluate == nullptr) return NVSDK_NGX_Result_Fail;
-  const NVSDK_NGX_Result result = g_real_core_evaluate(list, handle, params, callback);
+  if (real == nullptr) return NVSDK_NGX_Result_Fail;
+  const NVSDK_NGX_Result result = real(list, handle, params, callback);
   // 1.10.0 (sl_host.hpp): the game's DLSS SR inputs and output, tagged for its hosted Streamline.
   if (!NgxFailed(result)) mfgunlock::slhost::AfterEvaluate(list, handle, params);
   return result;
 }
 NVSDK_NGX_Result NVSDK_CONV HookedCoreRelease(NVSDK_NGX_Handle* handle) {
+  const mfgunlock::hook::Nesting nest(t_release_depth);
+  const auto real = reinterpret_cast<NgxReleaseFn>(mfgunlock::hook::Trampoline(g_core_release_hook, nest.level));
+  if (nest.level > 0) return real != nullptr ? real(handle) : NVSDK_NGX_Result_Fail;
   if (handle == XmxHandle()) {
     const int left = g_xmx_handles_live.fetch_sub(1) - 1;
     reshade::log::message(reshade::log::level::info,
@@ -116,19 +132,20 @@ NVSDK_NGX_Result NVSDK_CONV HookedCoreRelease(NVSDK_NGX_Handle* handle) {
     return NVSDK_NGX_Result_Success;
   }
   mfgunlock::slhost::ObserveRelease(handle);
-  if (g_real_core_release == nullptr) return NVSDK_NGX_Result_Fail;
-  return g_real_core_release(handle);
+  if (real == nullptr) return NVSDK_NGX_Result_Fail;
+  return real(handle);
 }
-const std::vector<mfgunlock::hook::HookItem> kXmxCoreHooks = {
-    {"NVSDK_NGX_D3D12_EvaluateFeature", reinterpret_cast<void**>(&g_real_core_evaluate),
-     reinterpret_cast<void*>(&HookedCoreEvaluate)},
-    {"NVSDK_NGX_D3D12_ReleaseFeature", reinterpret_cast<void**>(&g_real_core_release),
-     reinterpret_cast<void*>(&HookedCoreRelease)},
-};
+const std::vector<mfgunlock::hook::Rehookable*> kXmxCoreHooks = {&g_core_evaluate_hook, &g_core_release_hook};
 std::atomic_bool g_xmx_core_hooks_installed{false};
 
 NVSDK_NGX_Result NVSDK_CONV HookedCreateFeature(ID3D12GraphicsCommandList* list, NVSDK_NGX_Feature feature,
                                                 NVSDK_NGX_Parameter* parameters, NVSDK_NGX_Handle** handle) {
+  const mfgunlock::hook::Nesting nest(t_create_depth);
+  const auto g_real_create_feature =
+      reinterpret_cast<NgxCreateFeatureFn>(mfgunlock::hook::Trampoline(g_create_hook, nest.level));
+  if (nest.level > 0)
+    return g_real_create_feature != nullptr ? g_real_create_feature(list, feature, parameters, handle)
+                                            : NVSDK_NGX_Result_Fail;
   if (feature == NVSDK_NGX_Feature_FrameGeneration && handle != nullptr &&
       g_xmx_core_hooks_installed.load(std::memory_order_acquire) && XmxSkipsNvidiaFeature()) {
     mfgunlock::ampere::provider::g_create_seen.store(true, std::memory_order_release);
@@ -191,12 +208,9 @@ NVSDK_NGX_Result NVSDK_CONV HookedCreateFeature(ID3D12GraphicsCommandList* list,
 // Installed on its own, only while a preset is selected (or, since 1.8.3, XMX
 // runs on an RTX 20/30), so a session that never uses the selector gains no
 // NGX hook.
-const std::vector<mfgunlock::hook::HookItem> kNgxPresetHooks = {
-    {"NVSDK_NGX_D3D12_CreateFeature",
-     reinterpret_cast<void**>(&g_real_create_feature),
-     reinterpret_cast<void*>(&HookedCreateFeature)},
-};
+const std::vector<mfgunlock::hook::Rehookable*> kNgxPresetHooks = {&g_create_hook};
 std::atomic_bool g_preset_hook_installed{false};
+HMODULE g_ngx_hooked_module = nullptr;  // where the sets above went in
 
 bool EnsureResident();
 
@@ -222,11 +236,32 @@ void TryInstallPresetHook() {
     WideCharToMultiByte(CP_UTF8, 0, name, -1, narrow, sizeof(narrow) - 1, nullptr, nullptr);
     // The XMX handle's Evaluate and Release first, so CreateFeature never hands it out unrouted.
     if ((XmxSkipsNvidiaFeature() || mfgunlock::slhost::Wanted()) && !g_xmx_core_hooks_installed.load(std::memory_order_relaxed) &&
-        mfgunlock::hook::Install(mod, kXmxCoreHooks, narrow))
+        mfgunlock::hook::InstallGeneration(mod, kXmxCoreHooks, narrow))
       g_xmx_core_hooks_installed.store(true, std::memory_order_release);
-    if (mfgunlock::hook::Install(mod, kNgxPresetHooks, narrow))
+    if (mfgunlock::hook::InstallGeneration(mod, kNgxPresetHooks, narrow)) {
+      g_ngx_hooked_module = mod;
       g_preset_hook_installed.store(true, std::memory_order_release);
+    }
   }
+  ReleaseSRWLockExclusive(&lock);
+}
+
+// 1.11.0 (F1): once a second, whether another module removed the NGX hooks
+// (SOTTR with the "DLSS 5" addon); if so, they go in again (ngx_hook.hpp).
+void CheckNgxHooksStillInstalled() {
+  if (!g_preset_hook_installed.load(std::memory_order_acquire) || g_ngx_hooked_module == nullptr) return;
+  static std::atomic<uint64_t> last{0};
+  const uint64_t now = GetTickCount64();
+  uint64_t previous = last.load(std::memory_order_relaxed);
+  if (now - previous < 1000 || !last.compare_exchange_strong(previous, now, std::memory_order_relaxed)) return;
+  static SRWLOCK lock = SRWLOCK_INIT;
+  if (!TryAcquireSRWLockExclusive(&lock)) return;
+  char narrow[64] = {};
+  GetModuleFileNameA(g_ngx_hooked_module, narrow, sizeof(narrow) - 1);
+  const char* label = std::strrchr(narrow, '\\') != nullptr ? std::strrchr(narrow, '\\') + 1 : narrow;
+  if (g_xmx_core_hooks_installed.load(std::memory_order_acquire))
+    mfgunlock::hook::Reinstall(g_ngx_hooked_module, kXmxCoreHooks, label);
+  mfgunlock::hook::Reinstall(g_ngx_hooked_module, kNgxPresetHooks, label);
   ReleaseSRWLockExclusive(&lock);
 }
 
@@ -234,7 +269,11 @@ void TryInstallPresetHook() {
 // games map _nvngx.dll through an import that bypasses the LoadLibrary hook
 // (KCD2 field test); they present their menu long before creating DLSS.
 void RetryPresetHookFromPresent() {
-  if (g_preset_hook_installed.load(std::memory_order_acquire) || !PresetHookWanted()) return;
+  if (g_preset_hook_installed.load(std::memory_order_acquire)) {
+    CheckNgxHooksStillInstalled();
+    return;
+  }
+  if (!PresetHookWanted()) return;
   static std::atomic<uint64_t> last{0};
   const uint64_t now = GetTickCount64();
   uint64_t previous = last.load(std::memory_order_relaxed);
@@ -243,8 +282,12 @@ void RetryPresetHookFromPresent() {
 }
 
 // Explicit unload only. Normally unreachable: the hook goes in after the pin.
+// Only the first generation is undone; later ones (F1) stay until exit.
 void UninstallPresetHook() {
-  if (g_preset_hook_installed.load(std::memory_order_acquire) && mfgunlock::hook::Uninstall(kNgxPresetHooks))
+  if (!g_preset_hook_installed.load(std::memory_order_acquire) ||
+      g_create_hook.generations.load(std::memory_order_acquire) != 1)
+    return;
+  if (mfgunlock::hook::Uninstall({{g_create_hook.name, &g_create_hook.slots[0], g_create_hook.replacement}}))
     g_preset_hook_installed.store(false, std::memory_order_release);
 }
 

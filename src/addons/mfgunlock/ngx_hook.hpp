@@ -21,6 +21,7 @@
 
 #include <detours.h>
 
+#include <atomic>
 #include <mutex>
 #include <sstream>
 #include "module_session.hpp"
@@ -242,6 +243,94 @@ inline bool InstallOne(void** real, void* replacement) {
   else internal::detours.abort();
   threads.Close();
   return ok;
+}
+
+// 1.11.0 (F1): a hook another module took away. SOTTR with the "DLSS 5" addon
+// (2026-11-18): it hooked _nvngx.dll's exports, we hooked over it, then ReShade
+// reloaded the add-ons and that addon's unhook wrote back the bytes it had saved,
+// which removed our jump with its own; this addon stayed loaded and never saw
+// another DLSS SR evaluation.
+//
+// Such a hook is installed again over whatever is there now, as a new generation
+// with its own trampoline. Whether the old one is really gone cannot be told from
+// the bytes: a module that hooked over ours leaves our jump inside its own
+// trampoline, so a call can still come back to us through the old generation.
+// The detour therefore counts how deep it is on this thread: the outer call does
+// the work and calls the newest trampoline; a call that comes back in passes
+// straight to the next older one, and never loops.
+inline constexpr int kMaxGenerations = 4;
+struct Rehookable {
+  const char* name;
+  void* replacement;
+  void* slots[kMaxGenerations]{};
+  std::atomic<int> generations{0};
+};
+// Held exclusively from a generation's commit until it is published: a call
+// that reaches the new jump in between waits instead of taking the previous
+// trampoline, which may lead into the module that removed us (unloaded since).
+inline SRWLOCK generation_lock = SRWLOCK_INIT;
+// The trampoline for a call at `level` (0 = the outer call on this thread).
+inline void* Trampoline(const Rehookable& hook, int level) {
+  AcquireSRWLockShared(&generation_lock);
+  const int count = hook.generations.load(std::memory_order_acquire);
+  void* result = count <= 0 ? nullptr : hook.slots[level >= 0 && level < count ? count - 1 - level : 0];
+  ReleaseSRWLockShared(&generation_lock);
+  return result;
+}
+// One per detour, with a thread_local depth: Nesting nest(t_depth); nest.level.
+struct Nesting {
+  int& depth;
+  const int level;
+  explicit Nesting(int& d) : depth(d), level(d++) {}
+  ~Nesting() { --depth; }
+  Nesting(const Nesting&) = delete;
+  Nesting& operator=(const Nesting&) = delete;
+};
+// Installed (at least once) and every export in the set still leads here.
+inline bool StillHooked(HMODULE module, const std::vector<Rehookable*>& set) {
+  if (module == nullptr || set.empty()) return false;
+  for (const Rehookable* hook : set) {
+    if (hook->generations.load(std::memory_order_acquire) == 0) return false;
+    const void* proc = reinterpret_cast<const void*>(GetProcAddress(module, hook->name));
+    if (proc == nullptr || !JumpsIntoSelf(proc)) return false;
+  }
+  return true;
+}
+// Installs the set's next generation, all of it or nothing (Install's rules).
+inline bool InstallGeneration(HMODULE module, const std::vector<Rehookable*>& set, const char* module_label) {
+  if (set.empty()) return false;
+  const int generation = set.front()->generations.load(std::memory_order_acquire);
+  if (generation >= kMaxGenerations) return false;
+  // Detours writes each trampoline here at commit; published below, under the lock.
+  std::vector<void*> fresh(set.size(), nullptr);
+  std::vector<HookItem> items;
+  for (size_t i = 0; i < set.size(); ++i) {
+    if (set[i]->generations.load(std::memory_order_acquire) != generation) return false;
+    items.emplace_back(set[i]->name, &fresh[i], set[i]->replacement);
+  }
+  AcquireSRWLockExclusive(&generation_lock);
+  const bool installed = Install(module, items, module_label);
+  if (installed)
+    for (size_t i = 0; i < set.size(); ++i) {
+      set[i]->slots[generation] = fresh[i];
+      set[i]->generations.store(generation + 1, std::memory_order_release);
+    }
+  ReleaseSRWLockExclusive(&generation_lock);
+  return installed;
+}
+// For a set installed before: reinstalls it when another module removed it.
+// Returns true when it did. Bounded by kMaxGenerations, so two modules that both
+// insist on being first cannot trade places forever.
+inline bool Reinstall(HMODULE module, const std::vector<Rehookable*>& set, const char* module_label) {
+  if (set.empty() || set.front()->generations.load(std::memory_order_acquire) == 0) return false;
+  if (StillHooked(module, set)) return false;
+  if (!InstallGeneration(module, set, module_label)) return false;
+  std::stringstream s;
+  s << "mfgunlock::hook: another module removed our hooks in " << module_label
+    << "; installed them again (generation " << set.front()->generations.load() << " of " << kMaxGenerations
+    << ").";
+  reshade::log::message(reshade::log::level::warning, s.str().c_str());
+  return true;
 }
 
 // Return success explicitly. Callers must retain trampoline/state on failure.
