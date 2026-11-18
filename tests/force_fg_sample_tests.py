@@ -138,6 +138,8 @@ if a.sdk_fg and a.sdk_ll and a.sdk_fg.is_file() and a.sdk_ll.is_file():
     if xunloaded or '0x1' not in xmasks or 'generated' not in summary:
         # 1.11.0 (plan item A4): say why, from Streamline's own log.
         why = 'window not focused' if 'DLSS-G disabled: window not focused' in last_sl_log else 'cause not in sl.log'
+        if window_focus.screen_saver_running():
+            why += '; the screen saver is running'
         print(f'forced-xmx: XMX did not generate on the first run ({why}); retrying once')
         xok, xmasks, xunloaded, xmib, summary, skipped = run('forced-xmx-retry', True, True)
     if xunloaded or '0x1' not in xmasks or 'generated' not in summary:

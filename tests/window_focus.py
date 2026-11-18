@@ -54,16 +54,37 @@ def focus(pid):
     return _user32.GetForegroundWindow() == hwnd
 
 
+_kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+_kernel32.SetThreadExecutionState.argtypes = [wintypes.DWORD]
+_kernel32.SetThreadExecutionState.restype = wintypes.DWORD
+_ES_CONTINUOUS, _ES_SYSTEM_REQUIRED, _ES_DISPLAY_REQUIRED = 0x80000000, 0x1, 0x2
+
+
 def hold(pid, seconds, poll):
     """Sleeps `seconds`, taking the focus back every second while `poll()` is None.
-    Returns how many times the focus had to be taken back."""
+    Returns how many times the focus had to be taken back.
+
+    The display is kept on meanwhile: the screen saver (60 s on the development PC)
+    takes the foreground from every window, and DLSS-G stops interpolating
+    ("window not focused"), as in the gate of 2026-11-18."""
     import time
     taken = 0
-    end = time.monotonic() + seconds
-    while time.monotonic() < end and poll() is None:
-        hwnd = main_window(pid)
-        if hwnd and _user32.GetForegroundWindow() != hwnd:
-            focus(pid)
-            taken += 1
-        time.sleep(1)
+    _kernel32.SetThreadExecutionState(_ES_CONTINUOUS | _ES_SYSTEM_REQUIRED | _ES_DISPLAY_REQUIRED)
+    try:
+        end = time.monotonic() + seconds
+        while time.monotonic() < end and poll() is None:
+            hwnd = main_window(pid)
+            if hwnd and _user32.GetForegroundWindow() != hwnd:
+                focus(pid)
+                taken += 1
+            time.sleep(1)
+    finally:
+        _kernel32.SetThreadExecutionState(_ES_CONTINUOUS)
     return taken
+
+
+def screen_saver_running():
+    """True while the screen saver runs (SPI_GETSCREENSAVERRUNNING)."""
+    running = wintypes.BOOL()
+    _user32.SystemParametersInfoW(0x72, 0, ctypes.byref(running), 0)
+    return bool(running.value)
