@@ -48,10 +48,9 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Unit tests
-        # Pure tests only: policies, parsers, tables, generated documents.
-        run: >-
-          ctest --test-dir build -C Release --output-on-failure
-          -R "^(config_atomic_save|latency_marker_admission|xmx_policy|streamline_log|i18n|fg_chain_tests|ngx_param_vtable_tests|preada_caller|generic_gate_tests|runtime_version_tests|pacing_policy_tests|reflex_pacing_tests|drs_report_tests|dlss_preset_tests|force_policy_tests|memory_policy_tests|validation_status_tests|panel_strings|panel_tables|ini_panel_parity|release_isolation_tests)"
+        # Pure tests only (LABELS pure in tests/CMakeLists.txt): policies, parsers, tables,
+        # generated documents, in-process hooks. No GPU, game or file from the development PC.
+        run: ctest --test-dir build -C Release --output-on-failure -L pure -j4
 
       - name: Compatibility matrix is current
         run: python tools/build_compat_matrix.py --check

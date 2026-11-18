@@ -424,3 +424,43 @@ if(Python3_Interpreter_FOUND)
     "release-1.4.5")
   set_tests_properties(release_1_4_5_manifest PROPERTIES SKIP_RETURN_CODE 77)
 endif()
+
+# 1.11.0 (plan items B1 and B2): test labels.
+#   pure: no GPU, no game, no window and no file from the development PC. CI runs
+#         `ctest -L pure`, so a new pure test joins CI by being listed here.
+#   Every other test holds the "display" resource lock: they open windows, take the
+#   focus, go exclusive fullscreen or use the GPU, and run one at a time even under
+#   `ctest -j`, while pure tests run beside them.
+set(MFGUNLOCK_PURE_TESTS
+  config_atomic_save latency_marker_admission xmx_policy streamline_log i18n fg_chain_tests
+  ngx_param_vtable_tests preada_caller generic_gate_tests runtime_version_tests pacing_policy_tests
+  reflex_pacing_tests drs_report_tests dlss_preset_tests force_policy_tests memory_policy_tests
+  validation_status_tests panel_strings panel_tables ini_panel_parity release_isolation_tests
+  # 1.11.0: not in CI's old list; none needs a GPU, a game or a local file.
+  gpu_arch_tests crash_record module_scan_tests hdr_compat_tests latency_analysis_tests
+  mfgdiagnostics_tests input_diagnostics_tests quality_guard_tests force_fg support_files
+  vram_timeline xemfg_compatibility_policy latency_reflex_tests ngx_requirements
+  queue_ack patch_transaction hook_failure stale_hook rehook
+  # Built only with MFGUNLOCK_BUILD_XEMFG (not in CI).
+  xemfg_vulkan_policy xemfg_vulkan_queue)
+set(_mfg_test_dirs "${CMAKE_CURRENT_SOURCE_DIR}")
+if(MFGUNLOCK_BUILD_XEMFG)
+  list(APPEND _mfg_test_dirs "${CMAKE_CURRENT_SOURCE_DIR}/../src/addons/mfgunlock/xemfg")
+endif()
+set(_mfg_labelled "")
+foreach(_dir IN LISTS _mfg_test_dirs)
+  get_property(_tests DIRECTORY "${_dir}" PROPERTY TESTS)
+  foreach(_test IN LISTS _tests)
+    if(_test IN_LIST MFGUNLOCK_PURE_TESTS)
+      set_property(TEST "${_test}" DIRECTORY "${_dir}" APPEND PROPERTY LABELS pure)
+      list(APPEND _mfg_labelled "${_test}")
+    else()
+      set_property(TEST "${_test}" DIRECTORY "${_dir}" APPEND PROPERTY RESOURCE_LOCK display)
+    endif()
+  endforeach()
+endforeach()
+foreach(_test IN LISTS MFGUNLOCK_PURE_TESTS)
+  if(NOT _test IN_LIST _mfg_labelled AND NOT _test MATCHES "^xemfg_vulkan_")
+    message(WARNING "MFGUNLOCK_PURE_TESTS names ${_test}, which this configuration does not define")
+  endif()
+endforeach()
