@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "sl_vulkan.hpp"
+#include "sl_vulkan_queues.hpp"
 #include "vendor/xess_mod.h"
 #include "../backend_selection.hpp"
 #include "../force_fg.hpp"
@@ -299,68 +300,54 @@ DeviceEditPtr EditDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo* in
       else { edit->own13 = want13; edit->own13.pNext = const_cast<void*>(head); head = &edit->own13; }
     }
     edit->info.pNext = head;
-    // Queues: Streamline's come after the game's in the same family.
+    // Queues: Streamline's come after the game's in the same family (sl_vulkan_queues.hpp).
     uint32_t count = 0;
     families(physical, &count, nullptr);
     std::vector<VkQueueFamilyProperties> props(count);
     families(physical, &count, props.data());
-    uint32_t graphics = UINT32_MAX, compute = UINT32_MAX;
-    for (uint32_t f = 0; f < count; ++f) {
-      if (graphics == UINT32_MAX && (props[f].queueFlags & VK_QUEUE_GRAPHICS_BIT)) graphics = f;
-      if (compute == UINT32_MAX && (props[f].queueFlags & VK_QUEUE_COMPUTE_BIT) && !(props[f].queueFlags & VK_QUEUE_GRAPHICS_BIT)) compute = f;
+    static_assert(queues::kGraphics == VK_QUEUE_GRAPHICS_BIT && queues::kCompute == VK_QUEUE_COMPUTE_BIT);
+    std::vector<queues::Family> familyList;
+    for (const auto& f : props) familyList.push_back({static_cast<uint32_t>(f.queueFlags), f.queueCount});
+    std::vector<queues::Entry> gameEntries;
+    for (uint32_t i = 0; i < info->queueCreateInfoCount; ++i) {
+      const auto& q = info->pQueueCreateInfos[i];
+      gameEntries.push_back({q.queueFamilyIndex, q.queueCount, q.flags != 0, static_cast<int>(i)});
     }
-    if (compute == UINT32_MAX) compute = graphics;
-    if (graphics == UINT32_MAX) { SetReport("no graphics queue family"); return {}; }
-    edit->queues.assign(info->pQueueCreateInfos, info->pQueueCreateInfos + info->queueCreateInfoCount);
-    edit->priorities.reserve(edit->queues.size() + 2);
-    const auto addQueues = [&](uint32_t family, uint32_t extra, uint32_t& firstIndex) -> bool {
-      if (extra == 0) return true;
-      for (auto& q : edit->queues) {
-        if (q.queueFamilyIndex != family || q.flags) continue;
-        if (q.queueCount + extra > props[family].queueCount) return false;
-        firstIndex = q.queueCount;
-        auto& p = edit->priorities.emplace_back(q.pQueuePriorities, q.pQueuePriorities + q.queueCount);
-        p.resize(q.queueCount + extra, 1.0f);
-        q.queueCount += extra;
-        q.pQueuePriorities = p.data();
-        return true;
-      }
-      if (extra > props[family].queueCount) return false;
-      firstIndex = 0;
-      auto& p = edit->priorities.emplace_back(extra, 1.0f);
-      VkDeviceQueueCreateInfo q{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-      q.queueFamilyIndex = family;
-      q.queueCount = extra;
-      q.pQueuePriorities = p.data();
-      edit->queues.push_back(q);
-      return true;
-    };
+    const queues::Plan plan = queues::PlanQueues(familyList, gameEntries, extraCompute, extraGraphics);
+    if (!plan.ok) { SetReport("no graphics queue family"); return {}; }
     // The game's queues, for the log (RDR2 asks for every queue of a family).
     std::string gameQueues;
-    for (const auto& q : edit->queues)
-      gameQueues += std::string(gameQueues.empty() ? "" : ",") + std::to_string(q.queueFamilyIndex) + ":" +
-                    std::to_string(q.queueCount) + "/" + std::to_string(props[q.queueFamilyIndex].queueCount);
-    // Each queue Streamline asks for: its preferred family, then any family with the capability; when every one
-    // is full, the game's last queue in the preferred family is shared (Streamline submits on it).
+    for (const auto& e : gameEntries)
+      gameQueues += std::string(gameQueues.empty() ? "" : ",") + std::to_string(e.family) + ":" +
+                    std::to_string(e.count) + "/" + std::to_string(props[e.family].queueCount);
+    edit->priorities.reserve(plan.entries.size());
+    for (const auto& e : plan.entries) {
+      if (e.source >= 0) {
+        VkDeviceQueueCreateInfo q = info->pQueueCreateInfos[e.source];
+        if (e.count != q.queueCount) {
+          auto& p = edit->priorities.emplace_back(q.pQueuePriorities, q.pQueuePriorities + q.queueCount);
+          p.resize(e.count, 1.0f);
+          q.queueCount = e.count;
+          q.pQueuePriorities = p.data();
+        }
+        edit->queues.push_back(q);
+      } else {
+        auto& p = edit->priorities.emplace_back(e.count, 1.0f);
+        VkDeviceQueueCreateInfo q{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+        q.queueFamilyIndex = e.family;
+        q.queueCount = e.count;
+        q.pQueuePriorities = p.data();
+        edit->queues.push_back(q);
+      }
+    }
+    edit->computeFamily = plan.compute.family;
+    edit->computeIndex = plan.compute.index;
+    edit->graphicsFamily = plan.graphics.family;
+    edit->graphicsIndex = plan.graphics.index;
     std::string shared;
-    const auto place = [&](VkQueueFlags need, uint32_t preferred, uint32_t extra, uint32_t& family, uint32_t& index,
-                           const char* what) {
-      family = preferred;
-      if (extra == 0) return;
-      std::vector<uint32_t> order{preferred};
-      for (uint32_t f = 0; f < count; ++f)
-        if (f != preferred && (props[f].queueFlags & need) == need) order.push_back(f);
-      for (const uint32_t f : order)
-        if (addQueues(f, extra, index)) { family = f; return; }
-      uint32_t used = 0;
-      for (const auto& q : edit->queues) if (q.queueFamilyIndex == preferred && !q.flags) used = (std::max)(used, q.queueCount);
-      index = used ? used - 1 : 0;
-      shared += std::string(shared.empty() ? "" : ",") + what;
-    };
-    place(VK_QUEUE_COMPUTE_BIT, compute, extraCompute, edit->computeFamily, edit->computeIndex, "compute");
-    place(VK_QUEUE_GRAPHICS_BIT, graphics, extraGraphics, edit->graphicsFamily, edit->graphicsIndex, "graphics");
-    compute = edit->computeFamily;
-    graphics = edit->graphicsFamily;
+    if (plan.compute.shared) shared = "compute";
+    if (plan.graphics.shared) shared += std::string(shared.empty() ? "" : ",") + "graphics";
+    uint32_t compute = edit->computeFamily, graphics = edit->graphicsFamily;
     edit->info.queueCreateInfoCount = static_cast<uint32_t>(edit->queues.size());
     edit->info.pQueueCreateInfos = edit->queues.data();
     edit->info.enabledExtensionCount = static_cast<uint32_t>(edit->extensions.size());

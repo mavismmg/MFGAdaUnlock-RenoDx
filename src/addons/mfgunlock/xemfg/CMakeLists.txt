@@ -655,4 +655,8 @@ if(EXISTS "${XEMFG_VULKAN_HEADERS}/vulkan/vulkan.h" AND EXISTS "${XEMFG_XVK_PROG
   target_include_directories(xemfg_vulkan_policy_tests PRIVATE "${XEMFG_VULKAN_HEADERS}")
   set_target_properties(xemfg_vulkan_policy_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
   add_test(NAME xemfg_vulkan_policy COMMAND xemfg_vulkan_policy_tests)
+  # 1.11.0 (plan item A5): sl_vulkan_queues.hpp, pure.
+  add_executable(xemfg_vulkan_queue_tests "${CMAKE_SOURCE_DIR}/xemfg_vulkan_queue_tests.cpp")
+  set_target_properties(xemfg_vulkan_queue_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+  add_test(NAME xemfg_vulkan_queue COMMAND xemfg_vulkan_queue_tests)
 endif()
