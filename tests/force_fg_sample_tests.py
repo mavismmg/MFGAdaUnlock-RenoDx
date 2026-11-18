@@ -17,6 +17,9 @@ Streamline's own log (SL_LOG_*) and Windows' per-process GPU memory counter.
 """
 import argparse, os, pathlib, re, shutil, subprocess, sys, time
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import window_focus  # noqa: E402  (1.11.0, plan item A4)
+
 ap = argparse.ArgumentParser()
 ap.add_argument('--bin', type=pathlib.Path, required=True)
 ap.add_argument('--addon', type=pathlib.Path, required=True)
@@ -84,7 +87,10 @@ def run(name, force, xmx=False, no_reflex=False):
         env.pop('MFG_SAMPLE_NO_REFLEX', None)
     p = subprocess.Popen([str(b / 'StreamlineSample.exe'), '-width', '2560', '-height', '1440'], cwd=b, env=env)
     try:
-        time.sleep(a.seconds)
+        # 1.11.0 (plan item A4): DLSS-G pauses while its window is not focused.
+        refocused = window_focus.hold(p.pid, a.seconds, p.poll)
+        if refocused:
+            print(f'{name}: took the focus back for the sample {refocused} time(s)')
         mib = dedicated_mib(p.pid) if p.poll() is None else 0.0
     finally:
         p.kill()
@@ -130,7 +136,9 @@ if a.sdk_fg and a.sdk_ll and a.sdk_fg.is_file() and a.sdk_ll.is_file():
     # the XMX hooks were in place, no evaluation reached them; cause not found yet). One retry, reported.
     xok, xmasks, xunloaded, xmib, summary, skipped = run('forced-xmx', True, True)
     if xunloaded or '0x1' not in xmasks or 'generated' not in summary:
-        print('forced-xmx: XMX did not generate on the first run; retrying once')
+        # 1.11.0 (plan item A4): say why, from Streamline's own log.
+        why = 'window not focused' if 'DLSS-G disabled: window not focused' in last_sl_log else 'cause not in sl.log'
+        print(f'forced-xmx: XMX did not generate on the first run ({why}); retrying once')
         xok, xmasks, xunloaded, xmib, summary, skipped = run('forced-xmx-retry', True, True)
     if xunloaded or '0x1' not in xmasks or 'generated' not in summary:
         raise SystemExit('forced-xmx: XMX did not generate in the forced DLSS-G')
