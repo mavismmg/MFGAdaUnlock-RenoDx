@@ -1411,15 +1411,23 @@ final display timing used by DLSS-G.
 
 ## Experimental Vulkan Support
 
-Version 0.6 introduces an experimental Vulkan compatibility path. It recognizes
-Vulkan NGX providers while keeping the existing renderer-independent Streamline
-`slDLSSGSetOptions` and `slDLSSGGetState` integration.
+Vulkan is still experimental: fewer games have been tested on it than on
+Direct3D 12. ReShade has to load as a Vulkan layer. When testing, confirm that
+the panel reports **Vulkan** and use the verification checklist above.
 
-This does **not** add Frame Generation to games that do not already integrate
-Streamline DLSS-G. Vulkan support has not yet completed the same game matrix as
-Direct3D 12 and should not be considered stable or universal. When testing,
-confirm that the overlay reports **Vulkan (experimental)** and use the
-verification checklist above.
+What works on Vulkan, as of 1.11.0:
+
+| Feature | Vulkan | Notes |
+|---|---|---|
+| DLSS-G multiplier unlock in games with DLSS-G | Yes | The same Streamline `slDLSSGSetOptions` / `slDLSSGGetState` path as Direct3D 12. |
+| XeMFG DLSS-G (Intel's model inside DLSS-G) | Yes | NVIDIA's unused feature is never created. Includes real-frame pacing (`[DLSSG] XmxVulkanPacing`, on by default). |
+| [Add frame generation](#dlss-frame-generation-in-games-without-it) (games with DLSS SR only) | Yes | MFG Unlock starts its own Streamline for the game's Vulkan device. Tested in Red Dead Redemption 2. |
+| FP16 (scRGB) HDR notice | Yes (1.11.0) | DLSS-G generates nothing on an FP16 swap chain; the panel says so. |
+| HUD fix (the image before the HUD) | No | Direct3D 12 only. On Vulkan the HUD is interpolated with the scene. |
+| RenoDX HDR upgrade with Add frame generation | No | When another addon changes the swap chain's format, Add frame generation steps aside. Use the game's own HDR instead. |
+
+Red Dead Redemption 2 asks for every queue of its graphics family. Add frame
+generation then shares the game's last queue with Streamline.
 
 ### Indiana Jones and the Great Circle
 
