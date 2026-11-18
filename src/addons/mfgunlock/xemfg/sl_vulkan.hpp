@@ -57,6 +57,8 @@ void AfterEvaluate(VkCommandBuffer command, const NVSDK_NGX_Handle* handle, cons
 
 // The panel's status, in sl_host.hpp's State values (0 off ... 7 generating).
 int PanelState() noexcept;
+// 1.11.0 (A3): the game's swap chain is FP16 (scRGB) HDR, where DLSS-G generates nothing.
+bool Fp16Hdr() noexcept;
 // The support report's line.
 std::string Describe();
 }  // namespace mfgunlock::xemfg::native::slvk

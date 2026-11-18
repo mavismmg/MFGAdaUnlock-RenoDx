@@ -287,7 +287,12 @@
           }
           ui::Readout("##add_fg_route", T(Str::kRoute_p9), T(Str::kRouteHostedShort_p10), T(Str::kHostStreamlineDesc_h1b));
           // 1.10.1: DLSS-G does not generate on an FP16 (scRGB) HDR swap chain (KCD2's HDR).
-          if (vk_host == 0 && mfgunlock::slhost::Fp16Hdr()) ui::StatusChip(T(Str::kHostFp16Hdr_s7), ui::Danger);
+          bool fp16_hdr = vk_host == 0 && mfgunlock::slhost::Fp16Hdr();
+#if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
+          // 1.11.0 (A3): the same on Vulkan.
+          fp16_hdr = fp16_hdr || (vk_host != 0 && mfgunlock::xemfg::native::vulkan::StreamlineHostFp16Hdr());
+#endif
+          if (fp16_hdr) ui::StatusChip(T(Str::kHostFp16Hdr_s7), ui::Danger);
           // The HUD fix: the image before the HUD, for NVIDIA's generator and for XMX (D3D12 only for now).
           if (vk_host == 0) {
           toggle(adv::kHudFix, T(Str::kHudFix_p15));

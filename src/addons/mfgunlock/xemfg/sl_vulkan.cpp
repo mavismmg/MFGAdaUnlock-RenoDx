@@ -87,6 +87,9 @@ std::atomic<bool> deviceReady{};
 // 1.10.1 (plan item 7): Streamline steps aside for the session (swap chain format changed under it).
 std::atomic<bool> bypassed{};
 bool Routing() { return deviceReady.load() && !bypassed.load(); }
+// 1.11.0 (plan item A3): the swap chain is FP16 (scRGB) HDR, which DLSS-G does not support
+// (DLSS-G guide, section 11); the D3D12 host has the same notice (sl_host.hpp, KCD2's HDR).
+std::atomic<bool> fp16Hdr{};
 std::mutex queueLock;
 std::map<VkQueue, VkDevice> queueDevice;  // filled lazily: Streamline's present proxy takes any queue of its device
 
@@ -530,6 +533,14 @@ bool CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR* info, cons
   if (result == VK_SUCCESS && !swapchainSeen.exchange(true))
     SetReport("the game's swap chain is Streamline's (" + std::to_string(info ? info->imageExtent.width : 0) + "x" +
               std::to_string(info ? info->imageExtent.height : 0) + ")");
+  // After the line above, so the support report keeps the notice.
+  if (result == VK_SUCCESS && info) {
+    const bool fp16 = info->imageFormat == VK_FORMAT_R16G16B16A16_SFLOAT;
+    if (fp16 != fp16Hdr.exchange(fp16))
+      SetReport(fp16 ? "the game's HDR uses an FP16 (scRGB) swap chain, which DLSS-G does not support: no frames are "
+                       "generated. Turn the game's HDR off, or use the XeMFG method"
+                     : "the game's swap chain left FP16 HDR; DLSS-G can generate again");
+  }
   return true;
 }
 bool DestroySwapchain(VkDevice device, VkSwapchainKHR swapchain, const VkAllocationCallbacks* allocator) noexcept {
@@ -721,6 +732,7 @@ int PanelState() noexcept {
   if (!Routing() || !swapchainSeen.load()) return kReady;
   return optionsOn.load() && tagged.load() > 0 ? kGenerating : kSwapChain;
 }
+bool Fp16Hdr() noexcept { return Routing() && fp16Hdr.load(); }
 std::string Describe() {
   std::lock_guard guard(reportLock);
   return report + "; evaluations " + std::to_string(evaluations.load()) + ", tagged " + std::to_string(tagged.load()) +

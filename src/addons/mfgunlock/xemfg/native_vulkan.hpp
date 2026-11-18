@@ -43,6 +43,8 @@ bool BeginStreamlineHost(uint32_t& apiVersion) noexcept;
 std::string StreamlineHostReport() noexcept;
 // The panel's status of that host, in slhost::State values (0 when it is not running).
 int StreamlineHostState() noexcept;
+// 1.11.0 (A3): that host's swap chain is FP16 (scRGB) HDR.
+bool StreamlineHostFp16Hdr() noexcept;
 // 1.10.0 (plan XMX Vulkan pacing): the real-frame interval XMX's provider can hold (us, 0 none), the frame's GPU cost
 // it comes from, and whether the pacing runs ([DLSSG] XmxVulkanPacing, on by default).
 uint32_t XmxPacingIntervalUs() noexcept;

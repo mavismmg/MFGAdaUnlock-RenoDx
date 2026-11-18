@@ -1157,6 +1157,7 @@ bool BeginStreamlineHost(uint32_t& apiVersion) noexcept {
 }
 bool StreamlineHostWanted() noexcept { return slvk::Wanted(); }
 int StreamlineHostState() noexcept { return streamlineMode.load()?slvk::PanelState():0; }
+bool StreamlineHostFp16Hdr() noexcept { return streamlineMode.load() && slvk::Fp16Hdr(); }
 uint32_t XmxPacingIntervalUs() noexcept { return providerMode.load() ? pacing_auto::publishedUs.load() : 0; }
 uint32_t XmxPacingCostUs() noexcept { return providerMode.load() ? pacing_auto::costUs.load() : 0; }
 bool XmxPacingEnabled() noexcept { return providerMode.load() && pacing_auto::Enabled(); }
