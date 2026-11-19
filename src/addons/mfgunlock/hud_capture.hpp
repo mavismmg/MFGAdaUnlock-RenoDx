@@ -145,9 +145,29 @@ inline bool OnTraceCopyRegion(api::command_list* cmd, api::resource source, uint
   return OnTraceCopy(cmd, source, dest);
 }
 
+// 1.11.0 (G3): testers did not set HudTrace (Metro Exodus, twice). When the fix
+// has been armed for this many frames without a capture, it traces 3 frames once.
+inline constexpr uint32_t kAutoTraceAfter = 600;
+inline uint32_t armed_frames = 0, last_armed = 0;
+inline std::atomic_bool auto_traced{false};
+inline void MaybeAutoTrace(uint32_t frame) {
+  if (auto_traced.load(std::memory_order_relaxed)) return;
+  std::lock_guard guard(lock);
+  if (frame == last_armed || auto_traced.load(std::memory_order_relaxed)) return;
+  last_armed = frame;
+  if (++armed_frames < kAutoTraceAfter) return;
+  auto_traced.store(true, std::memory_order_relaxed);
+  if (slhost::HudCaptures() != 0 || trace_frames.load(std::memory_order_relaxed) > 0) return;
+  trace_frames.store(3, std::memory_order_relaxed);
+  reshade::log::message(reshade::log::level::info,
+                        ("mfgunlock: HUD fix found no image before the HUD in " + std::to_string(kAutoTraceAfter) +
+                         " frames; HudTrace on for 3 frames (send this log).").c_str());
+}
+
 inline void OnDrawCommon(api::command_list* cmd, bool full_screen) {
   const uint32_t frame = slhost::HudArmIndex();
   if (frame == 0) return;
+  MaybeAutoTrace(frame);
   api::resource_view view{0};
   {
     std::lock_guard guard(lock);
@@ -197,11 +217,12 @@ inline void Register(const std::filesystem::path& ini) {
   reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&internal::OnBindTargets);
   reshade::register_event<reshade::addon_event::draw>(&internal::OnDraw);
   reshade::register_event<reshade::addon_event::draw_indexed>(&internal::OnDrawIndexed);
+  // 1.11.0 (G3): always registered, for the automatic trace; they return at once while no trace runs.
+  reshade::register_event<reshade::addon_event::dispatch>(&internal::OnTraceDispatch);
+  reshade::register_event<reshade::addon_event::copy_resource>(&internal::OnTraceCopy);
+  reshade::register_event<reshade::addon_event::copy_texture_region>(&internal::OnTraceCopyRegion);
   if (const int frames = static_cast<int>(GetPrivateProfileIntW(L"DLSSG", L"HudTrace", 0, ini.c_str())); frames > 0) {
     internal::trace_frames.store(frames > 20 ? 20 : frames);
-    reshade::register_event<reshade::addon_event::dispatch>(&internal::OnTraceDispatch);
-    reshade::register_event<reshade::addon_event::copy_resource>(&internal::OnTraceCopy);
-    reshade::register_event<reshade::addon_event::copy_texture_region>(&internal::OnTraceCopyRegion);
     reshade::log::message(reshade::log::level::info,
                           ("mfgunlock: HudTrace on for " + std::to_string(internal::trace_frames.load()) +
                            " frame(s) after DLSS SR.").c_str());
