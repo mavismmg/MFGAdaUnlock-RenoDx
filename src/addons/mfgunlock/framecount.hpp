@@ -2218,8 +2218,18 @@ inline void AddHooks(HMODULE interposer, std::vector<hook::HookItem>& hooks) {
 }
 // Once DLSS-G was added and the game has run a while without asking for Reflex.
 // Returns whether the addon drives Reflex now.
+// 1.11.0 (G1, Ninja Gaiden 4 without RenoDX DLSS): the game made its swap chain on the
+// system's DXGI factory, not Streamline's, so Streamline never sees its Present and
+// DLSS-G cannot present. Said once, after enough frames to rule out a late swap chain.
+inline std::atomic_bool g_swapchain_outside{false};
 inline bool TryActivate() {
   if (g_active.load(std::memory_order_acquire)) return true;
+  if (g_constants_calls.load(std::memory_order_relaxed) >= 600 && !g_presents_hooked.load(std::memory_order_acquire) &&
+      !g_swapchain_outside.exchange(true))
+    reshade::log::message(reshade::log::level::warning,
+                          "mfgunlock: Route A Reflex: after 600 frames the game's swap chain still does not go through "
+                          "Streamline (it was made on the system's DXGI factory), so DLSS frame generation cannot "
+                          "present. An addon that moves the swap chain into Streamline (RenoDX DLSS) makes it work.");
   if (g_constants_calls.load(std::memory_order_relaxed) < 120 || !g_presents_hooked.load(std::memory_order_acquire) ||
       g_real_get_feature_function == nullptr)
     return false;

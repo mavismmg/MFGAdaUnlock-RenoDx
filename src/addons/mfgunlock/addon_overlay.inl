@@ -545,6 +545,9 @@ std::string FrameGenChainReport() {
            if (mfgunlock::forcefg::Added(decision))
              text += std::string("; ") + mfgunlock::forcefg::ApplyText(static_cast<mfgunlock::forcefg::Apply>(
                          mfgunlock::framecount::g_force_fg_apply.load(std::memory_order_acquire)));
+           // 1.11.0 (G1): why the game's Present was never found.
+           if (fc::reflexdrive::g_swapchain_outside.load(std::memory_order_acquire))
+             text += "; the game's swap chain does not go through Streamline";
            return "\nchain_force_fg=" + text;
          }() + "\nchain_generator=" +
          FrameGenChainGenerator() + "\n";
