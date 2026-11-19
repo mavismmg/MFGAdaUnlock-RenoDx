@@ -87,11 +87,35 @@ bool XmxSaveVramWanted() {
                             (mfgunlock::backend::Directory() / L"MFGAdaUnlock.ini").c_str()) != 0;
   return wanted;
 }
+// 1.11.0 (G2): another module hooks NGX's exports (the "DLSS 5" addons). Skipping
+// NVIDIA's frame generation feature would hide frame generation from it: its
+// Present mode waited for a DLSS-G resource that never came (Lies of P, 2026-11-19).
+std::atomic_bool g_foreign_ngx_hook{false};
 bool XmxSkipsNvidiaFeature() {
   // D3D12 only: on Vulkan the XMX provider owns the feature, and the D3D12 core hooks
   // retried every 250 ms in DOOM: The Dark Ages ("failed to install hooks in _nvngx.dll").
   if (g_render_api.load(std::memory_order_relaxed) == DetectedRenderApi::kVulkan) return false;
+  if (g_foreign_ngx_hook.load(std::memory_order_acquire)) return false;
   return XmxSaveVramWanted() && mfgunlock::xmx::generator::Enabled() && mfgunlock::xmx::generator::Preflight();
+}
+// Whether `module!name` jumps into another module (or into code outside any): someone
+// else's hook. Logged once, and XmxSaveVram stands aside for the session.
+void NoteForeignNgxHook(HMODULE module, const char* name) {
+  const auto* proc = reinterpret_cast<const uint8_t*>(GetProcAddress(module, name));
+  if (proc == nullptr || mfgunlock::hook::JumpsIntoSelf(proc)) return;
+  const uint8_t* end = mfgunlock::hook::FollowJumps(proc);
+  if (end == proc) return;
+  HMODULE owner = nullptr;
+  constexpr DWORD kFlags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT;
+  if (GetModuleHandleExW(kFlags, reinterpret_cast<LPCWSTR>(end), &owner) && owner == module) return;
+  if (g_foreign_ngx_hook.exchange(true)) return;
+  char path[MAX_PATH] = "code outside any module";
+  if (owner != nullptr) GetModuleFileNameA(owner, path, MAX_PATH);
+  reshade::log::message(
+      reshade::log::level::warning,
+      (std::string("mfgunlock: another module hooks NGX (") + name + " leads to " + path +
+       "); XeMFG DLSS-G creates NVIDIA's frame generation feature this session (XmxSaveVram stands aside), "
+       "so that module still sees frame generation.").c_str());
 }
 // NVSDK_NGX_Handle is opaque in these headers; the runtime's own is { unsigned Id; }.
 alignas(8) unsigned int g_xmx_handle_storage[2]{0x584D5801u, 0};  // "XMX" 1
@@ -234,6 +258,9 @@ void TryInstallPresetHook() {
     if (mod == nullptr || GetProcAddress(mod, "NVSDK_NGX_D3D12_CreateFeature") == nullptr) continue;
     char narrow[64] = {};
     WideCharToMultiByte(CP_UTF8, 0, name, -1, narrow, sizeof(narrow) - 1, nullptr, nullptr);
+    // 1.11.0 (G2): before ours go in, whether someone else's are already there.
+    for (const char* export_name : {"NVSDK_NGX_D3D12_CreateFeature", "NVSDK_NGX_D3D12_EvaluateFeature"})
+      NoteForeignNgxHook(mod, export_name);
     // The XMX handle's Evaluate and Release first, so CreateFeature never hands it out unrouted.
     if ((XmxSkipsNvidiaFeature() || mfgunlock::slhost::Wanted()) && !g_xmx_core_hooks_installed.load(std::memory_order_relaxed) &&
         mfgunlock::hook::InstallGeneration(mod, kXmxCoreHooks, narrow))
@@ -259,6 +286,9 @@ void CheckNgxHooksStillInstalled() {
   char narrow[64] = {};
   GetModuleFileNameA(g_ngx_hooked_module, narrow, sizeof(narrow) - 1);
   const char* label = std::strrchr(narrow, '\\') != nullptr ? std::strrchr(narrow, '\\') + 1 : narrow;
+  // 1.11.0 (G2): a module that hooked after ours (or removed ours) also hooks NGX.
+  for (const char* export_name : {"NVSDK_NGX_D3D12_CreateFeature", "NVSDK_NGX_D3D12_EvaluateFeature"})
+    NoteForeignNgxHook(g_ngx_hooked_module, export_name);
   if (g_xmx_core_hooks_installed.load(std::memory_order_acquire))
     mfgunlock::hook::Reinstall(g_ngx_hooked_module, kXmxCoreHooks, label);
   mfgunlock::hook::Reinstall(g_ngx_hooked_module, kNgxPresetHooks, label);
