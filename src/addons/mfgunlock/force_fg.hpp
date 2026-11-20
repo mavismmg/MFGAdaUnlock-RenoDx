@@ -41,7 +41,8 @@ inline bool IsHostInit(const sl::Preferences& pref) {
 
 // kNoPlugin and kPluginVersion (1.11.0, F2) come last: the value is stored as an int.
 enum class Decision : uint8_t {
-  kOff, kGameHasFrameGeneration, kNoSuperResolution, kUnknownAbi, kAdded, kAllFeatures, kNoPlugin, kPluginVersion
+  kOff, kGameHasFrameGeneration, kNoSuperResolution, kUnknownAbi, kAdded, kAllFeatures, kNoPlugin, kPluginVersion,
+  kGamePluginVersion
 };
 
 constexpr const char* DecisionText(Decision decision) {
@@ -53,6 +54,7 @@ constexpr const char* DecisionText(Decision decision) {
     case Decision::kAllFeatures: return "not applied: the game loads every Streamline feature, so it may have its own frame generation";
     case Decision::kNoPlugin: return "not applied: the game's Streamline has no DLSS-G plugin (sl.dlss_g.dll), and MFG Unlock's is missing";
     case Decision::kPluginVersion: return "not applied: the game's Streamline has no DLSS-G plugin (sl.dlss_g.dll), and MFG Unlock's is for another Streamline version";
+    case Decision::kGamePluginVersion: return "not applied: the sl.dlss_g.dll in the game's folder is for another Streamline version than the game's sl.interposer.dll; use a matching set (all sl.*.dll from one version)";
     default: return "DLSS frame generation added to the game's Streamline features";
   }
 }
@@ -62,10 +64,20 @@ constexpr const char* DecisionText(Decision decision) {
 // so its Streamline loaded nothing and said nothing. MFG Unlock's own plugin is
 // lent only to the same Streamline major.minor, from a folder that holds nothing
 // else (its full folder would offer a second sl.common.dll). Pure, for the test.
-enum class PluginSource : uint8_t { kGame, kOurs, kMissing, kOtherVersion };
+// 1.11.0 (test build 2, Ninja Gaiden 4): a tester copied a 2.14 sl.dlss_g.dll beside the game's
+// 2.13 sl.interposer.dll; Streamline loaded it but gave no DLSS-G functions, and the game then
+// crashed. The game's own plugin counts only when its major.minor is the interposer's.
+enum class PluginSource : uint8_t { kGame, kOurs, kMissing, kOtherVersion, kGameOtherVersion };
+constexpr bool SameStreamline(uint16_t a_major, uint16_t a_minor, uint16_t b_major, uint16_t b_minor) {
+  return a_major != 0 && a_major == b_major && a_minor == b_minor;
+}
 constexpr PluginSource DecidePluginSource(bool game_has_plugin, bool ours_present, uint16_t game_major,
-                                          uint16_t game_minor, uint16_t our_major, uint16_t our_minor) {
-  if (game_has_plugin) return PluginSource::kGame;
+                                          uint16_t game_minor, uint16_t our_major, uint16_t our_minor,
+                                          uint16_t plugin_major = 0, uint16_t plugin_minor = 0) {
+  if (game_has_plugin)
+    return plugin_major == 0 || SameStreamline(plugin_major, plugin_minor, game_major, game_minor)
+               ? PluginSource::kGame
+               : PluginSource::kGameOtherVersion;
   if (!ours_present) return PluginSource::kMissing;
   if (game_major == 0 || game_major != our_major || game_minor != our_minor) return PluginSource::kOtherVersion;
   return PluginSource::kOurs;
@@ -74,6 +86,7 @@ constexpr Decision AfterPluginCheck(Decision decision, PluginSource source) {
   if (decision != Decision::kAdded) return decision;
   if (source == PluginSource::kMissing) return Decision::kNoPlugin;
   if (source == PluginSource::kOtherVersion) return Decision::kPluginVersion;
+  if (source == PluginSource::kGameOtherVersion) return Decision::kGamePluginVersion;
   return decision;
 }
 
@@ -162,7 +175,7 @@ constexpr Status PanelStatus(bool enabled, bool streamline_loaded, bool init_see
     case Decision::kGameHasFrameGeneration: return Status::kGameHasFrameGeneration;
     case Decision::kAllFeatures: return Status::kAllFeatures;
     case Decision::kNoSuperResolution: return Status::kNoSuperResolution;
-    case Decision::kNoPlugin: case Decision::kPluginVersion: return Status::kNoPlugin;
+    case Decision::kNoPlugin: case Decision::kPluginVersion: case Decision::kGamePluginVersion: return Status::kNoPlugin;
     case Decision::kAdded: break;
     default: return Status::kWaiting;
   }

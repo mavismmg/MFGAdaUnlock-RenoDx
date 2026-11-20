@@ -687,18 +687,28 @@ inline forcefg::Decision LendPlugin(const sl::Preferences& pref, sl::Preferences
     searched.push_back(Directory(path));
   }
   bool game_has = false;
-  for (const auto& dir : searched) game_has = game_has || FileExists(dir + L"\\sl.dlss_g.dll");
+  runtimeversion::Version game_plugin{};
+  for (const auto& dir : searched)
+    if (!game_has && FileExists(dir + L"\\sl.dlss_g.dll")) {
+      game_has = true;
+      game_plugin = runtimeversion::FromFile((dir + L"\\sl.dlss_g.dll").c_str());
+    }
   const std::wstring ours = g_force_fg_our_streamline + L"\\sl.dlss_g.dll";
   const bool ours_present = !g_force_fg_our_streamline.empty() && FileExists(ours);
   const auto our_version = ours_present ? runtimeversion::FromFile(ours.c_str()) : runtimeversion::Version{};
   const auto source = forcefg::DecidePluginSource(game_has, ours_present, game_version.major, game_version.minor,
-                                                  our_version.major, our_version.minor);
+                                                  our_version.major, our_version.minor, game_plugin.major,
+                                                  game_plugin.minor);
   g_force_fg_plugin_source.store(static_cast<int>(source), std::memory_order_release);
   {
     std::stringstream s;
     s << "mfgunlock: forced DLSS frame generation: the game's Streamline " << game_version.major << "."
       << game_version.minor << "." << game_version.patch << " "
-      << (game_has ? "has its sl.dlss_g.dll"
+      << (source == forcefg::PluginSource::kGameOtherVersion
+              ? "has an sl.dlss_g.dll " + std::to_string(game_plugin.major) + "." + std::to_string(game_plugin.minor) +
+                    "." + std::to_string(game_plugin.patch) +
+                    ", for another Streamline version; not forcing DLSS-G with it (use one matching set of sl.*.dll)"
+          : game_has ? std::string("has its sl.dlss_g.dll")
           : source == forcefg::PluginSource::kOurs ? "has no sl.dlss_g.dll; lending MFG Unlock's "
           : source == forcefg::PluginSource::kOtherVersion ? "has no sl.dlss_g.dll, and MFG Unlock's is for Streamline "
           : "has no sl.dlss_g.dll, and MFG Unlock's is missing")
@@ -707,7 +717,8 @@ inline forcefg::Decision LendPlugin(const sl::Preferences& pref, sl::Preferences
                     std::to_string(our_version.patch)
               : std::string())
       << ".";
-    reshade::log::message(game_has || source == forcefg::PluginSource::kOurs ? reshade::log::level::info
+    reshade::log::message(source == forcefg::PluginSource::kGame || source == forcefg::PluginSource::kOurs
+                              ? reshade::log::level::info
                                                                              : reshade::log::level::warning,
                           s.str().c_str());
   }

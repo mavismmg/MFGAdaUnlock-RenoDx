@@ -67,6 +67,13 @@ int main() {
   CHECK(!Added(Decision::kNoPlugin) && !Added(Decision::kPluginVersion));
   CHECK(PanelStatus(true, true, true, 30000, Decision::kNoPlugin, Apply::kNotAdded) == Status::kNoPlugin);
   CHECK(PanelStatus(true, true, true, 30000, Decision::kPluginVersion, Apply::kNotAdded) == Status::kNoPlugin);
+  // Test build 2 (Ninja Gaiden 4): a 2.14 sl.dlss_g.dll beside the game's 2.13 interposer is refused.
+  CHECK(DecidePluginSource(true, true, 2, 13, 2, 14, 2, 14) == PluginSource::kGameOtherVersion);
+  CHECK(DecidePluginSource(true, true, 2, 13, 2, 14, 2, 13) == PluginSource::kGame);
+  CHECK(DecidePluginSource(true, true, 2, 13, 2, 14, 0, 0) == PluginSource::kGame);  // version unreadable: as before
+  CHECK(AfterPluginCheck(Decision::kAdded, PluginSource::kGameOtherVersion) == Decision::kGamePluginVersion);
+  CHECK(!Added(Decision::kGamePluginVersion));
+  CHECK(PanelStatus(true, true, true, 30000, Decision::kGamePluginVersion, Apply::kNotAdded) == Status::kNoPlugin);
 
   // 1.10.1 (plan item 5): Add frame generation's own slInit is recognized; a game's is not.
   {
