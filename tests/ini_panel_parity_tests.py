@@ -14,7 +14,9 @@ INI_EXEMPT = {('XeFG.Learned', 'Executable'),
               # Test only (1.10.0): fails NGX's requirements query under SimulatePreAda=2.
               ('DLSSG', 'SimulateRequirementsFailure'),
               # Diagnostics for a tester (1.10.1, plan item 4): logs the passes after DLSS SR.
-              ('DLSSG', 'HudTrace')}
+              ('DLSSG', 'HudTrace'),
+              # Escape hatch (1.11.0, H2): lets a game's own NVAPI Reflex through while the host runs.
+              ('DLSSG', 'HostGameReflex')}
 RESHADE_EXEMPT = {
     'DisocclusionGuardLevel',   # migrated to DepthEdgeGuardLevel
     'DynamicReflexSourceCap',   # migrated to ReflexSourceFpsCap

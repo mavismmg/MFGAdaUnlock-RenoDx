@@ -1987,7 +1987,11 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     report+=std::string("\npre_ada_admitted=")+(mfgunlock::xmx::preada::Admitted()?"1":"0");
     report+="\nstreamline_log="+mfgunlock::streamlinelog::Describe(mfgunlock::streamlinelog::Current());
     // 1.10.0 (sl_host.hpp): Streamline hosted for an NGX-only game.
-    if(mfgunlock::slhost::Wanted()) report+="\nstreamline_host="+mfgunlock::slhost::Describe();
+    if(mfgunlock::slhost::Wanted()) {
+      report+="\nstreamline_host="+mfgunlock::slhost::Describe();
+      // 1.11.0 (H2): the game's own NVAPI Reflex calls held back.
+      if(const uint64_t held=mfgunlock::nvapireflex::Blocked()) report+="; game Reflex calls held "+std::to_string(held);
+    }
     report+=CapabilityReport();
     // 1.9.0: the driver profile, read only, and only now: this runs when
     // the report is saved or copied.

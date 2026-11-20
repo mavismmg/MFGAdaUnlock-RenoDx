@@ -154,6 +154,7 @@
 #include "vram_trace.hpp"
 #include "sl_host.hpp"
 #include "hud_capture.hpp"
+#include "nvapi_reflex_guard.hpp"
 
 #include <deps/imgui/imgui.h>
 #include <include/reshade.hpp>
@@ -859,6 +860,11 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
   CheckDeviceRemoved(swapchain);
   StartDiscoveryWorker();
   RetryPresetHookFromPresent();
+  // 1.11.0 (H2): nvapi64.dll is usually mapped before the addon; returns at once once installed.
+  if (mfgunlock::slhost::Wanted()) {
+    static const auto ini = mfgunlock::backend::Directory() / L"MFGAdaUnlock.ini";
+    mfgunlock::nvapireflex::TryInstall(ini);
+  }
   mfgunlock::vramtrace::Dump(mfgunlock::backend::Directory());
 #if !defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
   if (g_render_api.load(std::memory_order_relaxed) ==
@@ -1731,7 +1737,11 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
         mfgunlock::drsoverride::TryInstall();
       TryAutoEarlyLoad();
       mfgunlock::loadhook::g_on_dlssg_plugin_loaded = ProcessLoadedStreamlineDlssgPlugin;
-      mfgunlock::loadhook::g_on_nvapi_loaded = mfgunlock::xmx::preada::OnNvapiLoaded;
+      // 1.11.0 (H2): also the guard for the game's own NVAPI Reflex while the host runs.
+      mfgunlock::loadhook::g_on_nvapi_loaded = []() {
+        mfgunlock::xmx::preada::OnNvapiLoaded();
+        mfgunlock::nvapireflex::TryInstall(mfgunlock::backend::Directory() / L"MFGAdaUnlock.ini");
+      };
       mfgunlock::loadhook::g_on_ngx_loaded = []() {
         TryInstallPresetHook();
         mfgunlock::xmx::preada::TryInstallRequirements();
