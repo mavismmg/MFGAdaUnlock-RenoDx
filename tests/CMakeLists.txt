@@ -425,6 +425,10 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(release_1_4_5_manifest PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
+# 1.11.0 (H1): the HUD fix's full-screen pass rule.
+add_executable(hud_pass_tests hud_pass_tests.cpp)
+add_test(NAME hud_pass COMMAND hud_pass_tests)
+
 # 1.11.0 (plan items B1 and B2): test labels.
 #   pure: no GPU, no game, no window and no file from the development PC. CI runs
 #         `ctest -L pure`, so a new pure test joins CI by being listed here.
@@ -440,7 +444,7 @@ set(MFGUNLOCK_PURE_TESTS
   gpu_arch_tests crash_record module_scan_tests hdr_compat_tests latency_analysis_tests
   mfgdiagnostics_tests input_diagnostics_tests quality_guard_tests force_fg support_files
   vram_timeline xemfg_compatibility_policy latency_reflex_tests ngx_requirements
-  queue_ack patch_transaction hook_failure stale_hook rehook
+  queue_ack patch_transaction hook_failure stale_hook rehook hud_pass
   # Built only with MFGUNLOCK_BUILD_XEMFG (not in CI).
   xemfg_vulkan_policy xemfg_vulkan_queue)
 set(_mfg_test_dirs "${CMAKE_CURRENT_SOURCE_DIR}")

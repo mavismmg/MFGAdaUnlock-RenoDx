@@ -22,6 +22,7 @@
 #include <string>
 #include <include/reshade.hpp>
 #include "sl_host.hpp"
+#include "hud_pass.hpp"
 
 namespace mfgunlock::hudcapture {
 namespace api = reshade::api;
@@ -93,9 +94,32 @@ inline std::atomic<int> trace_frames{0};
 inline std::atomic<int> trace_lines{0};
 inline uint32_t trace_frame = 0;
 inline constexpr int kTraceLineLimit = 1500;
-inline void Trace(const std::string& text) {
+// 1.11.0 (H1): repeats of the same line (Metro's 1334 depth draws) are folded into one
+// "xN" line, so the limit holds whole frames, not the first one's depth pass.
+inline std::mutex trace_lock;
+inline std::string trace_last;
+inline int trace_repeats = 0;
+inline void Emit(const std::string& text, int repeats) {
   if (trace_lines.fetch_add(1, std::memory_order_relaxed) >= kTraceLineLimit) return;
-  reshade::log::message(reshade::log::level::info, ("mfgunlock: HudTrace " + text).c_str());
+  reshade::log::message(reshade::log::level::info,
+                        ("mfgunlock: HudTrace " + text + (repeats > 1 ? " x" + std::to_string(repeats) : "")).c_str());
+}
+inline void Trace(const std::string& text) {
+  std::lock_guard guard(trace_lock);
+  const std::string key = text.substr(0, text.find(" #"));  // the same pass into a new target still folds
+  if (key == trace_last.substr(0, trace_last.find(" #"))) {
+    ++trace_repeats;
+    return;
+  }
+  if (!trace_last.empty()) Emit(trace_last, trace_repeats);
+  trace_last = text;
+  trace_repeats = 1;
+}
+inline void FlushTrace() {
+  std::lock_guard guard(trace_lock);
+  if (!trace_last.empty()) Emit(trace_last, trace_repeats);
+  trace_last.clear();
+  trace_repeats = 0;
 }
 // The frame being traced, or 0. A new armed frame uses up one of the N.
 inline uint32_t TraceFrame() {
@@ -104,6 +128,7 @@ inline uint32_t TraceFrame() {
   if (frame == 0) return 0;
   std::lock_guard guard(lock);
   if (frame != trace_frame) {
+    FlushTrace();
     if (trace_frames.fetch_sub(1, std::memory_order_relaxed) <= 0) return 0;
     trace_frame = frame;
     Trace("frame " + std::to_string(frame) + ": back buffer " + std::to_string(slhost::BackbufferWidth()) + "x" +
@@ -199,12 +224,12 @@ inline void OnDrawCommon(api::command_list* cmd, bool full_screen) {
 }
 inline bool OnDraw(api::command_list* cmd, uint32_t vertices, uint32_t instances, uint32_t, uint32_t) {
   TraceDraw(cmd, "draw", vertices, instances);
-  OnDrawCommon(cmd, (vertices == 3 || vertices == 4) && instances == 1);
+  OnDrawCommon(cmd, IsFullScreenPass(false, vertices, instances));
   return false;
 }
 inline bool OnDrawIndexed(api::command_list* cmd, uint32_t indices, uint32_t instances, uint32_t, int32_t, uint32_t) {
   TraceDraw(cmd, "draw_indexed", indices, instances);
-  OnDrawCommon(cmd, false);
+  OnDrawCommon(cmd, IsFullScreenPass(true, indices, instances));
   return false;
 }
 }  // namespace internal
