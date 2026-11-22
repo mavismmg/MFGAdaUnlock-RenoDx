@@ -25,6 +25,7 @@
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <windows.h>
+#include <intrin.h>
 #include <psapi.h>
 #include <DirectXMath.h>
 #include <atomic>
@@ -84,6 +85,9 @@ inline std::atomic_bool fp16_hdr{false};
 inline std::atomic<uint32_t> hud_arm_index{0};  // the frame whose image before the HUD is still to be found
 inline std::atomic<uint64_t> hud_captures{0};
 inline std::atomic<uint64_t> evaluations{0}, tagged{0}, frames{0};
+// 1.11.0 (H3): DLSS SR evaluations the game itself marked as a reset (The Medium: XMX saw a
+// reset nearly every frame; this tells the game's resets from DLSS-G's own).
+inline std::atomic<uint64_t> game_resets{0};
 inline std::atomic_bool options_on{false};
 inline IDXGIFactory2* proxy_factory = nullptr;  // kept alive with the swap chain
 inline ID3D12Device* game_device = nullptr;
@@ -93,6 +97,10 @@ inline void HookProxyPresent(void* chain);  // Streamline wraps ReShade's factor
 inline std::atomic<uint32_t> backbuffer_width{0}, backbuffer_height{0};
 inline std::atomic<void*> game_chain{nullptr};  // Streamline's proxy swap chain, for the report
 inline thread_local bool inside_creation = false;
+// 1.11.0 (H4): a swap chain created through Streamline's proxy factory by someone else (RenoDX's
+// DLSS addon upgrades the game's factory itself), on this thread: Streamline's own creation of the
+// real swap chain underneath must not be taken over again.
+inline thread_local bool inside_streamline_creation = false;
 
 // DLSS SR features: NGX handle -> create flags.
 struct Feature {
@@ -136,8 +144,16 @@ using CreateLegacyFn = HRESULT(STDMETHODCALLTYPE*)(IDXGIFactory*, IUnknown*, DXG
 inline CreateHwndFn real_hwnd = nullptr;
 inline CreateLegacyFn real_legacy = nullptr;
 
+// 1.11.0 (H4): Streamline creating the real swap chain under a proxy swap chain (its code is in
+// sl.interposer.dll), even where its proxy factory could not be hooked.
+inline bool FromStreamline(void* return_address) {
+  HMODULE caller = nullptr;
+  constexpr DWORD kFlags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT;
+  return module != nullptr && GetModuleHandleExW(kFlags, static_cast<LPCWSTR>(return_address), &caller) &&
+         caller == module;
+}
 inline bool Engage(IUnknown* queue) {
-  if (inside_creation || Current() != State::kReady || queue == nullptr) return false;
+  if (inside_creation || inside_streamline_creation || Current() != State::kReady || queue == nullptr) return false;
   ID3D12CommandQueue* d3d12 = nullptr;
   if (FAILED(queue->QueryInterface(IID_PPV_ARGS(&d3d12)))) return false;
   d3d12->Release();
@@ -245,7 +261,8 @@ inline HRESULT STDMETHODCALLTYPE CreateForHwnd(IDXGIFactory2* self, IUnknown* qu
                                                const DXGI_SWAP_CHAIN_DESC1* desc,
                                                const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreen, IDXGIOutput* output,
                                                IDXGISwapChain1** chain) {
-  if (!Engage(queue)) return real_hwnd(self, queue, window, desc, fullscreen, output, chain);
+  if (FromStreamline(_ReturnAddress()) || !Engage(queue))
+    return real_hwnd(self, queue, window, desc, fullscreen, output, chain);
   if (!AttachDevice(queue)) return real_hwnd(self, queue, window, desc, fullscreen, output, chain);
   IDXGIFactory2* proxy = Proxy(self);
   if (proxy == nullptr) {
@@ -274,7 +291,7 @@ inline HRESULT STDMETHODCALLTYPE CreateForHwnd(IDXGIFactory2* self, IUnknown* qu
 }
 inline HRESULT STDMETHODCALLTYPE CreateLegacy(IDXGIFactory* self, IUnknown* queue, DXGI_SWAP_CHAIN_DESC* desc,
                                               IDXGISwapChain** chain) {
-  if (!Engage(queue)) return real_legacy(self, queue, desc, chain);
+  if (FromStreamline(_ReturnAddress()) || !Engage(queue)) return real_legacy(self, queue, desc, chain);
   if (!AttachDevice(queue)) return real_legacy(self, queue, desc, chain);
   IDXGIFactory2* proxy = Proxy(self);
   if (proxy == nullptr) return real_legacy(self, queue, desc, chain);
@@ -332,6 +349,74 @@ inline bool HookFactory() {
   factory->Release();
   const bool hwnd = hook::InstallOne(reinterpret_cast<void**>(&real_hwnd), reinterpret_cast<void*>(&CreateForHwnd));
   const bool legacy = hook::InstallOne(reinterpret_cast<void**>(&real_legacy), reinterpret_cast<void*>(&CreateLegacy));
+  return hwnd && legacy;
+}
+
+// 1.11.0 (H4): swap chains made on Streamline's proxy factory by another module.
+// Lies of P and Hi-Fi RUSH with RenoDX's DLSS addon (2026-11-20/21): that addon upgrades the
+// game's factory with our Streamline and creates the swap chain there. Streamline then creates
+// the real swap chain through the factory below it, which reached CreateForHwnd above, and we
+// put a second Streamline swap chain under the first: "Streamline supports only one
+// DXGISwapChain" ~5800 times, two Presents per frame through DLSS-G, and "Reflex not detected"
+// (frame N != N+1) at every frame. Now Streamline's own creation passes straight through, and
+// the swap chain the other module made is adopted: its Present paces the frames as ours would.
+inline CreateHwndFn real_sl_hwnd = nullptr;
+inline CreateLegacyFn real_sl_legacy = nullptr;
+template <class Create>
+inline HRESULT AdoptStreamlineChain(IUnknown* queue, IUnknown** chain, int format, Create&& create) {
+  // Our own creation (CreateForHwnd), or a swap chain after the first: Streamline's call, untouched,
+  // only marked so its real creation underneath is not taken over.
+  const bool adopt = Engage(queue) && AttachDevice(queue);
+  inside_streamline_creation = true;
+  const HRESULT hr = create();
+  inside_streamline_creation = false;
+  if (!adopt || FAILED(hr) || chain == nullptr || *chain == nullptr) return hr;
+  game_chain = *chain;
+  backbuffer_format = format;
+  if (above_reshade) HookProxyPresent(*chain);
+  state = State::kSwapChain;
+  SetReport("the game's swap chain is Streamline's, created by another addon on MFG Unlock's Streamline "
+            "(RenoDX DLSS?)" + std::string(above_reshade ? ", above ReShade" : ", under ReShade"));
+  return hr;
+}
+inline HRESULT STDMETHODCALLTYPE StreamlineCreateForHwnd(IDXGIFactory2* self, IUnknown* queue, HWND window,
+                                                         const DXGI_SWAP_CHAIN_DESC1* desc,
+                                                         const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreen,
+                                                         IDXGIOutput* output, IDXGISwapChain1** chain) {
+  if (inside_creation) return real_sl_hwnd(self, queue, window, desc, fullscreen, output, chain);
+  return AdoptStreamlineChain(queue, reinterpret_cast<IUnknown**>(chain), desc ? static_cast<int>(desc->Format) : 0,
+                              [&] { return real_sl_hwnd(self, queue, window, desc, fullscreen, output, chain); });
+}
+inline HRESULT STDMETHODCALLTYPE StreamlineCreateLegacy(IDXGIFactory* self, IUnknown* queue,
+                                                        DXGI_SWAP_CHAIN_DESC* desc, IDXGISwapChain** chain) {
+  if (inside_creation) return real_sl_legacy(self, queue, desc, chain);
+  return AdoptStreamlineChain(queue, reinterpret_cast<IUnknown**>(chain),
+                              desc ? static_cast<int>(desc->BufferDesc.Format) : 0,
+                              [&] { return real_sl_legacy(self, queue, desc, chain); });
+}
+// Streamline's proxy factory code is shared by every proxy factory: one proxy, made here from a
+// factory of our own and kept for the process (Streamline owns the base it wraps), tells where.
+inline bool HookStreamlineFactory() {
+  wchar_t system[MAX_PATH]{};
+  GetSystemDirectoryW(system, MAX_PATH);
+  const HMODULE dxgi = LoadLibraryW((std::wstring(system) + L"\\dxgi.dll").c_str());
+  using CreateFactoryFn = HRESULT(WINAPI*)(UINT, REFIID, void**);
+  const auto create =
+      dxgi ? reinterpret_cast<CreateFactoryFn>(GetProcAddress(dxgi, "CreateDXGIFactory2")) : nullptr;
+  IDXGIFactory2* factory = nullptr;
+  if (create == nullptr || FAILED(create(0, IID_PPV_ARGS(&factory)))) return false;
+  void* upgraded = factory;
+  if (upgrade(&upgraded) != sl::Result::eOk || upgraded == nullptr || upgraded == factory) {
+    factory->Release();
+    return false;
+  }
+  void** table = *reinterpret_cast<void***>(upgraded);
+  real_sl_hwnd = reinterpret_cast<CreateHwndFn>(table[15]);
+  real_sl_legacy = reinterpret_cast<CreateLegacyFn>(table[10]);
+  const bool hwnd =
+      hook::InstallOne(reinterpret_cast<void**>(&real_sl_hwnd), reinterpret_cast<void*>(&StreamlineCreateForHwnd));
+  const bool legacy =
+      hook::InstallOne(reinterpret_cast<void**>(&real_sl_legacy), reinterpret_cast<void*>(&StreamlineCreateLegacy));
   return hwnd && legacy;
 }
 }  // namespace internal
@@ -408,6 +493,11 @@ inline void OnDevice(ID3D12Device* device) {
     SetReport("the DXGI swap chain creation could not be hooked");
     return;
   }
+  // 1.11.0 (H4): not fatal; without it another addon's Streamline swap chain is not adopted.
+  if (!HookStreamlineFactory())
+    reshade::log::message(reshade::log::level::warning,
+                          "mfgunlock: Streamline host: Streamline's proxy factory could not be hooked; a swap chain "
+                          "another addon creates on MFG Unlock's Streamline will not be paced.");
   state = State::kReady;
   // XeFG's UI composition (uiComposition=1) left XMX's frames uninterpolated in KCD2; it stays opt-in
   // ([DLSSG] XmxUiComposition=1), and the HUD-less color is tagged for NVIDIA's generator alone.
@@ -507,6 +597,14 @@ inline void BeforePresent() {
         SetReport(fp16 ? "the game's HDR uses an FP16 (scRGB) swap chain, which DLSS-G does not support: no frames are "
                          "generated. Turn the game's HDR off, or use the XeMFG method"
                        : "the game's swap chain left FP16 HDR; DLSS-G can generate again");
+    }
+    // 1.11.0 (H3): DLSS-G needs IDXGISwapChain3::GetCurrentBackBufferIndex on its proxy every
+    // frame. The Medium and Hi-Fi RUSH (UE4, test build 3) never call it there: status 0x10
+    // (eFailGetCurrentBackBufferIndexNotCalled) at every frame. A call with no side effects.
+    IDXGISwapChain3* chain3 = nullptr;
+    if (SUCCEEDED(chain->QueryInterface(IID_PPV_ARGS(&chain3))) && chain3 != nullptr) {
+      chain3->GetCurrentBackBufferIndex();
+      chain3->Release();
     }
   }
   const uint32_t index = PresentFrame();
@@ -866,6 +964,7 @@ inline void AfterEvaluate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Handl
   int reset = 0;
   p->Get(NVSDK_NGX_Parameter_Reset, &reset);
   c.reset = reset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+  if (reset) game_resets.fetch_add(1, std::memory_order_relaxed);
   c.motionVectorsJittered = jittered ? sl::Boolean::eTrue : sl::Boolean::eFalse;
   if (set_constants(c, *current, sl::ViewportHandle{0}) == sl::Result::eOk) tagged.fetch_add(1, std::memory_order_relaxed);
 }
@@ -906,7 +1005,22 @@ inline std::string Describe() {
   std::string text = Report();
   text += "; HUD fix captures " + std::to_string(internal::hud_captures.load());
   text += "; DLSS SR evaluations " + std::to_string(internal::evaluations.load()) + ", tagged " +
-          std::to_string(internal::tagged.load()) + ", presents " + std::to_string(internal::frames.load());
+          std::to_string(internal::tagged.load()) + ", presents " + std::to_string(internal::frames.load()) +
+          ", game resets " + std::to_string(internal::game_resets.load());
+  // 1.11.0 (H5): KCD2 (FusselBob, 2026-11-21): a second set of the same six files beside the game's
+  // exe, with ours in MFGUnlock-Streamline, and DLSS left the game's menu. Which copy is mapped tells
+  // whether the game loaded its own set or got ours by name.
+  wchar_t exe[MAX_PATH]{};
+  GetModuleFileNameW(nullptr, exe, MAX_PATH);
+  const std::filesystem::path game_dir = std::filesystem::path(exe).parent_path();
+  std::error_code error;
+  if (std::filesystem::exists(game_dir / L"sl.interposer.dll", error)) {
+    text += "; the game's folder has its own sl.interposer.dll";
+    wchar_t mapped[MAX_PATH]{};
+    if (const HMODULE m = GetModuleHandleW(L"sl.interposer.dll"); m && GetModuleFileNameW(m, mapped, MAX_PATH))
+      text += std::string(", mapped: ") +
+              (std::filesystem::path(mapped).parent_path() == game_dir ? "the game's" : "MFG Unlock's");
+  }
   return text;
 }
 
