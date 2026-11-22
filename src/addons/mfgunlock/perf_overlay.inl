@@ -159,7 +159,10 @@ inline std::string StatusText(unsigned int status) {
 }
 
 // The method in use and what it reports, one line.
-inline std::string MethodLine(unsigned int& multiplier) {
+// `measured`: output frames per game frame as measured here (0 when unknown). Cyberpunk with XeMFG
+// DLSS-G (test build 5): the runtime's numFramesActuallyPresented stayed 0 while XMX generated 4x,
+// and this line said "not generating"; XMX's own state and the measured ratio decide now, as the panel.
+inline std::string MethodLine(unsigned int& multiplier, double measured) {
   multiplier = 0;
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
   if (backend::active == backend::Kind::XeMfg) {
@@ -171,17 +174,21 @@ inline std::string MethodLine(unsigned int& multiplier) {
 #endif
   const unsigned int presented = framecount::g_actual_frames_presented.load(std::memory_order_relaxed);
   const unsigned int status = framecount::g_dlssg_status.load(std::memory_order_relaxed);
-  multiplier = presented;
-  std::string method = xmx::generator::Enabled() ? "XeMFG DLSS-G" : "DLSS-G";
+  const unsigned int measured_x = measured >= 1.5 ? static_cast<unsigned int>(measured + 0.5) : 0;
+  multiplier = presented > 1 ? presented : measured_x;
+  const bool xmx_on = xmx::generator::Enabled();
+  std::string method = xmx_on ? "XeMFG DLSS-G" : "DLSS-G";
   if (slhost::Hosting()) method += " (Add frame generation)";
-  if (presented == 0) return method + " - not generating";
-  std::string line = method + " " + std::to_string(presented) + "x - " + StatusText(status);
-  if (xmx::generator::Enabled()) {
+  if (xmx_on) {
     const auto r = xmx::generator::Snapshot();
-    if (!r.generating && r.evaluating && r.idle != xmx::policy::Idle::None)
-      line += std::string(" - waiting: ") + xmx::policy::IdleText(r.idle);
+    if (r.generating) return method + (multiplier > 1 ? " " + std::to_string(multiplier) + "x" : std::string()) + " - generating";
+    if (r.evaluating && r.idle != xmx::policy::Idle::None)
+      return method + " - waiting: " + xmx::policy::IdleText(r.idle);
+    if (!r.failure.empty()) return method + " - failed: " + r.failure;
+    return method + " - not generating";
   }
-  return line;
+  if (multiplier <= 1) return method + " - not generating";
+  return method + " " + std::to_string(multiplier) + "x - " + StatusText(status);
 }
 
 inline ImVec4 FpsColor(double fps) {
@@ -216,8 +223,8 @@ inline void OnOverlay(reshade::api::effect_runtime* runtime) {
   }
   // ImGui 1.92 (ReShade's table has no SetWindowFontScale): the size comes with the font.
   ImGui::PushFont(ImGui::GetFont(), ImGui::GetFontSize() * scale);
-  unsigned int multiplier = 0;
-  const std::string method = MethodLine(multiplier);
+  // The runtime's own count, for the game rate when only output frames are timed.
+  const unsigned int multiplier = framecount::g_actual_frames_presented.load(std::memory_order_relaxed);
   // The game's frames when known; otherwise what ReShade presents.
   const perfstats::Summary& frames = v.game_live ? v.game : v.output;
   double output_fps = v.output_live ? v.output.fps : 0.0;
@@ -247,6 +254,9 @@ inline void OnOverlay(reshade::api::effect_runtime* runtime) {
 #endif
   if (!v.game_live && multiplier > 1 && output_fps > 0.0) game_fps = output_fps / multiplier;
 
+  unsigned int shown_multiplier = 0;
+  const std::string method =
+      MethodLine(shown_multiplier, game_fps > 0.0 && output_fps > 0.0 ? output_fps / game_fps : 0.0);
   // Minimal: the output frame rate, and the game's when frames are generated.
   char line[192];
   const double shown = output_fps > 0.0 ? output_fps : game_fps;
