@@ -113,6 +113,29 @@ int main() {
   CHECK(g_previous_unclean.exchange(false) && g_unclean_streak.load() == 1);
   EndSession(folder);
 
+  // 1.11.0 (S1): the decision, and a session that reached closing before TerminateProcess.
+  CHECK(!EndedUnclean(true, false, Stage::kRunning, true));    // this process
+  CHECK(!EndedUnclean(false, true, Stage::kRunning, false));   // another live copy of the game
+  CHECK(EndedUnclean(false, false, Stage::kRunning, false));    // gone while running: a crash
+  CHECK(!EndedUnclean(false, false, Stage::kClosing, false));  // gone while closing: a normal exit
+  CHECK(EndedUnclean(false, false, Stage::kClosing, true));     // the crash record says otherwise
+  BeginSession(folder, kGone);
+  MarkStage(folder, Stage::kClosing, kGone);
+  CHECK(ReadFullMarker(marker).stage == Stage::kClosing && ReadFullMarker(marker).start != 0);
+  BeginSession(folder);  // kGone ended without EndSession, but while closing
+  CHECK(!g_previous_unclean.load() && g_unclean_streak.load() == 0);
+  MarkStage(folder, Stage::kClosing, kGone);  // not its marker any more
+  CHECK(ReadFullMarker(marker).stage == Stage::kRunning);
+  MarkStage(folder, Stage::kClosing);
+  MarkStage(folder, Stage::kRunning);  // a new swap chain after a fullscreen switch
+  CHECK(ReadFullMarker(marker).stage == Stage::kRunning);
+  { std::ofstream(marker, std::ios::trunc) << kGone << " 2 1 1"; }  // closing, started at FILETIME 1
+  { std::ofstream(folder / L"MFGAdaUnlock-crash.txt") << "crash"; }   // written after it
+  BeginSession(folder);
+  CHECK(g_previous_unclean.exchange(false) && g_unclean_streak.load() == 3);
+  fs::remove(folder / L"MFGAdaUnlock-crash.txt");
+  EndSession(folder);
+
   // Safe mode: requested once, held by every copy in the next process, gone after it.
   CHECK(!ConsumeSafeMode(folder) && !g_safe_mode.load());
   CHECK(RequestSafeMode(folder));

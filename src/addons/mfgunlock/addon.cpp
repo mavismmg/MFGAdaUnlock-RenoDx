@@ -155,6 +155,7 @@
 #include "sl_host.hpp"
 #include "hud_capture.hpp"
 #include "nvapi_reflex_guard.hpp"
+#include "session_exit.hpp"
 
 #include <deps/imgui/imgui.h>
 #include <include/reshade.hpp>
@@ -760,6 +761,8 @@ bool PinResident(const char* when) {
           "mfgunlock: could not keep the add-on loaded; XMX and the DLSS preset hook stay off.");
     return false;
   }
+  // 1.11.0 (S1): a resident copy; its TerminateProcess hook marks a normal exit.
+  mfgunlock::sessionexit::InstallTerminateHook();
   if (!g_resident.exchange(true, std::memory_order_acq_rel))
     reshade::log::message(reshade::log::level::info,
 #if defined(MFGUNLOCK_ENGINEERING_EXPERIMENTAL)
@@ -882,7 +885,8 @@ void OnFinishPresent(reshade::api::command_queue* /*queue*/,
     mfgunlock::reflexpacing::RecordPresent();
 }
 
-void OnInitSwapchain(reshade::api::swapchain* swapchain, bool /*resize*/) {
+void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
+  mfgunlock::sessionexit::OnInitSwapchain(resize);  // 1.11.0 (S1)
   mfgunlock::scguard::OnInitSwapchain(swapchain);  // 1.10.1 (plan item 7)
   bool primary_transition = false;
   if (swapchain != nullptr) {
@@ -927,7 +931,8 @@ void OnInitSwapchain(reshade::api::swapchain* swapchain, bool /*resize*/) {
   }
 }
 
-void OnDestroySwapchain(reshade::api::swapchain* swapchain, bool /*resize*/) {
+void OnDestroySwapchain(reshade::api::swapchain* swapchain, bool resize) {
+  mfgunlock::sessionexit::OnDestroySwapchain(resize);  // 1.11.0 (S1)
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
   mfgunlock::dlssgdisplay::Retire(swapchain);
 #endif
@@ -1523,6 +1528,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       g_self_module = h_module;
       if (!reshade::register_addon(h_module)) return FALSE;
       mfgunlock::support::BeginSession(mfgunlock::backend::Directory());
+      mfgunlock::sessionexit::SetFolder(mfgunlock::backend::Directory());  // 1.11.0 (S1)
       // 1.10.0 (plan XMX/Vulkan/VRAM, item 4): before the game can call slInit (force_fg.hpp).
       // [DLSSG] AddFrameGeneration (the panel's single switch) turns on both routes;
       // each stays inert where it does not apply (sl_host.hpp).
@@ -1628,6 +1634,14 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
                 "mfgunlock: could not keep ReShade resident; the addon may not survive a ReShade reload.");
           }
           mfgunlock::xemfg::native::Attach(h_module);
+          // 1.11.0 (S1): this module is pinned, so the session's exit signals can go in here too.
+          reshade::register_event<reshade::addon_event::init_swapchain>(
+              [](reshade::api::swapchain*, bool resize) {
+                mfgunlock::sessionexit::InstallTerminateHook();
+                mfgunlock::sessionexit::OnInitSwapchain(resize);
+              });
+          reshade::register_event<reshade::addon_event::destroy_swapchain>(
+              [](reshade::api::swapchain*, bool resize) { mfgunlock::sessionexit::OnDestroySwapchain(resize); });
         }
 #endif
         reshade::register_overlay("MFG Unlock", OnRegisterOverlay);

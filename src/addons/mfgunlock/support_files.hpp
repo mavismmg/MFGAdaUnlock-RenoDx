@@ -49,29 +49,91 @@ inline uint32_t ReadStreak(const std::filesystem::path& marker) {
   uint32_t streak = 0;
   return file >> pid >> streak ? streak : 0;
 }
+// 1.11.0 (S1): how far the session got. Unreal games, launchers, anti-cheats and Steam's Stop end
+// the process with TerminateProcess, which skips DLL_PROCESS_DETACH and so EndSession: the marker
+// stayed and the next start said "the last session may have closed unexpectedly" after a normal
+// exit. A session that started closing (its last swap chain gone, or TerminateProcess on itself)
+// counts as clean, unless the crash record was written after it started.
+enum class Stage : uint32_t { kRunning = 0, kClosing = 1 };
+struct Marker {
+  DWORD pid = 0;
+  uint32_t streak = 0;
+  Stage stage = Stage::kRunning;
+  uint64_t start = 0;  // FILETIME of BeginSession; 0 in markers older than 1.11.0
+};
+inline Marker ReadFullMarker(const std::filesystem::path& marker) {
+  std::ifstream file(marker);
+  Marker m;
+  uint32_t stage = 0;
+  if (!(file >> m.pid)) return {};
+  if (file >> m.streak && file >> stage) {
+    m.stage = stage == 1 ? Stage::kClosing : Stage::kRunning;
+    file >> m.start;
+  }
+  return m;
+}
+inline void WriteMarker(const std::filesystem::path& marker, const Marker& m) {
+  std::ofstream(marker, std::ios::trunc) << m.pid << ' ' << m.streak << ' ' << static_cast<uint32_t>(m.stage) << ' '
+                                         << m.start;
+}
+// Pure, for the test: whether the session a marker was left by ended without a clean exit.
+constexpr bool EndedUnclean(bool same_process, bool owner_alive, Stage stage, bool crash_after_start) {
+  if (same_process || owner_alive) return false;
+  if (crash_after_start) return true;
+  return stage != Stage::kClosing;
+}
+inline uint64_t NowFileTime() {
+  FILETIME now{};
+  GetSystemTimeAsFileTime(&now);
+  return (uint64_t(now.dwHighDateTime) << 32) | now.dwLowDateTime;
+}
+// The crash record (crash_record.hpp, CrashDump=1) written after that session started.
+inline bool CrashRecordAfter(const std::filesystem::path& folder, uint64_t start) {
+  if (start == 0) return false;
+  WIN32_FILE_ATTRIBUTE_DATA data{};
+  if (!GetFileAttributesExW((folder / L"MFGAdaUnlock-crash.txt").c_str(), GetFileExInfoStandard, &data)) return false;
+  const uint64_t written = (uint64_t(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime;
+  return written > start;
+}
 // A marker left by a process that is gone: that session ended without a clean
-// exit. A game that ends itself with TerminateProcess looks the same, which is why
-// the panel says "may have".
+// exit, unless it was closing (S1). A crash the game swallows after closing looks
+// clean too, which is why the panel still says "may have".
 inline void BeginSession(const std::filesystem::path& folder, DWORD pid = GetCurrentProcessId()) {
   std::error_code error;
   const auto marker = folder / kMarkerName;
   uint32_t streak = 0;
   if (std::filesystem::exists(marker, error)) {
-    const DWORD previous = ReadMarker(marker);
-    streak = ReadStreak(marker);
-    if (previous != pid && !(previous != 0 && ProcessAlive(previous))) {
+    const Marker previous = ReadFullMarker(marker);
+    streak = previous.streak;
+    if (EndedUnclean(previous.pid == pid, previous.pid != 0 && previous.pid != pid && ProcessAlive(previous.pid),
+                     previous.stage, CrashRecordAfter(folder, previous.start))) {
       g_previous_unclean.store(true);
       ++streak;
+    } else if (previous.pid != pid && !(previous.pid != 0 && ProcessAlive(previous.pid))) {
+      streak = 0;  // closed cleanly: a new count
     }
   }
   g_unclean_streak.store(streak);
-  std::ofstream(marker, std::ios::trunc) << pid << ' ' << streak;
+  const Marker current = ReadFullMarker(marker);
+  // A second copy of the addon in the same process keeps the first copy's start.
+  WriteMarker(marker, {pid, streak, Stage::kRunning, current.pid == pid && current.start ? current.start : NowFileTime()});
+}
+// S1: the session reached (or left) its closing stage. Only its own marker.
+inline void MarkStage(const std::filesystem::path& folder, Stage stage, DWORD pid = GetCurrentProcessId()) {
+  const auto marker = folder / kMarkerName;
+  Marker m = ReadFullMarker(marker);
+  if (m.pid != pid || m.stage == stage) return;
+  m.stage = stage;
+  WriteMarker(marker, m);
 }
 // The player saw the notice and chose to go on: the next crash starts a new count.
 inline void ResetStreak(const std::filesystem::path& folder, DWORD pid = GetCurrentProcessId()) {
   g_unclean_streak.store(0);
   const auto marker = folder / kMarkerName;
-  if (ReadMarker(marker) == pid) std::ofstream(marker, std::ios::trunc) << pid << ' ' << 0;
+  Marker m = ReadFullMarker(marker);
+  if (m.pid != pid) return;
+  m.streak = 0;
+  WriteMarker(marker, m);
 }
 
 // One session without the hooks a player can turn on (the DLSS preset, XMX, a
