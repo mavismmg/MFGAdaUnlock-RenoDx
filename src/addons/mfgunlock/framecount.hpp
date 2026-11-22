@@ -1222,9 +1222,12 @@ inline sl::Result HookedReflexSetOptions(const sl::ReflexOptions& options) {
   return SubmitReflexOptions(options);
 }
 
+// 1.11.0 (O1): the game's Reflex sleep, once per game frame (the performance overlay's frame times).
+inline std::atomic<void (*)()> g_on_reflex_sleep{nullptr};
 inline sl::Result HookedReflexSleep(const sl::FrameToken& frame) {
   const auto real = g_real_reflex_sleep.load(std::memory_order_acquire);
   if (real == nullptr) return sl::Result::eErrorNotInitialized;
+  if (const auto notify = g_on_reflex_sleep.load(std::memory_order_relaxed)) notify();
   // 1.7: a panel change only reaches Streamline when the thread that owns the
   // game's Reflex options replays them. Games that set options once and
   // present from another thread never gave Present that chance, so the

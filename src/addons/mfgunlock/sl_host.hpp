@@ -88,6 +88,8 @@ inline std::atomic<uint64_t> evaluations{0}, tagged{0}, frames{0};
 // 1.11.0 (H3): DLSS SR evaluations the game itself marked as a reset (The Medium: XMX saw a
 // reset nearly every frame; this tells the game's resets from DLSS-G's own).
 inline std::atomic<uint64_t> game_resets{0};
+// 1.11.0 (O1): each game frame the host presents (the performance overlay's frame times).
+inline std::atomic<void (*)()> on_game_frame{nullptr};
 inline std::atomic_bool options_on{false};
 inline IDXGIFactory2* proxy_factory = nullptr;  // kept alive with the swap chain
 inline ID3D12Device* game_device = nullptr;
@@ -637,6 +639,7 @@ inline void BeforePresent() {
   Mark(sl::PCLMarker::eRenderSubmitEnd, index);
   Mark(sl::PCLMarker::ePresentStart, index);
   const uint64_t presents = frames.fetch_add(1, std::memory_order_relaxed) + 1;
+  if (const auto notify = on_game_frame.load(std::memory_order_relaxed)) notify();
   // Hitches: the longest gap between two game frames in each 2 s window, and
   // how many passed 50 ms (traversal stutter shows as isolated long gaps).
   static LARGE_INTEGER frequency{}, previous{};

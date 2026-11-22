@@ -156,6 +156,7 @@
 #include "hud_capture.hpp"
 #include "nvapi_reflex_guard.hpp"
 #include "session_exit.hpp"
+#include "perf_stats.hpp"
 
 #include <deps/imgui/imgui.h>
 #include <include/reshade.hpp>
@@ -1058,6 +1059,7 @@ void OnInitCommandQueue(reshade::api::command_queue* /*queue*/) {
 // 1.10.0 (plan 5): the panel's text, by key (i18n/strings.hpp).
 using mfgunlock::i18n::Str;
 using mfgunlock::i18n::T;
+#include "./perf_overlay.inl"  // 1.11.0 (O); before the panel, which draws its settings
 #include "./addon_overlay.inl"
 
 void LoadConfig() {
@@ -1642,6 +1644,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
               });
           reshade::register_event<reshade::addon_event::destroy_swapchain>(
               [](reshade::api::swapchain*, bool resize) { mfgunlock::sessionexit::OnDestroySwapchain(resize); });
+          perfosd::Register();  // 1.11.0 (O)
         }
 #endif
         reshade::register_overlay("MFG Unlock", OnRegisterOverlay);
@@ -1780,6 +1783,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       reshade::register_event<reshade::addon_event::destroy_swapchain>(OnDestroySwapchain);
       reshade::register_event<reshade::addon_event::init_command_queue>(OnInitCommandQueue);
       reshade::register_event<reshade::addon_event::present>(OnPresentStartDiscovery);
+      perfosd::Register();  // 1.11.0 (O)
       reshade::register_event<reshade::addon_event::finish_present>(OnFinishPresent);
       break;
     }
@@ -1805,6 +1809,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       }
       reshade::unregister_event<reshade::addon_event::finish_present>(OnFinishPresent);
       reshade::unregister_event<reshade::addon_event::present>(OnPresentStartDiscovery);
+      perfosd::Unregister();
       reshade::unregister_event<reshade::addon_event::init_command_queue>(OnInitCommandQueue);
       reshade::unregister_event<reshade::addon_event::destroy_swapchain>(OnDestroySwapchain);
       reshade::unregister_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);

@@ -352,6 +352,9 @@
       adv::Result();
     }
 
+    // 1.11.0 (O): the performance overlay; its settings apply at once.
+    perfosd::DrawSettings();
+
     // The add-on itself: rarely changed, applies on the next launch.
     if (ui::SectionHeader(T(Str::kAddonSection_p4), false)) {
       ui::Card addon_card("##addon_card");

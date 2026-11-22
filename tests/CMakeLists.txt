@@ -27,6 +27,11 @@ add_executable(support_files_tests support_files_tests.cpp)
 target_compile_definitions(support_files_tests PRIVATE NOMINMAX)
 target_compile_features(support_files_tests PRIVATE cxx_std_20)
 add_test(NAME support_files COMMAND support_files_tests)
+# 1.11.0 (O5): the performance overlay's frame time statistics.
+add_executable(perf_stats_tests perf_stats_tests.cpp)
+target_compile_definitions(perf_stats_tests PRIVATE NOMINMAX)
+target_compile_features(perf_stats_tests PRIVATE cxx_std_20)
+add_test(NAME perf_stats COMMAND perf_stats_tests)
 # 1.10.0 (plan 5): the panel's six languages.
 add_executable(i18n_tests i18n_tests.cpp)
 target_compile_definitions(i18n_tests PRIVATE NOMINMAX)
@@ -444,7 +449,7 @@ set(MFGUNLOCK_PURE_TESTS
   gpu_arch_tests crash_record module_scan_tests hdr_compat_tests latency_analysis_tests
   mfgdiagnostics_tests input_diagnostics_tests quality_guard_tests force_fg support_files
   vram_timeline xemfg_compatibility_policy latency_reflex_tests ngx_requirements
-  queue_ack patch_transaction hook_failure stale_hook rehook hud_pass
+  queue_ack patch_transaction hook_failure stale_hook rehook hud_pass perf_stats
   # Built only with MFGUNLOCK_BUILD_XEMFG (not in CI).
   xemfg_vulkan_policy xemfg_vulkan_queue)
 set(_mfg_test_dirs "${CMAKE_CURRENT_SOURCE_DIR}")

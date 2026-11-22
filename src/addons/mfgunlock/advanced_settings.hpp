@@ -95,6 +95,20 @@ inline constexpr Option kHudFix{L"DLSSG",L"HudFix",Str::kHudFix_p15,Str::kHudFix
 inline constexpr Option kXmxHudDebug{L"DLSSG",L"XmxHudDebug",Str::kHudDebug_p17,Str::kHudDebugDesc_p18,L"0",MFGUNLOCK_CHOICES(kOnOff)};
 // 1.10.0 (plan XMX Vulkan pacing): the output limit XeMFG DLSS-G's Vulkan provider applies when the GPU falls behind.
 inline constexpr Option kXmxVulkanPacing{L"DLSSG",L"XmxVulkanPacing",Str::kXmxVulkanPacing_q1,Str::kXmxVulkanPacingDesc_q2,L"1",MFGUNLOCK_CHOICES(kOnOff)};
+// 1.11.0 (O3): the performance overlay (perf_overlay.inl). Read live from the panel's cache.
+inline constexpr Choice kOverlayLevels[]{{Str::kMinimal_o5,L"0"},{Str::kStandard_o6,L"1"},{Str::kFull_o7,L"2"}};
+inline constexpr Choice kOverlayCorners[]{{Str::kTopLeft_o10,L"0"},{Str::kTopRight_o11,L"1"},
+                                          {Str::kBottomLeft_o12,L"2"},{Str::kBottomRight_o13,L"3"}};
+inline constexpr Choice kOverlayModifiers[]{{Str::kNone_o22,L"0"},{Str::kShift_o23,L"1"},{Str::kCtrl_o24,L"2"},{Str::kAlt_o25,L"3"}};
+inline constexpr Option kOverlay[]{
+  {L"Overlay",L"PerfOverlay",Str::kPerfOverlay_o1,Str::kPerfOverlayDesc_o2,L"0",MFGUNLOCK_CHOICES(kOnOff)},
+  {L"Overlay",L"PerfOverlayLevel",Str::kPerfOverlayLevel_o3,Str::kPerfOverlayLevelDesc_o4,L"1",MFGUNLOCK_CHOICES(kOverlayLevels)},
+  {L"Overlay",L"PerfOverlayCorner",Str::kPerfOverlayCorner_o8,Str::kPerfOverlayCornerDesc_o9,L"0",MFGUNLOCK_CHOICES(kOverlayCorners)},
+  {L"Overlay",L"PerfOverlayScale",Str::kPerfOverlayScale_o14,Str::kPerfOverlayScaleDesc_o15,L"100",MFGUNLOCK_NUMBER(50,200)},
+  {L"Overlay",L"PerfOverlayOpacity",Str::kPerfOverlayOpacity_o16,Str::kPerfOverlayOpacityDesc_o17,L"70",MFGUNLOCK_NUMBER(0,100)},
+  {L"Overlay",L"PerfOverlayKey",Str::kPerfOverlayKey_o18,Str::kPerfOverlayKeyDesc_o19,L"121",MFGUNLOCK_NUMBER(0,254)},
+  {L"Overlay",L"PerfOverlayModifier",Str::kPerfOverlayModifier_o20,Str::kPerfOverlayModifierDesc_o21,L"1",MFGUNLOCK_CHOICES(kOverlayModifiers)},
+};
 inline constexpr Option kXmxSaveVram{L"DLSSG",L"XmxSaveVram",Str::kXmxSaveVram_v1a,Str::kXmxSaveVramDesc_v1b,L"1",MFGUNLOCK_CHOICES(kOnOff)};
 #undef MFGUNLOCK_CHOICES
 #undef MFGUNLOCK_NUMBER

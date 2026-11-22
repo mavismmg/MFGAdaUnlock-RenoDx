@@ -199,6 +199,13 @@ void Draw() {
     ui::advanced::Result();
   }
   if(page==PanelPage::Diagnostics || (page==PanelPage::General && unavailable)) dependencies::Draw();
+  // 1.11.0 (O): the performance overlay; its settings apply at once (perf_overlay.inl reads them).
+  if(page==PanelPage::General && ui::SectionHeader(T(Str::kPerfOverlaySection_o0),false)) {
+    ui::Card card("##xe_perf_overlay_card");
+    const bool changed=ui::advanced::Changed();
+    ui::advanced::Draw(ui::advanced::kOverlay);
+    ui::advanced::Changed()=changed;
+  }
   if(page==PanelPage::General) ui::SystemCard(nullptr,false);
   ui::Footer();
 }
