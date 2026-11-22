@@ -1018,3 +1018,4 @@
 /* kShift_o23 */ "Shift",
 /* kCtrl_o24 */ "Ctrl",
 /* kAlt_o25 */ "Alt",
+/* kXmxSaveVramStoodAside_x1 */ "Not used this session: %s hooks NGX, so NVIDIA's frame generation feature is created for it to see frame generation.",

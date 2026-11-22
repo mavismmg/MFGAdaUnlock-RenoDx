@@ -1020,3 +1020,4 @@
 /* kShift_o23 */ "Mayús",
 /* kCtrl_o24 */ "Ctrl",
 /* kAlt_o25 */ "Alt",
+/* kXmxSaveVramStoodAside_x1 */ "No se usa en esta sesión: %s intercepta NGX, así que se crea la función de generación de fotogramas de NVIDIA para que la vea.",

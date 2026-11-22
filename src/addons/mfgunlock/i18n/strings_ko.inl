@@ -1020,3 +1020,4 @@
 /* kShift_o23 */ "Shift",
 /* kCtrl_o24 */ "Ctrl",
 /* kAlt_o25 */ "Alt",
+/* kXmxSaveVramStoodAside_x1 */ "이번 세션에서는 사용하지 않음: %s이(가) NGX를 후킹하므로, 프레임 생성을 볼 수 있도록 NVIDIA의 프레임 생성 기능을 생성합니다.",

@@ -91,6 +91,7 @@ bool XmxSaveVramWanted() {
 // NVIDIA's frame generation feature would hide frame generation from it: its
 // Present mode waited for a DLSS-G resource that never came (Lies of P, 2026-11-19).
 std::atomic_bool g_foreign_ngx_hook{false};
+char g_foreign_ngx_owner[MAX_PATH] = "";  // the module, set once before g_foreign_ngx_hook
 bool XmxSkipsNvidiaFeature() {
   // D3D12 only: on Vulkan the XMX provider owns the feature, and the D3D12 core hooks
   // retried every 250 ms in DOOM: The Dark Ages ("failed to install hooks in _nvngx.dll").
@@ -108,9 +109,13 @@ void NoteForeignNgxHook(HMODULE module, const char* name) {
   HMODULE owner = nullptr;
   constexpr DWORD kFlags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT;
   if (GetModuleHandleExW(kFlags, reinterpret_cast<LPCWSTR>(end), &owner) && owner == module) return;
-  if (g_foreign_ngx_hook.exchange(true)) return;
+  if (g_foreign_ngx_hook.load()) return;
   char path[MAX_PATH] = "code outside any module";
   if (owner != nullptr) GetModuleFileNameA(owner, path, MAX_PATH);
+  // 1.11.0 (X2): for the panel, before the flag that shows it.
+  const char* file = std::strrchr(path, '\\');
+  strncpy_s(g_foreign_ngx_owner, file ? file + 1 : path, _TRUNCATE);
+  if (g_foreign_ngx_hook.exchange(true)) return;
   reshade::log::message(
       reshade::log::level::warning,
       (std::string("mfgunlock: another module hooks NGX (") + name + " leads to " + path +

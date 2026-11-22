@@ -89,6 +89,9 @@ inline std::atomic<uint64_t> evaluations{0}, tagged{0}, frames{0};
 // 1.11.0 (H3): DLSS SR evaluations the game itself marked as a reset (The Medium: XMX saw a
 // reset nearly every frame; this tells the game's resets from DLSS-G's own).
 inline std::atomic<uint64_t> game_resets{0};
+// 1.11.0 (R3): Streamline swap chains created on our Streamline (ours, or adopted, H4). Two alive
+// at once was the RenoDX DLSS double; a game that recreates its swap chain counts too.
+inline std::atomic<uint32_t> streamline_chains{0};
 // 1.11.0 (O1): each game frame the host presents (the performance overlay's frame times).
 inline std::atomic<void (*)()> on_game_frame{nullptr};
 inline std::atomic_bool options_on{false};
@@ -281,6 +284,7 @@ inline HRESULT STDMETHODCALLTYPE CreateForHwnd(IDXGIFactory2* self, IUnknown* qu
   if (SUCCEEDED(hr) && StepAside(watch, reinterpret_cast<IUnknown**>(chain)))
     return real_hwnd(self, queue, window, desc, fullscreen, output, chain);
   if (SUCCEEDED(hr)) {
+    streamline_chains.fetch_add(1);
     game_chain = *chain;
     backbuffer_format = desc ? static_cast<int>(desc->Format) : 0;
     if (above_reshade) HookProxyPresent(*chain);
@@ -306,6 +310,7 @@ inline HRESULT STDMETHODCALLTYPE CreateLegacy(IDXGIFactory* self, IUnknown* queu
   inside_creation = false;
   if (SUCCEEDED(hr) && StepAside(watch, reinterpret_cast<IUnknown**>(chain))) return real_legacy(self, queue, desc, chain);
   if (SUCCEEDED(hr)) {
+    streamline_chains.fetch_add(1);
     game_chain = *chain;
     backbuffer_format = desc ? static_cast<int>(desc->BufferDesc.Format) : 0;
     if (above_reshade) HookProxyPresent(*chain);
@@ -375,6 +380,7 @@ inline HRESULT AdoptStreamlineChain(IUnknown* queue, IUnknown** chain, int forma
   inside_streamline_creation = true;
   const HRESULT hr = create();
   inside_streamline_creation = false;
+  if (SUCCEEDED(hr) && chain != nullptr && *chain != nullptr) streamline_chains.fetch_add(1);
   if (!adopt || FAILED(hr) || chain == nullptr || *chain == nullptr) return hr;
   game_chain = *chain;
   backbuffer_format = format;
@@ -1013,7 +1019,8 @@ inline std::string Describe() {
   text += "; HUD fix captures " + std::to_string(internal::hud_captures.load());
   text += "; DLSS SR evaluations " + std::to_string(internal::evaluations.load()) + ", tagged " +
           std::to_string(internal::tagged.load()) + ", presents " + std::to_string(internal::frames.load()) +
-          ", game resets " + std::to_string(internal::game_resets.load());
+          ", game resets " + std::to_string(internal::game_resets.load()) + ", Streamline swap chains created " +
+          std::to_string(internal::streamline_chains.load());
   // 1.11.0 (H5): KCD2 (FusselBob, 2026-11-21): a second set of the same six files beside the game's
   // exe, with ours in MFGUnlock-Streamline, and DLSS left the game's menu. Which copy is mapped tells
   // whether the game loaded its own set or got ours by name.

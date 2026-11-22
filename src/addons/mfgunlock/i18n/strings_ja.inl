@@ -1020,3 +1020,4 @@
 /* kShift_o23 */ "Shift",
 /* kCtrl_o24 */ "Ctrl",
 /* kAlt_o25 */ "Alt",
+/* kXmxSaveVramStoodAside_x1 */ "このセッションでは使われていません: %s が NGX をフックしているため、フレーム生成が見えるよう NVIDIA のフレーム生成機能を作成します。",

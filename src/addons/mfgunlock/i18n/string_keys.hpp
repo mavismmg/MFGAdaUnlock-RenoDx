@@ -1023,6 +1023,7 @@ enum class Str : unsigned {
   kShift_o23,
   kCtrl_o24,
   kAlt_o25,
+  kXmxSaveVramStoodAside_x1,
   kCount
 };
 }  // namespace mfgunlock::i18n

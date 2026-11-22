@@ -1020,3 +1020,4 @@
 /* kShift_o23 */ "Shift",
 /* kCtrl_o24 */ "Ctrl",
 /* kAlt_o25 */ "Alt",
+/* kXmxSaveVramStoodAside_x1 */ "Não usado nesta sessão: %s intercepta o NGX, então o recurso de geração de quadros da NVIDIA é criado para que ele veja a geração de quadros.",

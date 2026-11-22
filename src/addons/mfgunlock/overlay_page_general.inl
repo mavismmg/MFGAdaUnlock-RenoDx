@@ -197,6 +197,12 @@
         if (save_wanted != XmxSaveVramWanted()) ui::StatusChip(T(Str::kRestartTheGameToApply_r1b), ui::Warning);
         else if (save_wanted && g_xmx_handles_created.load(std::memory_order_relaxed) > 0)
           ui::StatusChip(T(Str::kXmxSaveVramActive_v1c), ui::Accent);
+        else if (save_wanted && g_foreign_ngx_hook.load(std::memory_order_acquire)) {
+          // 1.11.0 (X2): stood aside for another module's NGX hook (G2), named here, not only in the log.
+          char text[400];
+          std::snprintf(text, sizeof(text), T(Str::kXmxSaveVramStoodAside_x1), g_foreign_ngx_owner);
+          ui::StatusChip(text, ui::Warning);
+        }
 #if defined(MFGUNLOCK_NATIVE_XEMFG) && defined(MFGUNLOCK_XEMFG_VULKAN)
         // On by default, Vulkan games only ([DLSSG] XmxVulkan=0 turns it off): a readout, not a switch.
         namespace vk = mfgunlock::xemfg::native::vulkan;

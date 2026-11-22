@@ -1020,3 +1020,4 @@
 /* kShift_o23 */ "Shift",
 /* kCtrl_o24 */ "Ctrl",
 /* kAlt_o25 */ "Alt",
+/* kXmxSaveVramStoodAside_x1 */ "本次会话未使用：%s 挂钩了 NGX，因此会创建 NVIDIA 的帧生成功能，让它能看到帧生成。",

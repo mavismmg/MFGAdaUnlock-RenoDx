@@ -1992,6 +1992,8 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
       // 1.11.0 (H2): the game's own NVAPI Reflex calls held back.
       if(const uint64_t held=mfgunlock::nvapireflex::Blocked()) report+="; game Reflex calls held "+std::to_string(held);
     }
+    // 1.11.0 (R2): other modules hooked into NGX, Streamline or NVAPI.
+    report+="\nother_hooks="+mfgunlock::foreignhooks::Describe();
     report+=CapabilityReport();
     // 1.9.0: the driver profile, read only, and only now: this runs when
     // the report is saved or copied.

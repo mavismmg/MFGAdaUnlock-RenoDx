@@ -157,6 +157,7 @@
 #include "nvapi_reflex_guard.hpp"
 #include "session_exit.hpp"
 #include "perf_stats.hpp"
+#include "foreign_hooks.hpp"
 
 #include <deps/imgui/imgui.h>
 #include <include/reshade.hpp>
