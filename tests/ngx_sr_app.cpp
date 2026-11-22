@@ -163,6 +163,7 @@ int main(int argc, char** argv) {
   bool allocate = false;
   bool debug = false;
   int sl_mode = 0;
+  bool sl_factory = false;  // 1.11.0 (R4): the swap chain on the hosted Streamline's factory, as RenoDX DLSS does
   UINT chain_flags = 0;  // --waitable 0x40, --tearing 0x800 (games' usual flags)
   bool hdr10 = false;  // 1: the app starts Streamline (manual hooking) before NGX; 2: after DLSS SR exists  // a parameter block of its own, as many games do
   for (int i = 1; i < argc; ++i) {
@@ -178,6 +179,7 @@ int main(int argc, char** argv) {
     else if (a == "--tearing") chain_flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
     else if (a == "--hdr10") hdr10 = true;
     else if (a == "--sl-late") sl_mode = 2;
+    else if (a == "--sl-factory") sl_factory = true;
     else seconds = std::stod(a);
   }
   SetUnhandledExceptionFilter(Crash);
@@ -235,7 +237,21 @@ int main(int argc, char** argv) {
   sc.BufferCount = 3;
   sc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
   ComPtr<IDXGISwapChain1> swapchain1;
-  Check(factory->CreateSwapChainForHwnd(queue.Get(), window, &sc, nullptr, nullptr, &swapchain1), "swap chain");
+  if (sl_factory) {
+    // The sl.interposer.dll MFG Unlock's Add frame generation loaded when the device was created.
+    const HMODULE interposer = GetModuleHandleW(L"sl.interposer.dll");
+    if (interposer == nullptr) Fail("sl-factory: no sl.interposer.dll mapped (Add frame generation not started)");
+    using UpgradeFn = int(*)(void**);
+    const auto upgrade = reinterpret_cast<UpgradeFn>(GetProcAddress(interposer, "slUpgradeInterface"));
+    void* upgraded = factory.Get();
+    factory->AddRef();  // Streamline keeps the base; the proxy is kept for the process
+    if (upgrade == nullptr || upgrade(&upgraded) != 0 || upgraded == factory.Get())
+      Fail("sl-factory: slUpgradeInterface failed");
+    auto* proxy = static_cast<IDXGIFactory2*>(upgraded);
+    Check(proxy->CreateSwapChainForHwnd(queue.Get(), window, &sc, nullptr, nullptr, &swapchain1), "swap chain (sl)");
+  } else {
+    Check(factory->CreateSwapChainForHwnd(queue.Get(), window, &sc, nullptr, nullptr, &swapchain1), "swap chain");
+  }
   ComPtr<IDXGISwapChain3> swapchain;
   Check(swapchain1.As(&swapchain), "swap chain 3");
   HANDLE waitable = nullptr;

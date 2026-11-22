@@ -379,6 +379,13 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
       LABELS sl_sample SKIP_RETURN_CODE 77 SKIP_REGULAR_EXPRESSION "SKIP:")
     set_tests_properties(preada_admission_sl_sample PROPERTIES RUN_SERIAL TRUE TIMEOUT 240
       LABELS sl_sample SKIP_RETURN_CODE 77 SKIP_REGULAR_EXPRESSION "SKIP:")
+    # 1.11.0 (R4): Add frame generation with the swap chain made on the hosted Streamline's factory.
+    add_test(NAME host_sl_factory COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/host_sl_factory_tests.py" --app $<TARGET_FILE:ngx_sr_app>
+      --addon $<TARGET_FILE:mfgunlock_native_xemfg> --reshade "${XEMFG_OFFLINE_RESHADE}"
+      --sl-bin "${XEMFG_SL_SAMPLES_ROOT}/sample-v2.14.16/_bin")
+    set_tests_properties(host_sl_factory PROPERTIES RUN_SERIAL TRUE TIMEOUT 240
+      LABELS sl_sample SKIP_RETURN_CODE 77 SKIP_REGULAR_EXPRESSION "SKIP:")
   endif()
   add_test(NAME xemfg_native_retained_legacy COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
