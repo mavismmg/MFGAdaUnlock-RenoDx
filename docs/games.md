@@ -64,6 +64,13 @@ necessarily been tested with the other.
 | Red Dead Redemption 2 | Working — DX12 and Vulkan; DLSS-G added by MFG Unlock (1.10.0, **Add frame generation**; the game has DLSS Super Resolution only) |
 | Uncharted: Legacy of Thieves Collection | Working — DLSS-G added by MFG Unlock (1.10.0, **Add frame generation**; the game has DLSS Super Resolution only) |
 | Shadow of the Tomb Raider | Working — DLSS-G added by MFG Unlock (1.10.0, **Add frame generation**; the game has DLSS Super Resolution only) |
+| Lies of P | Working — **Add frame generation**. With RenoDX's DLSS addon, the "Compatibility issue" is fixed in 1.11.0 (awaiting the tester's confirmation) |
+| Hi-Fi RUSH | Maybe — **Add frame generation**; the "Compatibility issue" with RenoDX DLSS and DLSS-G's status 0x10 are fixed in 1.11.0, awaiting the tester's confirmation |
+| The Medium | Maybe — **Add frame generation**; DLSS-G's status 0x10 is fixed in 1.11.0, awaiting the tester's confirmation |
+| Metro Exodus Enhanced Edition | Working — **Add frame generation** (4x). In HDR the crosshair still repeats with the HUD fix |
+| Microsoft Flight Simulator 2024 | Working — Dynamic MFG included |
+| Microsoft Flight Simulator 2020 | Working — fixed MFG; Dynamic MFG starts since 1.11.0 (awaiting the reporter's confirmation) |
+| Ninja Gaiden 4 | Maybe — forced DLSS frame generation needs an addon that moves the game's swap chain into Streamline (RenoDX DLSS) and one matching set of `sl.*.dll` |
 
 These are the games personally tested with this fork; this is not a claim of
 universal compatibility. Results may vary with the game version, DLSS and
@@ -118,8 +125,9 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Call of Duty Modern Warfare 4 | DX12 | Maybe | Working |  |
 | The Blood of Dawnwalker | DX12 | Maybe | Working |  |
 | Silent Hill 2 Remake | DX12 | Not Working | Working |  |
-| Ghotic 1 Remake | DX12 | Not Working | Working |  |
+| Gothic 1 Remake | DX12 | Not Working | Working |  |
 | Once Human | DX12 | Maybe | Working |  |
+| The Medium | DX12 | Not tested | Maybe | XeMFG DLSS-G with **Add frame generation**: in 1.10.x it saw a history reset almost every frame; 1.11.0 fixes DLSS-G's status 0x10, which should be the cause. Awaiting the tester's confirmation |
 
 **XeMFG CUDA** shows the games tested with the XeMFG backend. In the **XeMFG DLSS-G** column,
 **Maybe** means it has not been tested in that game yet, so

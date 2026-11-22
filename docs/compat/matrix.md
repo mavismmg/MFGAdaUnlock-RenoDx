@@ -4,7 +4,7 @@
 One row per report. The same game can appear more than once: per backend, per GPU, per runtime version.
 A row from the README before 1.10.0 was tested on an RTX 40 unless its notes say otherwise.
 
-151 reports; 125 working, 2 partially, 9 not working.
+160 reports; 130 working, 2 partially, 9 not working.
 
 | Game | Backend | API | GPU | Streamline | Frame generation file | Result | Notes | Source | Date |
 |---|---|---|---|---|---|---|---|---|---|
@@ -39,6 +39,7 @@ A row from the README before 1.10.0 was tested on an RTX 40 unless its notes say
 | Cyberpunk 2077 | XeMFG | DX12 | RTX 40 |  |  | Working | After a game update, run **Install / update files** again (see [below](#the-panel-says-intel-files-are-missing-or-a-different-version)) | README (before 1.10.0) |  |
 | Cyberpunk 2077 | XeMFG DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
 | Cyberpunk 2077 | XeMFG DLSS-G | DX12 | RTX 4070 SUPER | 2.14.16 |  | Working |  | MFG Unlock 1.10.0, maintainer test | 2026-11-16 |
+| Cyberpunk 2077 | XeMFG DLSS-G | DX12 |  |  |  | Working | 4x with the 1.11.0 performance overlay | mavismmg, MFG Unlock 1.11.0 | 2026-11-22 |
 | Death Stranding 2: On the Beach | DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
 | Death Stranding 2: On the Beach | XeMFG | DX12 | RTX 40 |  |  | Working | Its jittered motion vectors are corrected automatically. XMX: 3x–6x since 1.8.6 (Intel's 2x model before) | README (before 1.10.0) |  |
 | Death Stranding 2: On the Beach | XeMFG DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
@@ -68,6 +69,7 @@ A row from the README before 1.10.0 was tested on an RTX 40 unless its notes say
 | Grand Theft Auto 5 Enhanced | XeMFG DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
 | Hell Is Us | DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
 | Hell is Us | XeMFG DLSS-G | DX12 | RTX 3060 Ti | 2.14.16+ |  | Working |  | Calledme_kev's RTX 3060 Ti list (Opti Discord), MFG Unlock 1.9.0 | 2026-11-10 |
+| Hi-Fi RUSH | DLSS-G | DX12 | RTX 5070 Ti | 2.14.16 | 310.9.16 | Untested | Add frame generation; 'Compatibility issue' with RenoDX DLSS and status 0x10 fixed in 1.11.0, awaiting confirmation | field report, MFG Unlock 1.11.0 test builds | 2026-11-21 |
 | Hogwarts Legacy | DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
 | Hogwarts Legacy | XeMFG | DX12 | RTX 40 |  |  | Untested |  | README (before 1.10.0) |  |
 | Hogwarts Legacy | XeMFG DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
@@ -83,17 +85,22 @@ A row from the README before 1.10.0 was tested on an RTX 40 unless its notes say
 | Kingdom Come: Deliverance II | XeMFG | DX12 | RTX 40 |  |  | Working | With the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) XMX is not expected to work here: it needs DLSS-G in DX12. | README (before 1.10.0) |  |
 | Kingdom Come: Deliverance II | XeMFG DLSS-G | DX12 | RTX 4070 SUPER | 2.14.16 |  | Working | Add frame generation (MFG Unlock starts Streamline); HUD fix | MFG Unlock 1.10.0, maintainer test | 2026-11-16 |
 | Kingdom Come: Deliverance II | XeMFG DLSS-G | DX12 | RTX 40 |  |  | Untested | DLSS-SR not supported on XMX | README (before 1.10.0) |  |
+| Lies of P | DLSS-G | DX12 | RTX 5070 Ti | 2.14.16 | 310.9.16 | Working | Add frame generation, without RenoDX's DLSS addon. With it, fixed in 1.11.0 (awaiting confirmation) | field report, MFG Unlock 1.11.0 test builds | 2026-11-21 |
 | Mafia: The Old Country | DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
 | Mafia: The Old Country | XeMFG | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
 | Mafia: The Old Country | XeMFG DLSS-G | DX12 | RTX 40 |  |  | Untested | Maybe | README (before 1.10.0) |  |
 | Marvel's Spider-Man 2 | DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
 | Metal Eden | XeMFG DLSS-G | DX12 | RTX 3060 Ti | 2.14.16+ |  | Working |  | Calledme_kev's RTX 3060 Ti list (Opti Discord), MFG Unlock 1.9.0 | 2026-11-10 |
+| Metro Exodus Enhanced Edition | DLSS-G | DX12 | RTX 4080 | 2.14.16 | 310.9.16 | Working | Add frame generation, 4x; in HDR the crosshair repeats | field report, MFG Unlock 1.11.0 test builds | 2026-11-19 |
 | Metro Exodus Enhanced Edition | XeMFG | DX12 | RTX 40 |  |  | Working | With the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) XMX is not expected to work here: it needs DLSS-G in DX12. | README (before 1.10.0) |  |
 | Metro Exodus Enhanced Edition | XeMFG DLSS-G | DX12 |  | 2.14.16 |  | Partially working | Add frame generation; dim, flickering image in HDR fixed in 1.10.0, awaiting the tester's confirmation | Rogallo (Opti Discord), MFG Unlock 1.10.0 test build | 2026-11-16 |
 | Metro Exodus Enhanced Edition | XeMFG DLSS-G | DX12 | RTX 40 |  |  | Untested | DLSS-SR not supported on XMX | README (before 1.10.0) |  |
+| Microsoft Flight Simulator 2020 | DLSS-G | DX12 |  | 2.14.16 | 310.9.16 | Working | Fixed MFG; Dynamic MFG support query added in 1.11.0 (awaiting confirmation) | player e-mail | 2026-11-09 |
+| Microsoft Flight Simulator 2024 | DLSS-G | DX12 |  |  |  | Working | Dynamic MFG follows the display | player e-mail | 2026-11-09 |
 | Monster Hunter Wilds | XeMFG | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
 | Monster Hunter Wilds | XeMFG DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
 | Mortal Shell II | DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
+| Ninja Gaiden 4 | DLSS-G | DX12 | RTX 5070 Ti | 2.13.0 | 310.9.16 | Untested | Forced DLSS frame generation; needs an addon that moves the swap chain into Streamline (RenoDX DLSS) and one matching sl.*.dll set | field report, MFG Unlock 1.11.0 test builds | 2026-11-19 |
 | Once Human | XeMFG | DX12 | RTX 40 |  |  | Untested |  | README (before 1.10.0) |  |
 | Once Human | XeMFG DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
 | Onimusha: Way of the Sword | DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
@@ -146,6 +153,8 @@ A row from the README before 1.10.0 was tested on an RTX 40 unless its notes say
 | The Last of Us Part II Remastered | DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
 | The Last of Us Part II Remastered | XeMFG | DX12 | RTX 40 |  |  | Working | XMX since 1.8.3; in 1.8.2 a saved DLSS preset crashed the game at start | README (before 1.10.0) |  |
 | The Last of Us Part II Remastered | XeMFG DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
+| The Medium | DLSS-G | DX12 |  | 2.14.16 | 310.9.16 | Untested | Add frame generation; status 0x10 fixed in 1.11.0, awaiting confirmation | field report, MFG Unlock 1.11.0 test builds | 2026-11-21 |
+| The Medium | XeMFG DLSS-G | DX12 |  | 2.14.16 | 310.9.16 | Untested | Add frame generation; history reset almost every frame in 1.10.x, expected fixed with status 0x10 in 1.11.0 | field report, MFG Unlock 1.11.0 test builds | 2026-11-21 |
 | The Outer Worlds 2 | XeMFG DLSS-G | DX12 | RTX 3060 Ti | 2.14.16+ |  | Not working | Frame generation accepted, never created; sl.log pending | Calledme_kev's RTX 3060 Ti list (Opti Discord), MFG Unlock 1.9.0 | 2026-11-10 |
 | The Sinking City 2 | DLSS-G | DX12 | RTX 40 |  |  | Working |  | README (before 1.10.0) |  |
 | The Witcher 3: Wild Hunt (next-gen) | XeMFG | DX12 | RTX 40 |  |  | Working | Turn off the game's **VSync** for correct frame pacing on CUDA. Fixed in 1.5.3: changing path tracing or other graphics settings with frame generation on no longer loses the graphics device | README (before 1.10.0) |  |

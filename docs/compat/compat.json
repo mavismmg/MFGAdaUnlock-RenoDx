@@ -1830,6 +1830,114 @@
    "notes": "",
    "source": "mavismmg, MFG Unlock 1.10.1",
    "date": "2026-11-17"
+  },
+  {
+   "game": "Lies of P",
+   "backend": "DLSS-G",
+   "api": "DX12",
+   "gpu": "RTX 5070 Ti",
+   "streamline": "2.14.16",
+   "provider": "310.9.16",
+   "result": "Working",
+   "notes": "Add frame generation, without RenoDX's DLSS addon. With it, fixed in 1.11.0 (awaiting confirmation)",
+   "source": "field report, MFG Unlock 1.11.0 test builds",
+   "date": "2026-11-21"
+  },
+  {
+   "game": "Hi-Fi RUSH",
+   "backend": "DLSS-G",
+   "api": "DX12",
+   "gpu": "RTX 5070 Ti",
+   "streamline": "2.14.16",
+   "provider": "310.9.16",
+   "result": "Untested",
+   "notes": "Add frame generation; 'Compatibility issue' with RenoDX DLSS and status 0x10 fixed in 1.11.0, awaiting confirmation",
+   "source": "field report, MFG Unlock 1.11.0 test builds",
+   "date": "2026-11-21"
+  },
+  {
+   "game": "The Medium",
+   "backend": "DLSS-G",
+   "api": "DX12",
+   "gpu": "",
+   "streamline": "2.14.16",
+   "provider": "310.9.16",
+   "result": "Untested",
+   "notes": "Add frame generation; status 0x10 fixed in 1.11.0, awaiting confirmation",
+   "source": "field report, MFG Unlock 1.11.0 test builds",
+   "date": "2026-11-21"
+  },
+  {
+   "game": "The Medium",
+   "backend": "XeMFG DLSS-G",
+   "api": "DX12",
+   "gpu": "",
+   "streamline": "2.14.16",
+   "provider": "310.9.16",
+   "result": "Untested",
+   "notes": "Add frame generation; history reset almost every frame in 1.10.x, expected fixed with status 0x10 in 1.11.0",
+   "source": "field report, MFG Unlock 1.11.0 test builds",
+   "date": "2026-11-21"
+  },
+  {
+   "game": "Metro Exodus Enhanced Edition",
+   "backend": "DLSS-G",
+   "api": "DX12",
+   "gpu": "RTX 4080",
+   "streamline": "2.14.16",
+   "provider": "310.9.16",
+   "result": "Working",
+   "notes": "Add frame generation, 4x; in HDR the crosshair repeats",
+   "source": "field report, MFG Unlock 1.11.0 test builds",
+   "date": "2026-11-19"
+  },
+  {
+   "game": "Microsoft Flight Simulator 2024",
+   "backend": "DLSS-G",
+   "api": "DX12",
+   "gpu": "",
+   "streamline": "",
+   "provider": "",
+   "result": "Working",
+   "notes": "Dynamic MFG follows the display",
+   "source": "player e-mail",
+   "date": "2026-11-09"
+  },
+  {
+   "game": "Microsoft Flight Simulator 2020",
+   "backend": "DLSS-G",
+   "api": "DX12",
+   "gpu": "",
+   "streamline": "2.14.16",
+   "provider": "310.9.16",
+   "result": "Working",
+   "notes": "Fixed MFG; Dynamic MFG support query added in 1.11.0 (awaiting confirmation)",
+   "source": "player e-mail",
+   "date": "2026-11-09"
+  },
+  {
+   "game": "Ninja Gaiden 4",
+   "backend": "DLSS-G",
+   "api": "DX12",
+   "gpu": "RTX 5070 Ti",
+   "streamline": "2.13.0",
+   "provider": "310.9.16",
+   "result": "Untested",
+   "notes": "Forced DLSS frame generation; needs an addon that moves the swap chain into Streamline (RenoDX DLSS) and one matching sl.*.dll set",
+   "source": "field report, MFG Unlock 1.11.0 test builds",
+   "date": "2026-11-19"
+  },
+  {
+   "game": "Cyberpunk 2077",
+   "backend": "XeMFG DLSS-G",
+   "api": "DX12",
+   "gpu": "",
+   "streamline": "",
+   "provider": "",
+   "result": "Working",
+   "notes": "4x with the 1.11.0 performance overlay",
+   "source": "mavismmg, MFG Unlock 1.11.0",
+   "date": "2026-11-22"
   }
  ]
 }

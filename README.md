@@ -307,6 +307,19 @@ Later releases added, also by [mavismmg](https://github.com/mavismmg):
 - **Diagnostics (1.8.6–1.9):** the frame generation chain card, the read-only
   driver-profile report, the duplicate-addon warning, the `game_xefg_modules`
   profiles and a release script that publishes nothing by itself.
+- **DLSS-G in games without it (1.10):** **Add frame generation** starts MFG Unlock's
+  own Streamline for games with DLSS Super Resolution only (Kingdom Come: Deliverance II,
+  Red Dead Redemption 2, Uncharted, Shadow of the Tomb Raider, Lies of P, Metro Exodus),
+  tags the game's DLSS inputs for it and finds the image before the HUD (the **HUD fix**);
+  **forced frame generation** adds DLSS-G to a Streamline game that ships without it.
+- **XeMFG DLSS-G (1.10):** Vulkan games through dashdogy's Vulkan provider, and
+  "free NVIDIA's unused memory" (about 400 MiB at 1440p).
+- **Living with other addons (1.10.1–1.11):** one Streamline swap chain under RenoDX's DLSS
+  addon, NGX hooks that survive a "DLSS 5" addon removing its own, XeMFG DLSS-G standing
+  aside for addons that hook NGX, and an `other_hooks` line in the support report.
+- **Performance overlay (1.11):** frame rate, frame times, 1% and 0.1% lows, frame
+  generation status, latency and video memory over the game; Dynamic MFG for games that
+  never ask the runtime; a hang record and a session notice that knows a normal exit.
 
 These additions extend Dreamt's addon and dashdogy's research; they do not
 replace or claim authorship of either original contribution.
@@ -348,7 +361,17 @@ through [my Ko-fi](https://ko-fi.com/mavismmg).
 
 ## Tested Games
 
-Games tested with each method, and their notes. See [docs/games.md](docs/games.md#tested-games).
+Games reported working with each method. The full tables, with versions, notes and the games still marked
+**Maybe**, are in [docs/games.md](docs/games.md#tested-games); every report also goes into the generated
+[compatibility matrix](docs/compat/matrix.md). Not a claim of universal compatibility: results depend on the
+game version, the DLSS and Streamline files, the GPU, the driver and the settings.
+
+- **DLSS-G (NVIDIA's generator), 51 games:** S.T.A.L.K.E.R. 2: Heart of Chornobyl, God of War Ragnarök, Death Stranding 2: On the Beach, Clair Obscur: Expedition 33, The Last of Us Part II Remastered, Resident Evil Requiem, Assassin's Creed IV: Black Flag, PRAGMATA, Cyberpunk 2077, Alan Wake 2, Dragon's Dogma 2, Starfield, Marvel's Spider-Man 2, Mortal Shell II, Resonance: A Plague Tale Legacy, Black Myth: Wukong, Assetto Corsa Rally, Indiana Jones and the Great Circle, Hell Is Us, Silent Hill 2, Forza Horizon 6, Assassin's Creed Shadows, Stellar Blade, Doom the Dark Ages, Horizon Forbidden West, 007 The First Light, Avatar: Frontiers of Pandora, Borderlands 4, Payday 3, Ghost of Tsushima, Crimson Desert, Gothic 1 Remake, Jusant, Hogwarts Legacy, Mafia: The Old Country, Dying Light: The Beast, Onimusha: Way of the Sword, Monster Hunter Wilds, Star Wars Outlaws, The Sinking City 2, Control Resonant, Phantom Blade Zero, Call of Duty Modern Warfare 4, Kingdom Come: Deliverance II, Red Dead Redemption 2, Uncharted: Legacy of Thieves Collection, Shadow of the Tomb Raider, Lies of P, Metro Exodus Enhanced Edition, Microsoft Flight Simulator 2024, Microsoft Flight Simulator 2020.
+- **Add frame generation** (DLSS-G in games with DLSS Super Resolution only), 6 games: Kingdom Come: Deliverance II, Red Dead Redemption 2, Uncharted: Legacy of Thieves Collection, Shadow of the Tomb Raider, Lies of P, Metro Exodus Enhanced Edition.
+- **XeMFG (CUDA), 29 games:** Resident Evil Requiem, Monster Hunter Wilds, Dragon's Dogma 2, Onimusha: Way of the Sword, PRAGMATA, Control Resonant, Assassin's Creed IV: Black Flag Resynced, Cyberpunk 2077, The Witcher 3: Wild Hunt (next-gen), Alan Wake 2, The Last of Us Part II Remastered, Mafia: The Old Country, Resonance: A Plague Tale Legacy, Death Stranding 2: On the Beach, Ghostrunner 2, S.T.A.L.K.E.R. 2: Heart of Chornobyl, Warhammer 40,000: Darktide, Black Myth: Wukong, Kingdom Come: Deliverance II, Red Dead Redemption 2, Elden Ring, Metro Exodus Enhanced Edition, Uncharted: Legacy of Thieves Collection, Shadow of the Tomb Raider, Indiana Jones and the Great Circle, DOOM: The Dark Ages, Crimson Desert, Dying Light 2, Titans of The Tide.
+- **XeMFG DLSS-G, 37 games:** Resident Evil Requiem, Monster Hunter Wilds, Dragon's Dogma 2, Onimusha: Way of the Sword, PRAGMATA, Control Resonant, Assassin's Creed IV: Black Flag Resynced, Cyberpunk 2077, The Witcher 3: Wild Hunt (next-gen), Alan Wake 2, Stellar Blade, Ghost of Tsushima, Horizon Zero Dawn Remastered, The Last of Us Part II Remastered, Resonance: A Plague Tale Legacy, Death Stranding 2: On the Beach, Ghostrunner 2, Warhammer 40,000: Darktide, Black Myth: Wukong, Kingdom Come: Deliverance II, Red Dead Redemption 2, Uncharted: Legacy of Thieves Collection, Shadow of the Tomb Raider, Silent Hill f, DOOM: The Dark Ages, Arknights: Endfield, Crimson Desert, Phantom Blade Zero, Dying Light 2, Grand Theft Auto 5 Enhanced, Hogwarts Legacy, STAR WARS: Galactic Racer, Call of Duty Modern Warfare 4, The Blood of Dawnwalker, Silent Hill 2 Remake, Gothic 1 Remake, Once Human.
+
+To report a game, use the **Game report** issue form and paste the panel's support report.
 
 ## Known Multiplier Behavior
 
