@@ -160,6 +160,11 @@ target_compile_definitions(ngx_sr_app PRIVATE NOMINMAX UNICODE _UNICODE)
 target_include_directories(ngx_sr_app PRIVATE "${RENODX_SOURCE_DIR}/external/Streamline/external/ngx-sdk/include"
   "${RENODX_SOURCE_DIR}/external/Streamline/include")
 target_link_libraries(ngx_sr_app PRIVATE d3d12 dxgi dxguid d3dcompiler user32 advapi32)
+# 1.12.0 plan (DLSS 5, N0.1): the NGX feature ids the driver's NGX core answers for (a research tool, no test).
+add_executable(ngx_feature_probe "${CMAKE_SOURCE_DIR}/ngx_feature_probe.cpp")
+target_compile_definitions(ngx_feature_probe PRIVATE NOMINMAX UNICODE _UNICODE)
+target_include_directories(ngx_feature_probe PRIVATE "${RENODX_SOURCE_DIR}/external/Streamline/external/ngx-sdk/include")
+target_link_libraries(ngx_feature_probe PRIVATE d3d12 dxgi advapi32)
 add_executable(xemfg_window_tests "${CMAKE_SOURCE_DIR}/xemfg_window_tests.cpp" native_window.cpp)
 target_compile_definitions(xemfg_window_tests PRIVATE NOMINMAX UNICODE _UNICODE)
 target_link_libraries(xemfg_window_tests PRIVATE user32)
