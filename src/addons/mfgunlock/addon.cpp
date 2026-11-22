@@ -796,6 +796,8 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
                              const reshade::api::rect* /*dirty_rects*/) {
   if (mfgunlock::slhost::Hosting() && swapchain != nullptr)
     mfgunlock::slhost::OnPresent(reinterpret_cast<void*>(swapchain->get_native()));
+  // 1.11.0 (X4): Dynamic MFG support, asked by the addon when the game never asks.
+  mfgunlock::framecount::internal::ProbeDynamicSupport();
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
   if(swapchain==g_primary_swapchain.load(std::memory_order_acquire)) mfgunlock::dlssgdisplay::Observe(swapchain);
 #endif

@@ -2524,11 +2524,18 @@ inline std::atomic<void (*)()> g_before_frame_generation{nullptr};
 // repeatedly on an admitted RTX 20/30 (preada::HoldOff, set by addon.cpp).
 inline std::atomic<bool (*)()> g_hold_off{nullptr};
 
+// 1.11.0 (X4): the game's DLSS-G viewport, for the addon's own Dynamic MFG support query.
+inline std::atomic<uint32_t> g_game_viewport{0};
+inline std::atomic_bool g_game_viewport_seen{false};
 inline sl::Result HookedSetOptions(const sl::ViewportHandle& viewport,
                                    const sl::DLSSGOptions& options) {
   const auto real = g_real_set_options.load(std::memory_order_acquire);
   if (real == nullptr)
     return sl::Result::eErrorNotInitialized;
+  if (!g_force_fg_calling) {
+    g_game_viewport.store(static_cast<uint32_t>(viewport), std::memory_order_relaxed);
+    g_game_viewport_seen.store(true, std::memory_order_release);
+  }
   if (!g_force_fg_calling) g_game_set_options.store(true, std::memory_order_release);
   if (options.mode != sl::DLSSGMode::eOff) {
     const auto hold_off = g_hold_off.load(std::memory_order_acquire);
@@ -3079,6 +3086,31 @@ inline sl::Result HookedGetState(const sl::ViewportHandle& viewport, sl::DLSSGSt
     reshade::log::message(reshade::log::level::info, s.str().c_str());
   }
   return result;
+}
+
+// 1.11.0 (X4): MSFS 2020 (a player's report, 2026-11-09): Dynamic MFG stayed at "the runtime has not
+// answered the Dynamic support query yet" with Streamline 2.14.16 and DLSS-G 310.9.16, at a fixed 6x.
+// Support is read from slDLSSGGetState, and a game that calls it only when its options change never
+// asked. While Dynamic MFG is wanted and support was not seen, the addon asks itself, at most once a
+// second, through the wrapper above (current state struct, so support is read as from any game). The
+// query also reads the frames presented since the game's last call, so it stops once answered.
+inline void ProbeDynamicSupport() {
+  if (!g_dynamic_mfg_enabled.load(std::memory_order_relaxed) ||
+      g_dynamic_support_seen.load(std::memory_order_acquire) ||
+      !g_game_viewport_seen.load(std::memory_order_acquire) ||
+      g_real_get_state.load(std::memory_order_acquire) == nullptr || g_get_state_call_active)
+    return;
+  static std::atomic<uint64_t> next{0};
+  static std::atomic<uint32_t> tries{0};
+  const uint64_t now = GetTickCount64();
+  if (now < next.load(std::memory_order_relaxed) || tries.load(std::memory_order_relaxed) >= 120) return;
+  next.store(now + 1000, std::memory_order_relaxed);
+  if (tries.fetch_add(1, std::memory_order_relaxed) == 0)
+    reshade::log::message(reshade::log::level::info,
+                          "mfgunlock: the game has not asked slDLSSGGetState yet; MFG Unlock asks for Dynamic MFG "
+                          "support itself.");
+  sl::DLSSGState state{};
+  HookedGetState(sl::ViewportHandle{g_game_viewport.load(std::memory_order_relaxed)}, state, nullptr);
 }
 
 // 1.6 (plan B): the DLSS Super Resolution preset selected in the panel.
