@@ -23,6 +23,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -43,6 +44,9 @@ struct Look {
   bool automask = true;
   bool operator==(const Look&) const = default;
 };
+
+// How the back buffer is encoded: NR runs on SDR, HDR is mapped there and back (nr_runtime shaders).
+enum class Encoding : int { kSdr = 0, kPq = 1, kScRgb = 2 };
 
 enum class State : int {
   kOff = 0,          // [DLSS5] Enabled=0
@@ -101,16 +105,68 @@ constexpr const char* kShaders = R"(
 Texture2D<float4> full : register(t0);
 Texture2D<float4> reduced : register(t1);
 Texture2D<float4> enhanced : register(t2);
+Texture2D<float4> history : register(t3);
+Texture2D<float4> steady : register(t4);
 SamplerState linear_clamp : register(s0);
+cbuffer Encoding : register(b0) { uint mode; float paper; float keep; };
 struct V { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
 V vs(uint id : SV_VertexID) {
   V o; o.uv = float2((id << 1) & 2, id & 2); o.pos = float4(o.uv * float2(2, -2) + float2(-1, 1), 0, 1); return o;
 }
-float4 reduce(V i) : SV_Target { return full.SampleLevel(linear_clamp, i.uv, 0); }
+// NR sees an sRGB-encoded SDR image. HDR goes there and back through an invertible curve:
+// nits -> L / (L + paper) -> sRGB, and the inverse after NR.
+float3 PqToNits(float3 e) {
+  const float m1 = 0.1593017578125, m2 = 78.84375, c1 = 0.8359375, c2 = 18.8515625, c3 = 18.6875;
+  float3 p = pow(saturate(e), 1.0 / m2);
+  return 10000.0 * pow(max(p - c1, 0.0) / (c2 - c3 * p), 1.0 / m1);
+}
+float3 NitsToPq(float3 l) {
+  const float m1 = 0.1593017578125, m2 = 78.84375, c1 = 0.8359375, c2 = 18.8515625, c3 = 18.6875;
+  float3 y = pow(saturate(l / 10000.0), m1);
+  return pow((c1 + c2 * y) / (1.0 + c3 * y), m2);
+}
+float3 SrgbEncode(float3 x) { return x <= 0.0031308 ? 12.92 * x : 1.055 * pow(x, 1.0 / 2.4) - 0.055; }
+float3 SrgbDecode(float3 x) { return x <= 0.04045 ? x / 12.92 : pow((x + 0.055) / 1.055, 2.4); }
+float3 ToNits(float3 c) { return mode == 1 ? PqToNits(c) : c * 80.0; }  // scRGB: 1.0 = 80 nits
+float3 FromNits(float3 l) { return mode == 1 ? NitsToPq(l) : l / 80.0; }
+float3 Encode(float3 c) {
+  if (mode == 0) return c;
+  float3 l = max(ToNits(c), 0.0);
+  return SrgbEncode(l / (l + paper));
+}
+float3 Decode(float3 s) {
+  if (mode == 0) return s;
+  float3 t = min(SrgbDecode(saturate(s)), 0.999);
+  return FromNits(paper * t / (1.0 - t));
+}
+float4 reduce(V i) : SV_Target {
+  float4 c = full.SampleLevel(linear_clamp, i.uv, 0);
+  return float4(Encode(c.rgb), c.a);
+}
+// NR's change to the reduced image, steadied over frames: the previous change, kept only within what
+// NR gives around this pixel now (3x3) and less where the image itself changed (motion, cuts).
+// Alpha holds the reduced image's luma, to see that change next frame.
+float Luma(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
+float4 stabilize(V i) : SV_Target {
+  int2 p = int2(i.pos.xy);
+  float3 lo = 1e9, hi = -1e9, now = 0;
+  [unroll] for (int y = -1; y <= 1; ++y)
+    [unroll] for (int x = -1; x <= 1; ++x) {
+      float3 d = enhanced.Load(int3(p + int2(x, y), 0)).rgb - reduced.Load(int3(p + int2(x, y), 0)).rgb;
+      lo = min(lo, d);
+      hi = max(hi, d);
+      if (x == 0 && y == 0) now = d;
+    }
+  float luma = Luma(reduced.Load(int3(p, 0)).rgb);
+  float4 before = history.Load(int3(p, 0));
+  float w = keep * saturate(1.0 - abs(luma - before.a) * 12.0);
+  return float4(lerp(now, clamp(before.rgb, lo, hi), w), luma);
+}
 float4 compose(V i) : SV_Target {
   float4 f = full.Load(int3(i.pos.xy, 0));
-  float3 change = enhanced.SampleLevel(linear_clamp, i.uv, 0).rgb - reduced.SampleLevel(linear_clamp, i.uv, 0).rgb;
-  return float4(saturate(f.rgb + change), f.a);
+  float3 change = steady.SampleLevel(linear_clamp, i.uv, 0).rgb;
+  if (mode == 0) return float4(saturate(f.rgb + change), f.a);
+  return float4(Decode(Encode(f.rgb) + change), f.a);
 }
 )";
 
@@ -178,7 +234,7 @@ class Runtime {
 
   // The game's back buffer, before Present: NR applied in place. Present thread only.
   bool Apply(ID3D12CommandQueue* queue, ID3D12Resource* backbuffer, D3D12_RESOURCE_STATES bb_state, const Look& look,
-             int scale_percent, bool hdr) {
+             int scale_percent, Encoding encoding) {
     if (queue == nullptr || backbuffer == nullptr) return false;
     struct Scope {
       Scope() { t_in_apply = true; }
@@ -190,10 +246,19 @@ class Runtime {
       return false;
     const D3D12_RESOURCE_DESC bb = backbuffer->GetDesc();
     const DXGI_FORMAT format = Unorm(bb.Format);
-    if (hdr || (format != DXGI_FORMAT_R8G8B8A8_UNORM && format != DXGI_FORMAT_B8G8R8A8_UNORM &&
-                format != DXGI_FORMAT_R10G10B10A2_UNORM)) {
+    // HDR10 on 10-bit and scRGB on FP16 go through the curve in the shaders; anything else is left alone.
+    const bool known = format == DXGI_FORMAT_R8G8B8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+                       format == DXGI_FORMAT_R10G10B10A2_UNORM || format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+    if (format == DXGI_FORMAT_R16G16B16A16_FLOAT) encoding = Encoding::kScRgb;
+    else if (format != DXGI_FORMAT_R10G10B10A2_UNORM && encoding != Encoding::kSdr) encoding = Encoding::kSdr;
+    if (!known) {
       Set(State::kFormat);
       return false;
+    }
+    if (encoding != mode_) {
+      mode_ = encoding;
+      reset_ = true;
+      Log(std::string("image encoding: ") + (encoding == Encoding::kSdr ? "SDR" : encoding == Encoding::kPq ? "HDR10 (PQ)" : "scRGB"));
     }
     // The queue's own device: our command list must be of the same kind as the queue. ReShade's queue
     // wrapper takes native and wrapped lists alike, a native queue only native ones; the device of the
@@ -277,6 +342,7 @@ class Runtime {
       params_.Set((base + "SubrectWidth").c_str(), low_w_);
       params_.Set((base + "SubrectHeight").c_str(), low_h_);
     }
+    const bool fresh = reset_;  // no history to keep either
     reset_ = false;
     if (applied_ == 0) Log("first frame: evaluate");
     const int r = evaluate_(evaluate_fn_, l, feature_, &params_, nullptr);
@@ -285,9 +351,17 @@ class Runtime {
       return Fail(("EvaluateFeature 0x" + Hex(r)).c_str());
     }
 
-    // 3. Compose into the back buffer (the runtime set its own heaps and root signature).
+    // 3. Steady NR's change over frames (the runtime set its own heaps and root signature).
     Barrier(l, enhanced_.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     Barrier(l, low_.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    parity_ ^= 1;  // t3 = steady_[parity_] (last frame), t4 = steady_[1 - parity_] (this frame)
+    keep_ = fresh ? 0.f : stability_ * 0.009f;  // 100% keeps 90% of the history where nothing moved
+    ID3D12Resource* const written = steady_[1 - parity_].Get();
+    Barrier(l, written, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    Draw(l, pso_stabilize_.Get(), rtv_steady_[1 - parity_], low_w_, low_h_);
+    Barrier(l, written, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+    // 4. Compose into the back buffer.
     Barrier(l, backbuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
     device_->CreateRenderTargetView(backbuffer, &rtv_desc_, rtv_bb_);
     Draw(l, ComposePso(format), rtv_bb_, static_cast<uint32_t>(bb.Width), bb.Height);
@@ -321,6 +395,8 @@ class Runtime {
     if (state() == State::kRunning || state() == State::kOff) Set(why);
   }
   void Off() { Pause(State::kOff); }
+  // How much of NR's change from earlier frames is kept, 0..100 ([DLSS5] Stability); read every frame.
+  void Stability(int percent) { stability_ = percent < 0 ? 0 : (percent > 100 ? 100 : percent); }
 
  private:
   static constexpr int kFrames = 3;
@@ -336,7 +412,17 @@ class Runtime {
   using ShimRelease = int(__cdecl*)(void*, void*);
 
   State Set(State s) {
-    state_.store(s, std::memory_order_relaxed);
+    // Each reason NR is not running goes to the log once per change, so a tester's log tells why.
+    const State before = state_.exchange(s, std::memory_order_relaxed);
+    if (before != s) {
+      const char* why = s == State::kNoRuntime   ? "nvngx_dlssnr.dll not found"
+                        : s == State::kUnsigned  ? "nvngx_dlssnr.dll is not signed by NVIDIA (AllowUnsigned=0)"
+                        : s == State::kNoShim    ? "MFGUnlock-DLSS5/mfgunlock_nvngx.dll not found"
+                        : s == State::kFormat    ? "the back buffer format is not one NR handles"
+                        : s == State::kWithGameFg ? "paused: the game's frame generation is on without the hook before it"
+                                                  : nullptr;
+      if (why) Log(why);
+    }
     return s;
   }
   bool Fail(const char* what) {
@@ -446,19 +532,23 @@ class Runtime {
       return SUCCEEDED(compile(kShaders, strlen(kShaders), "mfgunlock_nr", nullptr, nullptr, entry, target,
                                D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &out, &errors));
     };
-    if (!build("vs", "vs_5_0", vs_) || !build("reduce", "ps_5_0", ps_reduce_) || !build("compose", "ps_5_0", ps_compose_))
+    if (!build("vs", "vs_5_0", vs_) || !build("reduce", "ps_5_0", ps_reduce_) || !build("compose", "ps_5_0", ps_compose_) ||
+        !build("stabilize", "ps_5_0", ps_stabilize_))
       return Fail("shader compilation");
-    D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 0, 0};
-    D3D12_ROOT_PARAMETER table{};
-    table.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-    table.DescriptorTable = {1, &range};
-    table.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kTable, 0, 0, 0};
+    D3D12_ROOT_PARAMETER table[2]{};
+    table[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    table[0].DescriptorTable = {1, &range};
+    table[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    table[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    table[1].Constants = {0, 0, 3};
+    table[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_STATIC_SAMPLER_DESC sampler{};
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
     sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     sampler.MaxLOD = D3D12_FLOAT32_MAX;
-    D3D12_ROOT_SIGNATURE_DESC rs{1, &table, 1, &sampler, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    D3D12_ROOT_SIGNATURE_DESC rs{2, table, 1, &sampler, D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ComPtr<ID3DBlob> blob, errors;
     using SerializeFn = HRESULT(WINAPI*)(const D3D12_ROOT_SIGNATURE_DESC*, D3D_ROOT_SIGNATURE_VERSION, ID3DBlob**,
                                          ID3DBlob**);
@@ -469,9 +559,12 @@ class Runtime {
         FAILED(device_->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&root_))))
       return Fail("root signature");
     pso_reduce_ = Pso(ps_reduce_.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
-    if (!pso_reduce_) return Fail("pipeline");
-    D3D12_DESCRIPTOR_HEAP_DESC srv{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 3, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
-    D3D12_DESCRIPTOR_HEAP_DESC rtv{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 2, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
+    pso_stabilize_ = Pso(ps_stabilize_.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
+    if (!pso_reduce_ || !pso_stabilize_) return Fail("pipeline");
+    // Two tables, one per history parity: t3 the previous change, t4 the one written this frame.
+    D3D12_DESCRIPTOR_HEAP_DESC srv{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 2 * kTable,
+                                   D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+    D3D12_DESCRIPTOR_HEAP_DESC rtv{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 4, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
     if (FAILED(device_->CreateDescriptorHeap(&srv, IID_PPV_ARGS(&srv_heap_))) ||
         FAILED(device_->CreateDescriptorHeap(&rtv, IID_PPV_ARGS(&rtv_heap_))))
       return Fail("descriptor heaps");
@@ -479,6 +572,10 @@ class Runtime {
     rtv_low_ = rtv_heap_->GetCPUDescriptorHandleForHeapStart();
     rtv_bb_ = rtv_low_;
     rtv_bb_.ptr += rtv_step;
+    for (int i = 0; i < 2; ++i) {
+      rtv_steady_[i] = rtv_low_;
+      rtv_steady_[i].ptr += rtv_step * (2 + i);
+    }
     return true;
   }
   ComPtr<ID3D12PipelineState> Pso(ID3DBlob* ps, DXGI_FORMAT format) {
@@ -542,20 +639,26 @@ class Runtime {
                    D3D12_RESOURCE_STATE_RENDER_TARGET);
     enhanced_ = texture(lw, lh, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    if (!full_ || !low_ || !enhanced_) return false;
+    for (auto& s : steady_)
+      s = texture(lw, lh, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET,
+                  D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    if (!full_ || !low_ || !enhanced_ || !steady_[0] || !steady_[1]) return false;
     const UINT step = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-    D3D12_CPU_DESCRIPTOR_HANDLE h0 = srv_heap_->GetCPUDescriptorHandleForHeapStart();
     D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
     sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     sv.Texture2D.MipLevels = 1;
-    sv.Format = format;
-    device_->CreateShaderResourceView(full_.Get(), &sv, h0);
-    h0.ptr += step;
-    sv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-    device_->CreateShaderResourceView(low_.Get(), &sv, h0);
-    h0.ptr += step;
-    device_->CreateShaderResourceView(enhanced_.Get(), &sv, h0);
+    for (int parity = 0; parity < 2; ++parity) {
+      D3D12_CPU_DESCRIPTOR_HANDLE h0 = srv_heap_->GetCPUDescriptorHandleForHeapStart();
+      h0.ptr += step * kTable * parity;
+      ID3D12Resource* const views[kTable] = {full_.Get(), low_.Get(), enhanced_.Get(), steady_[parity].Get(),
+                                             steady_[1 - parity].Get()};
+      for (UINT i = 0; i < kTable; ++i, h0.ptr += step) {
+        sv.Format = i == 0 ? format : DXGI_FORMAT_R16G16B16A16_FLOAT;
+        device_->CreateShaderResourceView(views[i], &sv, h0);
+      }
+    }
+    for (int i = 0; i < 2; ++i) device_->CreateRenderTargetView(steady_[i].Get(), nullptr, rtv_steady_[i]);
     device_->CreateRenderTargetView(low_.Get(), nullptr, rtv_low_);
     rtv_desc_ = {};
     rtv_desc_.Format = format;
@@ -570,7 +673,13 @@ class Runtime {
     ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
     l->SetDescriptorHeaps(1, heaps);
     l->SetGraphicsRootSignature(root_.Get());
-    l->SetGraphicsRootDescriptorTable(0, srv_heap_->GetGPUDescriptorHandleForHeapStart());
+    D3D12_GPU_DESCRIPTOR_HANDLE table = srv_heap_->GetGPUDescriptorHandleForHeapStart();
+    table.ptr += UINT64(device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)) * kTable * parity_;
+    l->SetGraphicsRootDescriptorTable(0, table);
+    const float values[2] = {203.f, keep_};  // nits of SDR white in HDR (ITU-R BT.2408); history weight
+    uint32_t constants[3] = {static_cast<uint32_t>(mode_), 0, 0};
+    std::memcpy(&constants[1], values, sizeof(values));
+    l->SetGraphicsRoot32BitConstants(1, 3, constants, 0);
     l->SetPipelineState(pso);
     D3D12_VIEWPORT vp{0, 0, float(w), float(h), 0, 1};
     D3D12_RECT sc{0, 0, LONG(w), LONG(h)};
@@ -602,18 +711,24 @@ class Runtime {
   HANDLE event_ = nullptr;
   Frame frames_[kFrames];
   uint64_t frame_index_ = 0;
-  ComPtr<ID3DBlob> vs_, ps_reduce_, ps_compose_;
+  static constexpr UINT kTable = 5;  // full, reduced, enhanced, history, steadied
+  ComPtr<ID3DBlob> vs_, ps_reduce_, ps_compose_, ps_stabilize_;
   ComPtr<ID3D12RootSignature> root_;
-  ComPtr<ID3D12PipelineState> pso_reduce_, pso_compose_;
+  ComPtr<ID3D12PipelineState> pso_reduce_, pso_compose_, pso_stabilize_;
   DXGI_FORMAT compose_format_ = DXGI_FORMAT_UNKNOWN, full_format_ = DXGI_FORMAT_UNKNOWN;
   ComPtr<ID3D12DescriptorHeap> srv_heap_, rtv_heap_;
-  D3D12_CPU_DESCRIPTOR_HANDLE rtv_low_{}, rtv_bb_{};
+  D3D12_CPU_DESCRIPTOR_HANDLE rtv_low_{}, rtv_bb_{}, rtv_steady_[2]{};
+  ComPtr<ID3D12Resource> steady_[2];
+  UINT parity_ = 0;
+  int stability_ = 60;
+  float keep_ = 0.f;
   D3D12_RENDER_TARGET_VIEW_DESC rtv_desc_{};
   ComPtr<ID3D12Resource> full_, low_, enhanced_;
   uint32_t full_w_ = 0, full_h_ = 0, low_w_ = 0, low_h_ = 0;
   Parameters params_;
   Look look_{};
   bool reset_ = true;
+  Encoding mode_ = Encoding::kSdr;
   void* feature_ = nullptr;
   ShimCreate create_ = nullptr;
   ShimEvaluate evaluate_ = nullptr;

@@ -1062,6 +1062,8 @@ enum class Str : unsigned {
   kDlss5StateFailed_n35,
   kDlss5Runtime_n36,
   kDlss5Cost_n37,
+  kDlss5Stability_n38,
+  kDlss5StabilityDesc_n39,
   kCount
 };
 }  // namespace mfgunlock::i18n

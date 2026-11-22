@@ -213,13 +213,13 @@ void DrawControls(PanelPage page) {
     ui::Section(T(Str::kSmoothnessAndDisplay_cf1b));
     ui::Card card("##xe_presentation");
     ui::Setting("##xe_flip_row",T(Str::kDriverFlipMetering_944d),flipHelp,[&] {
-      if(ImGui::Checkbox("##xe_flip",&value.flipMetering)) ConfigureControls(value);
+      if(ui::CheckToggle("##xe_flip",&value.flipMetering)) ConfigureControls(value);
     });
     ui::Readout("##xe_flip_state",T(Str::kPacingStatus_8f41),flip,flipHelp,metering?ui::Accent:ui::Muted);
     if(status.flipRequested!=status.flipEnabled) ui::Description(T(Str::kChangePendingAppliesWithThe_3d02));
     constexpr const char* vsyncHelp="Presents the game's frames with sync interval 0, as with VSync off in the game. Use it for games whose VSync cannot be turned off in their settings, such as Elden Ring: game VSync keeps driver flip metering and generated-frame pacing from applying. Tearing is not enabled. Applies at the next frame.";
     ui::Setting("##xe_vsync_row",T(Str::kForceGameVsyncOff_c2e2),vsyncHelp,[&] {
-      if(ImGui::Checkbox("##xe_force_vsync_off",&value.forceVSyncOff)) ConfigureControls(value);
+      if(ui::CheckToggle("##xe_force_vsync_off",&value.forceVSyncOff)) ConfigureControls(value);
     });
     const auto sync=status.gameSyncInterval;
     const std::string gameVSync=sync==UINT32_MAX?T(Str::kNotObservedYet_87d4):sync==0?T(Str::kOff_b4aa):value.forceVSyncOff?T(Str::kOnForcedOff_9657):T(Str::kOn_7df0);
@@ -232,7 +232,7 @@ void DrawControls(PanelPage page) {
     const bool xellOutput=status.activeLatencyOutput==LatencyOutput::XeLL;
     ui::Setting("##xe_display_cap_row",T(Str::kLimitToDisplayRefresh_0704),capHelp,[&] {
       ImGui::BeginDisabled(!xellOutput);
-      if(ImGui::Checkbox("##xe_display_cap",&value.displayCap)) ConfigureControls(value);
+      if(ui::CheckToggle("##xe_display_cap",&value.displayCap)) ConfigureControls(value);
       ImGui::EndDisabled();
     });
     const auto refreshHz=status.displayRefreshMilliHz/1000;
@@ -250,7 +250,7 @@ void DrawControls(PanelPage page) {
     // 1.5.8: exclusive fullscreen served as borderless (off by default).
     constexpr const char* exclusiveHelp="Intel frame generation does not support exclusive fullscreen. When the game asks for it, XeMFG keeps the game windowed instead: the window covers the monitor without borders, and the game is told it is in fullscreen. The monitor resolution and refresh rate are not changed; a lower game resolution is scaled to the screen. Alt+Enter is held back so the game cannot switch to exclusive fullscreen. Applies at the game's next display mode change, or after a restart if the game is already in exclusive fullscreen.";
     ui::Setting("##xe_exclusive_row",T(Str::kExclusiveFullscreenAsBorderless_9f2b),exclusiveHelp,[&] {
-      if(ImGui::Checkbox("##xe_exclusive_borderless",&value.exclusiveAsBorderless)) ConfigureControls(value);
+      if(ui::CheckToggle("##xe_exclusive_borderless",&value.exclusiveAsBorderless)) ConfigureControls(value);
     });
     ui::Readout("##xe_window_state",T(Str::kDisplayMode_2e08),w.pending?T(Str::kChangePending_d126):status.exclusiveServed?T(Str::kBorderlessGameAskedForExclusive_23cf):window,
         T(Str::kTheGameControlsItsDisplay_0e50),
@@ -271,11 +271,11 @@ void DrawControls(PanelPage page) {
     ImGui::Separator();
     ui::Setting("##xe_composition_row",T(Str::kUiComposition_8a4d),compositionHelp,[&] {
       ImGui::BeginDisabled(!status.uiCompositionAvailable && !value.uiComposition);
-      if(ImGui::Checkbox("##xe_ui_composition",&value.uiComposition)) ConfigureControls(value);
+      if(ui::CheckToggle("##xe_ui_composition",&value.uiComposition)) ConfigureControls(value);
       ImGui::EndDisabled();
     });
     ui::Setting("##xe_stabilization_row",T(Str::kHudStabilizationExperimental_1bb2),stabilizationHelp,[&] {
-      if(ImGui::Checkbox("##xe_ui_stabilization",&value.uiStabilization)) ConfigureControls(value);
+      if(ui::CheckToggle("##xe_ui_stabilization",&value.uiStabilization)) ConfigureControls(value);
     });
     ui::Readout("##xe_composition_state",T(Str::kHudHandling_ff3f),composition,compositionHelp);
     // 1.5.7: what the game provides, per kind: received, converted, filtered or absent.
@@ -375,7 +375,7 @@ void DrawControls(PanelPage page) {
     if(ui::Expander(T(Str::kPerformanceCaptureAdvanced_3050))) {
       bool enabled=TimingEnabled();
       ui::Setting("##xe_cpu_capture",T(Str::kCollectCpuTimings_26c4),T(Str::kOffByDefaultRecordsA_ad06),[&] {
-        if(ImGui::Checkbox("##xe_cpu_enabled",&enabled)) {
+        if(ui::CheckToggle("##xe_cpu_enabled",&enabled)) {
           SetTimingEnabled(enabled);
           WritePrivateProfileStringW(L"Diagnostics",L"CpuTiming",enabled?L"1":L"0",Ini().c_str());
         }

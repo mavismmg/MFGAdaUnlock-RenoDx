@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <filesystem>
+#include <cstring>
 #include <string>
 #include <shellapi.h>
 
@@ -179,6 +180,22 @@ inline bool Toggle(const char* id,bool& value) {
   const float cx=value?at.x+width-height*.5f:at.x+height*.5f;
   draw->AddCircleFilled(ImVec2(cx,at.y+height*.5f),radius,ImGui::GetColorU32(value?Bright:ImVec4(.42f,.44f,.47f,1)));
   return pressed;
+}
+// 1.12.0: the switch for any on/off, where ImGui's checkbox was. A visible label (text before "##")
+// goes beside it and clicking it also switches.
+inline bool CheckToggle(const char* label,bool* value) {
+  const char* hidden=std::strstr(label,"##");
+  const std::string text(label,hidden?hidden-label:std::strlen(label));
+  ImGui::PushID(label);
+  bool changed=Toggle("##switch",*value);
+  if(!text.empty()) {
+    ImGui::SameLine(0,ImGui::GetStyle().ItemInnerSpacing.x);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(text.c_str());
+    if(ImGui::IsItemClicked()) { *value=!*value; changed=true; }
+  }
+  ImGui::PopID();
+  return changed;
 }
 // A status under the control it belongs to: a dot (teal active, amber waiting or a problem,
 // grey off) and the text, in a quiet box the width of the row.

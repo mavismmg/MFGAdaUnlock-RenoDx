@@ -1554,6 +1554,9 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
           WritePrivateProfileStringW(L"DLSSG", L"ForceFrameGeneration", nullptr, ini.c_str());
           WritePrivateProfileStringW(L"DLSSG", L"HostStreamline", nullptr, ini.c_str());
         }
+        // 1.12.0 (DLSS 5): the hook before the game's frame generation goes in only when wanted at load.
+        mfgunlock::framecount::internal::g_nr_wanted.store(
+            GetPrivateProfileIntW(L"DLSS5", L"Enabled", 0, ini.c_str()) != 0, std::memory_order_relaxed);
         mfgunlock::framecount::g_force_fg_enabled.store(
             GetPrivateProfileIntW(L"DLSSG", L"ForceFrameGeneration", 0, ini.c_str()) != 0 ||
                 GetPrivateProfileIntW(L"DLSSG", L"AddFrameGeneration", 0, ini.c_str()) != 0,

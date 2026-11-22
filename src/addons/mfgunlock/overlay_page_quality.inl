@@ -150,7 +150,7 @@
     ImGui::TableNextColumn();
     bool adaptive_quality =
         g_configured_adaptive_quality.load(std::memory_order_relaxed);
-    if (ImGui::Checkbox("##adaptive_quality", &adaptive_quality)) {
+    if (mfgunlock::ui::CheckToggle("##adaptive_quality", &adaptive_quality)) {
       g_configured_adaptive_quality.store(adaptive_quality,
                                           std::memory_order_relaxed);
       reshade::set_config_value(nullptr, kConfigSection,
@@ -246,7 +246,7 @@
     ImGui::BeginDisabled(xmx_selected);
     bool temporal =
         g_configured_temporal_fix.load(std::memory_order_relaxed);
-    if (ImGui::Checkbox(T(Str::kTemporalMidpointFix_2a22), &temporal)) {
+    if (mfgunlock::ui::CheckToggle(T(Str::kTemporalMidpointFix_2a22), &temporal)) {
       g_configured_temporal_fix.store(temporal,
                                       std::memory_order_relaxed);
       reshade::set_config_value(nullptr, kConfigSection, "TemporalFix",
@@ -257,7 +257,7 @@
 
     bool blackwell = g_configured_blackwell_framework_kernels.load(
         std::memory_order_relaxed);
-    if (ImGui::Checkbox(T(Str::kPreferValidatedBlackwellFrameworkKernels_e57c),
+    if (mfgunlock::ui::CheckToggle(T(Str::kPreferValidatedBlackwellFrameworkKernels_e57c),
                         &blackwell)) {
       g_configured_blackwell_framework_kernels.store(
           blackwell, std::memory_order_relaxed);
@@ -271,7 +271,7 @@
     ImGui::EndDisabled();
     bool flip_off =
         g_configured_force_flip_meter_off.load(std::memory_order_relaxed);
-    if (ImGui::Checkbox(T(Str::kLegacySoftwareFlipPacing_8d9a), &flip_off)) {
+    if (mfgunlock::ui::CheckToggle(T(Str::kLegacySoftwareFlipPacing_8d9a), &flip_off)) {
       g_configured_force_flip_meter_off.store(flip_off,
                                                std::memory_order_relaxed);
       reshade::set_config_value(nullptr, kConfigSection,

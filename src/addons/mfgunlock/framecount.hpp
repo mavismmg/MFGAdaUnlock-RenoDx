@@ -1225,6 +1225,14 @@ inline sl::Result HookedReflexSetOptions(const sl::ReflexOptions& options) {
 
 // 1.11.0 (O1): the game's Reflex sleep, once per game frame (the performance overlay's frame times).
 inline std::atomic<void (*)()> g_on_reflex_sleep{nullptr};
+// 1.12.0 (DLSS 5): [DLSS5] Enabled at load. Route A's hook on the game's Present on Streamline's proxy
+// (below) then goes in too, so neural rendering runs there, once per game frame and before Streamline's
+// frame generation. Turned on later in the session, it needs a restart in a game with its own FG.
+inline std::atomic_bool g_nr_wanted{false};
+inline std::atomic<void (*)(IUnknown*, IUnknown*)> g_on_proxy_present_nr{nullptr};
+// The command queue the game made Streamline's proxy swap chain with: the proxy's GetDevice does not
+// give it back (E_NOINTERFACE). Kept, with a reference, for the process.
+inline std::atomic<IUnknown*> g_proxy_queue{nullptr};
 inline sl::Result HookedReflexSleep(const sl::FrameToken& frame) {
   const auto real = g_real_reflex_sleep.load(std::memory_order_acquire);
   if (real == nullptr) return sl::Result::eErrorNotInitialized;
@@ -2136,12 +2144,16 @@ inline void OnConstants(const sl::FrameToken& token) {
 }
 
 inline HRESULT STDMETHODCALLTYPE Present(IUnknown* self, UINT interval, UINT flags) {
+  if (const auto nr = g_on_proxy_present_nr.load(std::memory_order_acquire))
+    nr(self, g_proxy_queue.load(std::memory_order_acquire));
   BeforePresent();
   const HRESULT hr = g_real_present(self, interval, flags);
   AfterPresent();
   return hr;
 }
 inline HRESULT STDMETHODCALLTYPE Present1(IUnknown* self, UINT interval, UINT flags, const void* parameters) {
+  if (const auto nr = g_on_proxy_present_nr.load(std::memory_order_acquire))
+    nr(self, g_proxy_queue.load(std::memory_order_acquire));
   BeforePresent();
   const HRESULT hr = g_real_present1(self, interval, flags, parameters);
   AfterPresent();
@@ -2165,21 +2177,32 @@ inline void HookSwapChain(IUnknown* chain) {
                                : "mfgunlock: Route A Reflex: Streamline's Present hooked (Present1 not).")
                           : "mfgunlock: Route A Reflex: Streamline's Present could not be hooked.");
 }
+inline void KeepQueue(IUnknown* queue) {
+  if (queue == nullptr) return;
+  queue->AddRef();
+  if (IUnknown* old = g_proxy_queue.exchange(queue, std::memory_order_acq_rel)) old->Release();
+}
 inline HRESULT STDMETHODCALLTYPE CreateHwnd(IUnknown* self, IUnknown* queue, HWND window, const void* desc,
                                             const void* fullscreen, IUnknown* output, IUnknown** chain) {
   const HRESULT hr = g_real_create_hwnd(self, queue, window, desc, fullscreen, output, chain);
-  if (SUCCEEDED(hr) && chain != nullptr) HookSwapChain(*chain);
+  if (SUCCEEDED(hr) && chain != nullptr) {
+    KeepQueue(queue);
+    HookSwapChain(*chain);
+  }
   return hr;
 }
 inline HRESULT STDMETHODCALLTYPE CreateLegacy(IUnknown* self, IUnknown* queue, void* desc, IUnknown** chain) {
   const HRESULT hr = g_real_create_legacy(self, queue, desc, chain);
-  if (SUCCEEDED(hr) && chain != nullptr) HookSwapChain(*chain);
+  if (SUCCEEDED(hr) && chain != nullptr) {
+    KeepQueue(queue);
+    HookSwapChain(*chain);
+  }
   return hr;
 }
 // Streamline's proxy factory: its swap chain creation lives in sl.interposer.dll.
 inline void HookFactory(void* object) {
   if (object == nullptr || slmodule::g_host.load(std::memory_order_acquire) != nullptr ||
-      !g_force_fg_enabled.load(std::memory_order_relaxed))
+      !(g_force_fg_enabled.load(std::memory_order_relaxed) || g_nr_wanted.load(std::memory_order_relaxed)))
     return;
   IUnknown* unknown = static_cast<IUnknown*>(object);
   IDXGIFactory2* factory = nullptr;
@@ -3489,7 +3512,9 @@ inline void TryInstall() {
          reinterpret_cast<void*>(&internal::HookedSetConstants)});
   }
   // 1.10.1 (plan item 2): Route A's Reflex needs the game's Present on Streamline's proxy.
-  if (g_force_fg_enabled.load(std::memory_order_relaxed) && slmodule::g_host.load(std::memory_order_acquire) == nullptr)
+  // 1.12.0 (DLSS 5): also for neural rendering before the game's frame generation.
+  if ((g_force_fg_enabled.load(std::memory_order_relaxed) || internal::g_nr_wanted.load(std::memory_order_relaxed)) &&
+      slmodule::g_host.load(std::memory_order_acquire) == nullptr)
     internal::reflexdrive::AddHooks(interposer, hooks);
   // slInit is only detoured for an explicit provider-selection override, or
   // (1.8.5) for XMX's admission on RTX 20/30.

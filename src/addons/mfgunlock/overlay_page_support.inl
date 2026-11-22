@@ -10,14 +10,14 @@
     mfgunlock::ui::advanced::Draw(mfgunlock::ui::advanced::kDlssG);
     mfgunlock::ui::advanced::Result();
     bool raise_ceiling=g_raise_ceiling.load(std::memory_order_relaxed);
-    if (ImGui::Checkbox(T(Str::kRaiseFrameCeiling_a1b5),&raise_ceiling)) {
+    if (mfgunlock::ui::CheckToggle(T(Str::kRaiseFrameCeiling_a1b5),&raise_ceiling)) {
       g_raise_ceiling.store(raise_ceiling,std::memory_order_relaxed);
       reshade::set_config_value(nullptr, kConfigSection, "RaiseFrameCeiling", raise_ceiling ? 1 : 0);
     }
     mfgunlock::ui::Tooltip(T(Str::kLetsAnOldPluginS_5686));
     bool rtx50=g_rtx50_quality_fixes.load(std::memory_order_relaxed);
     ImGui::BeginDisabled(xmx_selected);
-    if (ImGui::Checkbox(T(Str::kRtx50QualityFixes_2204),&rtx50)) {
+    if (mfgunlock::ui::CheckToggle(T(Str::kRtx50QualityFixes_2204),&rtx50)) {
       g_rtx50_quality_fixes.store(rtx50,std::memory_order_relaxed);
       reshade::set_config_value(nullptr, kConfigSection, "Rtx50QualityFixes", rtx50 ? 1 : 0);
     }

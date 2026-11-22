@@ -123,6 +123,7 @@ inline constexpr Option kDlss5[]{
   {L"DLSS5",L"Skin",Str::kDlss5Skin_n20,Str::kDlss5SkinDesc_n21,L"100",MFGUNLOCK_NUMBER(0,200)},
   {L"DLSS5",L"ProtectHud",Str::kDlss5AutoMask_n22,Str::kDlss5AutoMaskDesc_n23,L"1",MFGUNLOCK_CHOICES(kOnOff)},
   {L"DLSS5",L"Scale",Str::kDlss5Scale_n24,Str::kDlss5ScaleDesc_n25,L"50",MFGUNLOCK_NUMBER(25,100)},
+  {L"DLSS5",L"Stability",Str::kDlss5Stability_n38,Str::kDlss5StabilityDesc_n39,L"60",MFGUNLOCK_NUMBER(0,100)},
   {L"DLSS5",L"AllowUnsigned",Str::kDlss5AllowUnsigned_n3,Str::kDlss5AllowUnsignedDesc_n4,L"0",MFGUNLOCK_CHOICES(kOnOff)},
 };
 inline constexpr Option kXmxSaveVram{L"DLSSG",L"XmxSaveVram",Str::kXmxSaveVram_v1a,Str::kXmxSaveVramDesc_v1b,L"1",MFGUNLOCK_CHOICES(kOnOff)};
@@ -148,6 +149,11 @@ inline void Store(const Option& option,const std::wstring& value) {
 inline void DrawOption(const Option& option) {
   ImGui::PushID(&option);
   Setting("##advanced_row",T(option.label),T(option.help),[&] {
+    if(option.choices==kOnOff) {
+      bool on=Current(option)==L"1";
+      if(Toggle("##advanced_switch",on)) Store(option,on?L"1":L"0");
+      return;
+    }
     if(option.choices) {
       int selected=0;
       for(int i=0;i<option.choiceCount;++i) if(!_wcsicmp(option.choices[i].value,Current(option).c_str())) selected=i;

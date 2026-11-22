@@ -2,11 +2,13 @@
 // 1.12.0 (DLSS 5): the panel's DLSS 5 page and where neural rendering meets the game's frames
 // (nr_runtime.hpp does the work). Included by addon.cpp inside its anonymous namespace, before the panel.
 //
-// Two places, both before frame generation sees the frame:
-// - a game without frame generation: ReShade's present event (before ReShade's own effects and overlay);
-// - Add frame generation: the hosted Streamline's Present (sl_host.hpp), once per game frame.
-// With the game's own frame generation, ReShade's present event also sees the generated frames; NR stays
-// off there in this version and the page says so.
+// Three places, all before frame generation sees the frame:
+// - a game with its own Streamline (and so its own frame generation, NVIDIA's or XeMFG DLSS-G): the game's
+//   Present on Streamline's proxy swap chain, hooked at load when [DLSS5] Enabled=1 (framecount.hpp);
+// - Add frame generation: the hosted Streamline's Present (sl_host.hpp), once per game frame;
+// - any other game: ReShade's present event (before ReShade's own effects and overlay).
+// HDR10 and scRGB go through an invertible curve around NR (nr_runtime.hpp); the encoding comes from the
+// color space ReShade reports for the swap chain.
 
 namespace dlss5 {
 namespace adv = mfgunlock::ui::advanced;
@@ -15,8 +17,11 @@ namespace ui = mfgunlock::ui;
 namespace internal {
 inline mfgunlock::nr::Runtime g_runtime;
 inline std::atomic_bool g_located{false};
+// The swap chain's encoding as ReShade last reported it (its present event runs for every game).
+inline std::atomic<int> g_encoding{static_cast<int>(mfgunlock::nr::Encoding::kSdr)};
+inline mfgunlock::nr::Encoding CurrentEncoding() { return static_cast<mfgunlock::nr::Encoding>(g_encoding.load()); }
 // The option's index in adv::kDlss5.
-enum Index : size_t { kEnabled, kNetwork, kStyle, kIntensity, kTone, kStructure, kSkin, kProtectHud, kScale, kAllowUnsigned };
+enum Index : size_t { kEnabled, kNetwork, kStyle, kIntensity, kTone, kStructure, kSkin, kProtectHud, kScale, kStability, kAllowUnsigned };
 inline int Setting(Index i) { return _wtoi(adv::Current(adv::kDlss5[i]).c_str()); }
 inline bool Enabled() { return Setting(kEnabled) != 0; }
 inline mfgunlock::nr::Look CurrentLook() {
@@ -42,10 +47,58 @@ inline bool GameFrameGeneration() {
   return mfgunlock::framecount::g_actual_frames_presented.load(std::memory_order_relaxed) > 1 ||
          (mfgunlock::xmx::generator::Enabled() && mfgunlock::xmx::generator::Snapshot().generating);
 }
-inline void Run(ID3D12CommandQueue* queue, ID3D12Resource* backbuffer, bool hdr) {
+inline void Run(ID3D12CommandQueue* queue, ID3D12Resource* backbuffer, mfgunlock::nr::Encoding encoding) {
   Locate();
+  g_runtime.Stability(Setting(kStability));
   g_runtime.Apply(queue, backbuffer, D3D12_RESOURCE_STATE_PRESENT, CurrentLook(), std::clamp(Setting(kScale), 25, 100),
-                  hdr);
+                  encoding);
+}
+// The current back buffer of a swap chain (Streamline's proxy hands out the one the game rendered).
+inline void RunOn(IUnknown* chain, ID3D12CommandQueue* queue) {
+  static std::atomic_int reported{0};
+  const auto report = [](int step, HRESULT hr) {
+    if (reported.exchange(step) == step) return;
+    char text[160];
+    std::snprintf(text, sizeof(text), "mfgunlock: DLSS 5: the swap chain did not give %s (0x%08x).",
+                  step == 1 ? "IDXGISwapChain3" : step == 2 ? "its command queue" : "its back buffer",
+                  static_cast<unsigned>(hr));
+    reshade::log::message(reshade::log::level::warning, text);
+  };
+  IDXGISwapChain3* chain3 = nullptr;
+  HRESULT hr = chain ? chain->QueryInterface(IID_PPV_ARGS(&chain3)) : E_POINTER;
+  if (FAILED(hr)) return report(1, hr);
+  ID3D12CommandQueue* own_queue = nullptr;
+  if (queue == nullptr) {  // D3D12: GetDevice on a swap chain gives its queue
+    hr = chain3->GetDevice(IID_PPV_ARGS(&own_queue));
+    if (FAILED(hr)) report(2, hr);
+    queue = own_queue;
+  }
+  ID3D12Resource* backbuffer = nullptr;
+  if (queue != nullptr) {
+    hr = chain3->GetBuffer(chain3->GetCurrentBackBufferIndex(), IID_PPV_ARGS(&backbuffer));
+    if (FAILED(hr)) report(3, hr);
+  }
+  if (backbuffer != nullptr) {
+    Run(queue, backbuffer, CurrentEncoding());
+    backbuffer->Release();
+  }
+  if (own_queue) own_queue->Release();
+  chain3->Release();
+}
+// The game's Present on its Streamline's proxy, before Streamline's frame generation (framecount.hpp).
+inline std::atomic_bool g_proxy_frames{false};
+inline void ProxyFrame(IUnknown* chain, IUnknown* queue_object) {
+  if (!Enabled()) {
+    g_runtime.Off();
+    return;
+  }
+  if (!g_proxy_frames.exchange(true, std::memory_order_relaxed))
+    reshade::log::message(reshade::log::level::info,
+                          "mfgunlock: DLSS 5: on the game's Present to Streamline, before its frame generation.");
+  ID3D12CommandQueue* queue = nullptr;
+  if (queue_object != nullptr) queue_object->QueryInterface(IID_PPV_ARGS(&queue));
+  RunOn(chain, queue);
+  if (queue) queue->Release();
 }
 // The hosted Streamline's Present, before Streamline gets the frame (sl_host.hpp).
 inline void HostFrame(IDXGISwapChain* chain, ID3D12CommandQueue* queue) {
@@ -53,14 +106,7 @@ inline void HostFrame(IDXGISwapChain* chain, ID3D12CommandQueue* queue) {
     g_runtime.Off();
     return;
   }
-  IDXGISwapChain3* chain3 = nullptr;
-  if (chain == nullptr || queue == nullptr || FAILED(chain->QueryInterface(IID_PPV_ARGS(&chain3)))) return;
-  ID3D12Resource* backbuffer = nullptr;
-  if (SUCCEEDED(chain3->GetBuffer(chain3->GetCurrentBackBufferIndex(), IID_PPV_ARGS(&backbuffer)))) {
-    Run(queue, backbuffer, mfgunlock::slhost::Fp16Hdr());
-    backbuffer->Release();
-  }
-  chain3->Release();
+  RunOn(chain, queue);
 }
 }  // namespace internal
 
@@ -72,24 +118,32 @@ inline void OnPresent(reshade::api::command_queue* queue, reshade::api::swapchai
     g_runtime.Off();
     return;
   }
-  if (queue == nullptr || swapchain == nullptr || mfgunlock::slhost::Hosting()) return;  // the host runs it
+  if (queue == nullptr || swapchain == nullptr) return;
+  // The encoding, for every route.
+  using mfgunlock::nr::Encoding;
+  const auto color_space = swapchain->get_color_space();
+  g_encoding.store(static_cast<int>(color_space == reshade::api::color_space::hdr10_st2084      ? Encoding::kPq
+                                    : color_space == reshade::api::color_space::extended_srgb_linear ? Encoding::kScRgb
+                                                                                                     : Encoding::kSdr));
+  // The host's Present and the game's Present on Streamline's proxy run it for those games.
+  if (mfgunlock::slhost::Hosting() || g_proxy_frames.load(std::memory_order_relaxed)) return;
   if (queue->get_device()->get_api() != reshade::api::device_api::d3d12) return;
   if (GameFrameGeneration()) {
+    // Here ReShade also sees the generated frames: NR needs the hook on the game's Present, set at load.
     g_runtime.Pause(mfgunlock::nr::State::kWithGameFg);
     return;
   }
-  const auto color_space = swapchain->get_color_space();
-  const bool hdr = color_space != reshade::api::color_space::unknown &&
-                   color_space != reshade::api::color_space::srgb_nonlinear;
   Run(reinterpret_cast<ID3D12CommandQueue*>(queue->get_native()),
-      reinterpret_cast<ID3D12Resource*>(swapchain->get_current_back_buffer().handle), hdr);
+      reinterpret_cast<ID3D12Resource*>(swapchain->get_current_back_buffer().handle), CurrentEncoding());
 }
 inline void Register() {
   mfgunlock::slhost::internal::on_game_frame_nr.store(&internal::HostFrame, std::memory_order_release);
+  mfgunlock::framecount::internal::g_on_proxy_present_nr.store(&internal::ProxyFrame, std::memory_order_release);
   reshade::register_event<reshade::addon_event::present>(&OnPresent);
 }
 inline void Unregister() {
   mfgunlock::slhost::internal::on_game_frame_nr.store(nullptr, std::memory_order_release);
+  mfgunlock::framecount::internal::g_on_proxy_present_nr.store(nullptr, std::memory_order_release);
   reshade::unregister_event<reshade::addon_event::present>(&OnPresent);
 }
 

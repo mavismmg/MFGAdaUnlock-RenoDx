@@ -176,7 +176,7 @@ void Draw() {
       bool enabled=ngx::Saved()>=0?ngx::Saved()==1:ngx::Configured();
       static bool failed{};
       ui::Setting("##xe_dlss_sr_row",T(Str::kDlssSrInputExperimental_e488),T(Str::kForGamesWithoutFrameGeneration_b2e8),[&] {
-        if(ImGui::Checkbox("##xe_dlss_sr",&enabled)) failed=!ngx::Save(enabled);
+        if(ui::CheckToggle("##xe_dlss_sr",&enabled)) failed=!ngx::Save(enabled);
       });
       DlssSrSaveFailed(failed);
       if(ngx::Saved()>=0 && (ngx::Saved()==1)!=ngx::Configured()) ui::Description(T(Str::kRestartTheGameToApply_2696));
@@ -189,7 +189,7 @@ void Draw() {
     bool dlssSr=ngx::Saved()>=0?ngx::Saved()==1:ngx::Configured();
     static bool dlssSrFailed{};
     ui::Setting("##xe_all_dlss_sr",T(Str::kDlssSrInputExperimental_e488),T(Str::kForGamesWithoutFrameGeneration_a97e),[&] {
-      if(ImGui::Checkbox("##xe_all_dlss_sr_value",&dlssSr)) dlssSrFailed=!ngx::Save(dlssSr);
+      if(ui::CheckToggle("##xe_all_dlss_sr_value",&dlssSr)) dlssSrFailed=!ngx::Save(dlssSr);
     });
     DlssSrSaveFailed(dlssSrFailed);
     ImGui::Separator(); ui::Description(T(Str::kVulkan_d012));

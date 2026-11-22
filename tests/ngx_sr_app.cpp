@@ -165,7 +165,8 @@ int main(int argc, char** argv) {
   int sl_mode = 0;
   bool sl_factory = false;  // 1.11.0 (R4): the swap chain on the hosted Streamline's factory, as RenoDX DLSS does
   UINT chain_flags = 0;  // --waitable 0x40, --tearing 0x800 (games' usual flags)
-  bool hdr10 = false;  // 1: the app starts Streamline (manual hooking) before NGX; 2: after DLSS SR exists  // a parameter block of its own, as many games do
+  bool hdr10 = false;  // R10G10B10A2 with the HDR10 (PQ) color space
+  bool scrgb = false;  // R16G16B16A16_FLOAT with the scRGB (linear) color space  // 1: the app starts Streamline (manual hooking) before NGX; 2: after DLSS SR exists  // a parameter block of its own, as many games do
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--width" && i + 1 < argc) width = static_cast<UINT>(std::stoul(argv[++i]));
@@ -178,6 +179,7 @@ int main(int argc, char** argv) {
     else if (a == "--waitable") chain_flags |= DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
     else if (a == "--tearing") chain_flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
     else if (a == "--hdr10") hdr10 = true;
+    else if (a == "--scrgb") scrgb = true;
     else if (a == "--sl-late") sl_mode = 2;
     else if (a == "--sl-factory") sl_factory = true;
     else seconds = std::stod(a);
@@ -230,7 +232,7 @@ int main(int argc, char** argv) {
   DXGI_SWAP_CHAIN_DESC1 sc{};
   sc.Width = width;
   sc.Height = height;
-  sc.Format = hdr10 ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM;
+  sc.Format = scrgb ? DXGI_FORMAT_R16G16B16A16_FLOAT : hdr10 ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM;
   sc.Flags = chain_flags;
   sc.SampleDesc.Count = 1;
   sc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
@@ -254,6 +256,9 @@ int main(int argc, char** argv) {
   }
   ComPtr<IDXGISwapChain3> swapchain;
   Check(swapchain1.As(&swapchain), "swap chain 3");
+  if (hdr10 || scrgb)  // as an HDR game does; ReShade reports it to add-ons
+    Check(swapchain->SetColorSpace1(scrgb ? DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 : DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020),
+          "color space");
   HANDLE waitable = nullptr;
   if (chain_flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT) {
     ComPtr<IDXGISwapChain2> chain2;

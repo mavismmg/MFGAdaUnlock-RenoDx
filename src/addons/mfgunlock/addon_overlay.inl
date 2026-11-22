@@ -621,7 +621,7 @@ void DrawFrameGenChainCard() {
 void DrawInputDiagnosticsPanel() {
   if (!ImGui::TreeNode(T(Str::kStreamlineInputResourcesReadOnly_d856))) return;
   bool enabled = mfgunlock::inputdiag::g_enabled.load(std::memory_order_relaxed);
-  if (ImGui::Checkbox(T(Str::kCaptureResourceMetadataThisSession_9850), &enabled)) {
+  if (mfgunlock::ui::CheckToggle(T(Str::kCaptureResourceMetadataThisSession_9850), &enabled)) {
     if (enabled) mfgunlock::inputdiag::Clear();
     mfgunlock::inputdiag::g_enabled.store(enabled, std::memory_order_release);
   }
@@ -940,7 +940,7 @@ void DrawAdvancedQualityControls(bool adaptive_quality_managed) {
     bool photometric =
         g_configured_adaptive_quality_v3_photometric.load(
             std::memory_order_relaxed);
-    if (ImGui::Checkbox(T(Str::kRelativeLumaChromaConfidence_dd8f), &photometric)) {
+    if (mfgunlock::ui::CheckToggle(T(Str::kRelativeLumaChromaConfidence_dd8f), &photometric)) {
       g_configured_adaptive_quality_v3_photometric.store(
           photometric, std::memory_order_relaxed);
       reshade::set_config_value(nullptr, kConfigSection,
@@ -953,7 +953,7 @@ void DrawAdvancedQualityControls(bool adaptive_quality_managed) {
     bool directional_border =
         g_configured_adaptive_quality_v3_directional_border.load(
             std::memory_order_relaxed);
-    if (ImGui::Checkbox(T(Str::kMotionDirectionalBorderTaper_cf26),
+    if (mfgunlock::ui::CheckToggle(T(Str::kMotionDirectionalBorderTaper_cf26),
                         &directional_border)) {
       g_configured_adaptive_quality_v3_directional_border.store(
           directional_border, std::memory_order_relaxed);
@@ -967,7 +967,7 @@ void DrawAdvancedQualityControls(bool adaptive_quality_managed) {
     bool oriented_geometry =
         g_configured_adaptive_quality_v3_oriented_geometry.load(
             std::memory_order_relaxed);
-    if (ImGui::Checkbox(T(Str::kMotionOrientedDiagonalGeometry_920b),
+    if (mfgunlock::ui::CheckToggle(T(Str::kMotionOrientedDiagonalGeometry_920b),
                         &oriented_geometry)) {
       g_configured_adaptive_quality_v3_oriented_geometry.store(
           oriented_geometry, std::memory_order_relaxed);
@@ -1051,7 +1051,7 @@ void DrawAdvancedQualityControls(bool adaptive_quality_managed) {
 
   bool refined =
       g_configured_quality_refinement.load(std::memory_order_relaxed);
-  if (ImGui::Checkbox(T(Str::kLegacySmoothConfidenceRefinement_f394), &refined)) {
+  if (mfgunlock::ui::CheckToggle(T(Str::kLegacySmoothConfidenceRefinement_f394), &refined)) {
     g_configured_quality_refinement.store(refined,
                                           std::memory_order_relaxed);
     reshade::set_config_value(nullptr, kConfigSection,
@@ -1064,7 +1064,7 @@ void DrawAdvancedQualityControls(bool adaptive_quality_managed) {
   bool intermediate =
       g_configured_thin_geometry_intermediate_scatter.load(
           std::memory_order_relaxed);
-  if (ImGui::Checkbox(T(Str::kIntermediateScatterRetention_6854), &intermediate)) {
+  if (mfgunlock::ui::CheckToggle(T(Str::kIntermediateScatterRetention_6854), &intermediate)) {
     g_configured_thin_geometry_intermediate_scatter.store(
         intermediate, std::memory_order_relaxed);
     reshade::set_config_value(nullptr, kConfigSection,
@@ -1094,7 +1094,7 @@ void DrawAdvancedQualityControls(bool adaptive_quality_managed) {
   bool validated =
       g_configured_thin_geometry_validated_warp_blend.load(
           std::memory_order_relaxed);
-  if (ImGui::Checkbox(T(Str::kValidatedWarpBlendAB_2a4c), &validated)) {
+  if (mfgunlock::ui::CheckToggle(T(Str::kValidatedWarpBlendAB_2a4c), &validated)) {
     g_configured_thin_geometry_validated_warp_blend.store(
         validated, std::memory_order_relaxed);
     reshade::set_config_value(nullptr, kConfigSection,
@@ -1106,7 +1106,7 @@ void DrawAdvancedQualityControls(bool adaptive_quality_managed) {
 
   bool geometry_v2 =
       g_configured_geometry_confidence_v2.load(std::memory_order_relaxed);
-  if (ImGui::Checkbox(T(Str::kGeometryConfidenceV2AB_a3eb), &geometry_v2)) {
+  if (mfgunlock::ui::CheckToggle(T(Str::kGeometryConfidenceV2AB_a3eb), &geometry_v2)) {
     g_configured_geometry_confidence_v2.store(geometry_v2,
                                               std::memory_order_relaxed);
     reshade::set_config_value(nullptr, kConfigSection,
@@ -1118,7 +1118,7 @@ void DrawAdvancedQualityControls(bool adaptive_quality_managed) {
 
   bool border =
       g_configured_border_confidence.load(std::memory_order_relaxed);
-  if (ImGui::Checkbox(T(Str::kBorderConfidenceAB_debb), &border)) {
+  if (mfgunlock::ui::CheckToggle(T(Str::kBorderConfidenceAB_debb), &border)) {
     g_configured_border_confidence.store(border, std::memory_order_relaxed);
     reshade::set_config_value(nullptr, kConfigSection,
                               "ExperimentalBorderConfidence",
@@ -1130,7 +1130,7 @@ void DrawAdvancedQualityControls(bool adaptive_quality_managed) {
   bool previous =
       g_configured_thin_geometry_previous_scatter.load(
           std::memory_order_relaxed);
-  if (ImGui::Checkbox(T(Str::kPreviousToCurrentScatterUnstable_bd7b), &previous)) {
+  if (mfgunlock::ui::CheckToggle(T(Str::kPreviousToCurrentScatterUnstable_bd7b), &previous)) {
     g_configured_thin_geometry_previous_scatter.store(
         previous, std::memory_order_relaxed);
     reshade::set_config_value(nullptr, kConfigSection,
@@ -1284,7 +1284,7 @@ void DrawReflexPacingLabControl(reshade::api::effect_runtime* runtime) {
 
   bool headroom =
       reflexpacing::g_headroom_enabled.load(std::memory_order_relaxed);
-  if (ImGui::Checkbox(T(Str::kVrrHeadroomCap_4faa), &headroom)) {
+  if (mfgunlock::ui::CheckToggle(T(Str::kVrrHeadroomCap_4faa), &headroom)) {
     reflexpacing::g_headroom_enabled.store(headroom,
                                            std::memory_order_relaxed);
     if (!headroom)
