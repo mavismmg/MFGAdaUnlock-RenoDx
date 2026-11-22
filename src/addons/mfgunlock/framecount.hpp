@@ -55,6 +55,7 @@
 
 #include <include/reshade.hpp>
 
+#include "hang_watch.hpp"
 #include "./dlss_preset.hpp"
 #include "./force_fg.hpp"
 #include "./sl_module.hpp"
@@ -2416,6 +2417,7 @@ inline std::atomic_bool g_init_seen{false};
 inline std::atomic_bool g_host_init_seen{false};
 inline sl::Result HookedInit(const sl::Preferences& pref, uint64_t sdk_version) {
   if (g_real_init == nullptr) return sl::Result::eErrorNotInitialized;
+  const hangwatch::Scope hang_scope("slInit");  // 1.11.0 (R1): MH Wilds stopped responding in here
   if (forcefg::IsHostInit(pref)) {
     g_host_init_seen.store(true, std::memory_order_release);
     reshade::log::message(reshade::log::level::info,

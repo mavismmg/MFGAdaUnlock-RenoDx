@@ -1531,6 +1531,10 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       if (!reshade::register_addon(h_module)) return FALSE;
       mfgunlock::support::BeginSession(mfgunlock::backend::Directory());
       mfgunlock::sessionexit::SetFolder(mfgunlock::backend::Directory());  // 1.11.0 (S1)
+      // 1.11.0 (R1): MFGAdaUnlock-hang.txt always; its minidump with [Diagnostics] CrashDump=1.
+      mfgunlock::hangwatch::Configure(
+          mfgunlock::backend::Directory(),
+          mfgunlock::crash::Enabled(mfgunlock::backend::Directory() / L"MFGAdaUnlock.ini"));
       // 1.10.0 (plan XMX/Vulkan/VRAM, item 4): before the game can call slInit (force_fg.hpp).
       // [DLSSG] AddFrameGeneration (the panel's single switch) turns on both routes;
       // each stays inert where it does not apply (sl_host.hpp).

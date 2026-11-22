@@ -32,6 +32,11 @@ add_executable(perf_stats_tests perf_stats_tests.cpp)
 target_compile_definitions(perf_stats_tests PRIVATE NOMINMAX)
 target_compile_features(perf_stats_tests PRIVATE cxx_std_20)
 add_test(NAME perf_stats COMMAND perf_stats_tests)
+# 1.11.0 (R1): the hang record.
+add_executable(hang_watch_tests hang_watch_tests.cpp)
+target_compile_definitions(hang_watch_tests PRIVATE NOMINMAX)
+target_compile_features(hang_watch_tests PRIVATE cxx_std_20)
+add_test(NAME hang_watch COMMAND hang_watch_tests)
 # 1.10.0 (plan 5): the panel's six languages.
 add_executable(i18n_tests i18n_tests.cpp)
 target_compile_definitions(i18n_tests PRIVATE NOMINMAX)
@@ -449,7 +454,7 @@ set(MFGUNLOCK_PURE_TESTS
   gpu_arch_tests crash_record module_scan_tests hdr_compat_tests latency_analysis_tests
   mfgdiagnostics_tests input_diagnostics_tests quality_guard_tests force_fg support_files
   vram_timeline xemfg_compatibility_policy latency_reflex_tests ngx_requirements
-  queue_ack patch_transaction hook_failure stale_hook rehook hud_pass perf_stats
+  queue_ack patch_transaction hook_failure stale_hook rehook hud_pass perf_stats hang_watch
   # Built only with MFGUNLOCK_BUILD_XEMFG (not in CI).
   xemfg_vulkan_policy xemfg_vulkan_queue)
 set(_mfg_test_dirs "${CMAKE_CURRENT_SOURCE_DIR}")

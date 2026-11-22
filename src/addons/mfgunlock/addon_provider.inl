@@ -164,6 +164,7 @@ std::atomic_bool g_xmx_core_hooks_installed{false};
 
 NVSDK_NGX_Result NVSDK_CONV HookedCreateFeature(ID3D12GraphicsCommandList* list, NVSDK_NGX_Feature feature,
                                                 NVSDK_NGX_Parameter* parameters, NVSDK_NGX_Handle** handle) {
+  const mfgunlock::hangwatch::Scope hang_scope("NGX CreateFeature");  // 1.11.0 (R1)
   const mfgunlock::hook::Nesting nest(t_create_depth);
   const auto g_real_create_feature =
       reinterpret_cast<NgxCreateFeatureFn>(mfgunlock::hook::Trampoline(g_create_hook, nest.level));

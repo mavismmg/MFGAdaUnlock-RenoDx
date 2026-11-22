@@ -174,7 +174,9 @@ inline bool IsSupportFile(std::wstring name) {
   // 1.10.0: also the crash record and its dump ([Diagnostics] CrashDump=1).
   if (name.rfind(L"mfgadaunlock", 0) == 0)
     return log || name.ends_with(L".ini") || name == L"mfgadaunlock-crash.txt" ||
-           (name.rfind(L"mfgadaunlock-crash-", 0) == 0 && name.ends_with(L".dmp"));
+           (name.rfind(L"mfgadaunlock-crash-", 0) == 0 && name.ends_with(L".dmp")) ||
+           // 1.11.0 (R1): the hang record (hang_watch.hpp) and its dump.
+           name == L"mfgadaunlock-hang.txt" || (name.rfind(L"mfgadaunlock-hang-", 0) == 0 && name.ends_with(L".dmp"));
   // 1.10.0: Streamline's own log (sl.log), written when [DLSSG] StreamlineLog=1.
   if (name.rfind(L"sl.", 0) == 0) return log;
   return false;

@@ -42,6 +42,7 @@
 #include "sl_module.hpp"
 #include "swapchain_format_guard.hpp"
 #include "ngx_hook.hpp"
+#include "hang_watch.hpp"
 
 namespace mfgunlock::slhost {
 
@@ -263,6 +264,7 @@ inline HRESULT STDMETHODCALLTYPE CreateForHwnd(IDXGIFactory2* self, IUnknown* qu
                                                const DXGI_SWAP_CHAIN_DESC1* desc,
                                                const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreen, IDXGIOutput* output,
                                                IDXGISwapChain1** chain) {
+  const hangwatch::Scope hang_scope("CreateSwapChainForHwnd (Add frame generation)");
   if (FromStreamline(_ReturnAddress()) || !Engage(queue))
     return real_hwnd(self, queue, window, desc, fullscreen, output, chain);
   if (!AttachDevice(queue)) return real_hwnd(self, queue, window, desc, fullscreen, output, chain);
@@ -293,6 +295,7 @@ inline HRESULT STDMETHODCALLTYPE CreateForHwnd(IDXGIFactory2* self, IUnknown* qu
 }
 inline HRESULT STDMETHODCALLTYPE CreateLegacy(IDXGIFactory* self, IUnknown* queue, DXGI_SWAP_CHAIN_DESC* desc,
                                               IDXGISwapChain** chain) {
+  const hangwatch::Scope hang_scope("CreateSwapChain (Add frame generation)");
   if (FromStreamline(_ReturnAddress()) || !Engage(queue)) return real_legacy(self, queue, desc, chain);
   if (!AttachDevice(queue)) return real_legacy(self, queue, desc, chain);
   IDXGIFactory2* proxy = Proxy(self);
@@ -750,6 +753,7 @@ inline Present1Fn real_present1 = nullptr;
 // both (the game) took. Logged, at most 40 times a session.
 template <class Call>
 inline HRESULT TimedPresent(Call&& call) {
+  const hangwatch::Scope hang_scope("Present (Add frame generation)");
   LARGE_INTEGER start, presented, finished;
   QueryPerformanceCounter(&start);
   BeforePresent();
