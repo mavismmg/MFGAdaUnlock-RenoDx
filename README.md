@@ -9,22 +9,24 @@
 </p>
 
 > [!NOTE]
-> ### New in 1.10.1
+> ### New in 1.11.0
 >
-> - **XeMFG DLSS-G with RenoDX HDR**: the artifacts and the generated frames that
->   looked like copies of the real ones in 1.10.0 (Phantom Blade Zero, NTE,
->   Wuthering Waves) are fixed. The HUD composition now turns itself off when the
->   game's image before the HUD does not match the final image.
-> - **Add frame generation**: the Streamline files install from the panel
->   (**Install / update Streamline files**); games without Reflex (Ninja Gaiden 4)
->   get Reflex from MFG Unlock; another addon's unused Streamline no longer blocks
->   it (Shadow of the Tomb Raider); with RenoDX's HDR upgrade in a game running in
->   SDR it now steps aside instead of crashing (Red Dead Redemption 2 in Vulkan).
-> - The support report names MFG Unlock's own Streamline and Streamline 1.x games, and
->   the panel says when a game's HDR uses FP16 (scRGB), which NVIDIA's DLSS-G does not
->   support (Kingdom Come: Deliverance II's HDR).
+> - **Performance overlay** (Shift+F10, or **General → Performance overlay**):
+>   output and game frame rate, frame times, 1% and 0.1% lows, hitches and the frame
+>   generation status in words; at **Full**, a frame time graph, latency, GPU time and
+>   video memory. Off by default, also shown with the ReShade menu closed.
+> - **Add frame generation with RenoDX DLSS** (Lies of P, Hi-Fi RUSH): the
+>   "Compatibility issue" (Reflex not detected) is fixed; **The Medium** and other
+>   Unreal games no longer fail at every frame (status 0x10).
+> - **"DLSS 5" addons** that hook NVIDIA's NGX no longer lose sight of frame generation
+>   with XeMFG DLSS-G or Add frame generation, and NVIDIA **Dynamic MFG** asks the runtime
+>   itself in games that never do (Microsoft Flight Simulator 2020; to be confirmed).
+> - No more false "the last session may have closed unexpectedly" after a normal
+>   exit; a game that stops responding leaves `MFGAdaUnlock-hang.txt`; the support
+>   report names other addons hooked into NGX, Streamline or NVAPI.
 >
-> See the [1.10.1 release notes](docs/releases/1.10.1.md).
+> See the [1.11.0 release notes](docs/releases/1.11.0.md) (and the
+> [1.10.1 release notes](docs/releases/1.10.1.md) for the previous version).
 
 > [!IMPORTANT]
 > ### 1.10.0: XMX is now called XeMFG DLSS-G

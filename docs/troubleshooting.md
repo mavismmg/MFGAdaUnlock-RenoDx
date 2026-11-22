@@ -58,6 +58,24 @@ Part of the [MFG Unlock](../README.md) documentation. Sections: [Troubleshooting
   early-addon-loading option and restart again. Presence on disk is not proof
   that Streamline selected that module.
 - Dynamic remains unavailable on Vulkan. Fixed MFG continues to work there.
+- 1.11.0: a game that never calls `slDLSSGGetState` (Microsoft Flight Simulator
+  2020) used to leave the panel at "the runtime has not answered the Dynamic
+  support query yet". The addon now asks itself; the log says "MFG Unlock asks
+  for Dynamic MFG support itself". Toggle Frame Generation off and on once after.
+
+### "The last session may have closed unexpectedly" after a normal exit
+
+- 1.11.0 counts a session that started closing (its last swap chain gone, or the
+  game ending itself with `TerminateProcess`) as a clean exit. If the notice still
+  appears after a normal exit, send `ReShade.log` and `MFGAdaUnlock.ini`.
+
+### The game stops responding
+
+- When the game is stuck for 15 s inside something MFG Unlock watches (starting
+  Streamline, creating the swap chain, Present, NGX), `MFGAdaUnlock-hang.txt` is
+  written beside the game with where it is stuck. Wait about 20 s, close the game
+  and send that file with `ReShade.log`. With `[Diagnostics] CrashDump=1` a dump
+  file is written too; **Save support files** collects both.
 
 ### Performance collapses when RenoDX DLSS5 is also installed
 

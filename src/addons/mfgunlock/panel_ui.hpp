@@ -427,7 +427,7 @@ inline void SystemCard(const char* sync,bool xmxSelected) {
   if(sync) Readout("##system_sync",T(Str::kSync_1bba),sync,nullptr,Accent);
   if(xmxSelected && scrgb) Notice(T(Str::kXmxHasNotBeenTested_6f96));
 }
-inline constexpr const char* kVersionLine="MFG Unlock | 1.10.1 by mavismmg also known as monet, ayase or woni";
+inline constexpr const char* kVersionLine="MFG Unlock | 1.11.0 by mavismmg also known as monet, ayase or woni";
 // Rests on the bottom of the panel when the page leaves room; otherwise follows the page.
 // 1.10.0 (plan 5.2/5.3): the panel's language. Saved in MFGAdaUnlock.ini under
 // [Panel] Language; auto follows ReShade's language, then Windows'.
@@ -535,7 +535,7 @@ inline void LanguageSelector() {
 }
 // 1.10.0 (panel reformulation): the add-on at the left (name and version, the author below,
 // smaller), its actions at the right (language, GitHub), one hint line under both.
-inline constexpr const char* kVersion="1.10.1";
+inline constexpr const char* kVersion="1.11.0";
 inline constexpr const char* kAuthorLine="by mavismmg \xc2\xb7 monet \xc2\xb7 ayase \xc2\xb7 woni";
 inline void Footer(const char* /*note: one hint line now covers restarts*/=nullptr) {
   const auto& style=ImGui::GetStyle();

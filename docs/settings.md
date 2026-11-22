@@ -175,3 +175,19 @@ the effective downstream request separately.
 > the addon, the first launch may perform DLSS-G kernel compilation and exhibit
 > temporary stutter or uneven pacing. Restart the game once before evaluating
 > performance or image quality.
+
+## Performance overlay and diagnostics (MFGAdaUnlock.ini)
+
+1.11.0. Written to `MFGAdaUnlock.ini`; the `[Overlay]` keys apply at once and have controls under **General → Performance overlay**.
+
+| Section | Key | Default | Meaning |
+|---|---|---|---|
+| `[Overlay]` | `PerfOverlay` | `0` | Shows the performance overlay over the game, also with the ReShade menu closed |
+| `[Overlay]` | `PerfOverlayLevel` | `1` | `0` Minimal (frame rate), `1` Standard (adds frame times, lows, hitches and the frame generation status), `2` Full (adds a frame time graph, latency, GPU time and video memory) |
+| `[Overlay]` | `PerfOverlayCorner` | `0` | `0` top left, `1` top right, `2` bottom left, `3` bottom right |
+| `[Overlay]` | `PerfOverlayScale` | `100` | Text size in percent of ReShade's font, `50`–`200` |
+| `[Overlay]` | `PerfOverlayOpacity` | `70` | Background opacity in percent; `0` draws the text only |
+| `[Overlay]` | `PerfOverlayKey` | `121` | Windows virtual-key code of the shortcut (`121` = F10); `0` turns the shortcut off |
+| `[Overlay]` | `PerfOverlayModifier` | `1` | Key held with the shortcut: `0` none, `1` Shift, `2` Ctrl, `3` Alt |
+| `[DLSSG]` | `HostGameReflex` | `1` | Add frame generation: `0` holds back the game's own NVAPI Reflex calls while MFG Unlock's Streamline runs Reflex. Leave unset unless asked |
+| `[Diagnostics]` | `CrashDump` | `0` | Writes `MFGAdaUnlock-crash.txt` and a dump on a crash, and a dump with `MFGAdaUnlock-hang.txt` when the game stops responding inside a call MFG Unlock watches. The hang record's text file is written either way |
