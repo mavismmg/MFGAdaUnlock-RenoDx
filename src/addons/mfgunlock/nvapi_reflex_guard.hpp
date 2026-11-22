@@ -13,6 +13,11 @@
 // NvAPI_D3D_SetLatencyMarker and NvAPI_D3D12_SetAsyncFrameMarker return NVAPI_OK
 // without reaching the driver. Streamline's own calls (from its sl.*.dll) pass.
 // [DLSSG] HostGameReflex=1 lets the game's calls through again.
+//
+// 1.11.0 (H4): off by default. Lies of P and Hi-Fi RUSH failed because RenoDX's DLSS addon put a
+// second Streamline swap chain under ours (sl_host.hpp, H4), not because of the game's Reflex:
+// Lies of P generated without errors with the game's calls passing. HostGameReflex=0 holds them
+// back as test build 3 did; otherwise NVAPI is not hooked at all.
 #include <windows.h>
 #include <intrin.h>
 
@@ -87,7 +92,8 @@ inline void TryInstall(const std::filesystem::path& ini) {
   AcquireSRWLockExclusive(&lock);
   struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&internal::lock); } } unlock;
   if (installed.exchange(true)) return;
-  enabled.store(GetPrivateProfileIntW(L"DLSSG", L"HostGameReflex", 0, ini.c_str()) == 0, std::memory_order_relaxed);
+  enabled.store(GetPrivateProfileIntW(L"DLSSG", L"HostGameReflex", 1, ini.c_str()) == 0, std::memory_order_relaxed);
+  if (!enabled.load(std::memory_order_relaxed)) return;  // the default: the game's Reflex passes, nothing hooked
   using QueryFn = void*(__cdecl*)(uint32_t);
   const auto query = reinterpret_cast<QueryFn>(GetProcAddress(nvapi, "nvapi_QueryInterface"));
   if (query == nullptr) return;
