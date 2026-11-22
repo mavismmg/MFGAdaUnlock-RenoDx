@@ -30,6 +30,8 @@
 #include <nvsdk_ngx_defs.h>
 #include <nvsdk_ngx_params.h>
 
+#include "../src/addons/mfgunlock/nr_parameters.hpp"
+
 using Microsoft::WRL::ComPtr;
 using namespace DirectX::PackedVector;
 
@@ -81,7 +83,7 @@ struct Image {
   UINT width = 0, height = 0;
   std::vector<uint8_t> rgba;
 };
-Image LoadImage(const std::wstring& path) {
+Image LoadImage(const std::wstring& path, UINT want_w = 0, UINT want_h = 0) {
   ComPtr<IWICImagingFactory> wic;
   Check(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic)), "WIC");
   ComPtr<IWICBitmapDecoder> decoder;
@@ -89,9 +91,17 @@ Image LoadImage(const std::wstring& path) {
         "open image");
   ComPtr<IWICBitmapFrameDecode> frame;
   Check(decoder->GetFrame(0, &frame), "image frame");
+  // --size: the image resized first (the cost of a resolution).
+  ComPtr<IWICBitmapSource> source = frame;
+  ComPtr<IWICBitmapScaler> scaler;
+  if (want_w && want_h) {
+    Check(wic->CreateBitmapScaler(&scaler), "scaler");
+    Check(scaler->Initialize(frame.Get(), want_w, want_h, WICBitmapInterpolationModeFant), "scale");
+    source = scaler;
+  }
   ComPtr<IWICFormatConverter> converter;
   Check(wic->CreateFormatConverter(&converter), "converter");
-  Check(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0,
+  Check(converter->Initialize(source.Get(), GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0,
                               WICBitmapPaletteTypeCustom),
         "convert image");
   Image image;
@@ -199,7 +209,9 @@ std::wstring CoreFolder() {
 
 int wmain(int argc, wchar_t** argv) {
   std::wstring snippet_path, image_path, out_path, diff_path;
-  bool allow_unsigned = false, init_params = false;
+  bool allow_unsigned = false, init_params = false, own_params = false, keys = false;
+  float scale = 1.f;
+  UINT size_w = 0, size_h = 0;
   int frames = 10;
   unsigned preset = 0, style = 0, automask = 1;
   float intensity = 1.f, tone = 1.f, structure = 1.f, skin = 1.f;
@@ -222,6 +234,10 @@ int wmain(int argc, wchar_t** argv) {
     else if (a == L"--skin") skin = float(_wtof(next().c_str()));
     else if (a == L"--app-id") app_id = _wcstoui64(next().c_str(), nullptr, 0);
     else if (a == L"--diff") diff_path = next();
+    else if (a == L"--own-params") own_params = true;
+    else if (a == L"--keys") keys = true;
+    else if (a == L"--size") { const std::wstring v = next(); swscanf_s(v.c_str(), L"%ux%u", &size_w, &size_h); }
+    else if (a == L"--scale") scale = float(_wtof(next().c_str()));
   }
   if (snippet_path.empty() || image_path.empty() || out_path.empty()) {
     std::printf("usage: nr_probe --snippet <nvngx_dlssnr.dll> --image <in.png> --out <out.png> [options]\n");
@@ -247,7 +263,7 @@ int wmain(int argc, wchar_t** argv) {
 
   // 2. The device.
   Check(CoInitializeEx(nullptr, COINIT_MULTITHREADED), "COM");
-  const Image input = LoadImage(image_path);
+  const Image input = LoadImage(image_path, size_w, size_h);
   std::printf("image: %ux%u\n", input.width, input.height);
   Gpu gpu;
   ComPtr<IDXGIFactory6> factory;
@@ -269,20 +285,31 @@ int wmain(int argc, wchar_t** argv) {
   // 3. NGX: the driver's core for the parameter block, the snippet (through the shim) for the feature.
   wchar_t temp[MAX_PATH]{};
   GetTempPathW(MAX_PATH, temp);
-  const HMODULE core = LoadLibraryW((CoreFolder() + L"\\_nvngx.dll").c_str());
-  if (!core) Fail("no NGX core");
+  const HMODULE core = own_params ? nullptr : LoadLibraryW((CoreFolder() + L"\\_nvngx.dll").c_str());
+  if (!core && !own_params) Fail("no NGX core");
   using InitProjectFn = int(__cdecl*)(const char*, int, const char*, const wchar_t*, ID3D12Device*, int, const void*);
   using AllocateFn = int(__cdecl*)(NVSDK_NGX_Parameter**);
-  const auto init_project = reinterpret_cast<InitProjectFn>(GetProcAddress(core, "NVSDK_NGX_D3D12_Init_ProjectID"));
-  const auto allocate = reinterpret_cast<AllocateFn>(GetProcAddress(core, "NVSDK_NGX_D3D12_AllocateParameters"));
-  if (!init_project || !allocate) Fail("NGX core exports");
-  int r = init_project(kProjectId, NVSDK_NGX_ENGINE_TYPE_CUSTOM, "1.12", temp, gpu.device.Get(), NVSDK_NGX_Version_API,
-                       nullptr);
-  std::printf("core Init_ProjectID: 0x%08x\n", unsigned(r));
+  const auto init_project =
+      core ? reinterpret_cast<InitProjectFn>(GetProcAddress(core, "NVSDK_NGX_D3D12_Init_ProjectID")) : nullptr;
+  const auto allocate =
+      core ? reinterpret_cast<AllocateFn>(GetProcAddress(core, "NVSDK_NGX_D3D12_AllocateParameters")) : nullptr;
+  if (!own_params && (!init_project || !allocate)) Fail("NGX core exports");
+  int r = 1;
+  if (!own_params) {
+    r = init_project(kProjectId, NVSDK_NGX_ENGINE_TYPE_CUSTOM, "1.12", temp, gpu.device.Get(), NVSDK_NGX_Version_API,
+                     nullptr);
+    std::printf("core Init_ProjectID: 0x%08x\n", unsigned(r));
+  }
   NVSDK_NGX_Parameter* params = nullptr;
-  r = allocate(&params);
-  std::printf("core AllocateParameters: 0x%08x\n", unsigned(r));
-  if (!NgxOk(r) || !params) Fail("parameters", unsigned(r));
+  mfgunlock::nr::Parameters own;
+  if (own_params) {
+    params = &own;  // MFG Unlock's own block: the driver's NGX core is not asked for one
+    std::printf("parameters: MFG Unlock's own block\n");
+  } else {
+    r = allocate(&params);
+    std::printf("core AllocateParameters: 0x%08x\n", unsigned(r));
+    if (!NgxOk(r) || !params) Fail("parameters", unsigned(r));
+  }
 
   wchar_t exe[MAX_PATH]{};
   GetModuleFileNameW(nullptr, exe, MAX_PATH);
@@ -326,7 +353,7 @@ int wmain(int argc, wchar_t** argv) {
   params->Set("DLSSNR.SkinStructureStrength", skin);
   params->Set("DLSSNR.UseAutoMask", automask);
   params->Set("DLSSNR.UICorrection", 0u);
-  params->Set("DLSSNR.ScalingRatio", 1.f);
+  params->Set("DLSSNR.ScalingRatio", scale);
   params->Set("DLSSNR.DepthInverted", 0);
   // Round trip: the parameter block's methods are the ones this header declares.
   unsigned check_width = 0;
@@ -367,6 +394,14 @@ int wmain(int argc, wchar_t** argv) {
   gpu.Barrier(color.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
   gpu.Submit();
 
+  // GPU time of each evaluate, from timestamps around it.
+  ComPtr<ID3D12QueryHeap> queries;
+  D3D12_QUERY_HEAP_DESC qh{D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 2, 0};
+  Check(gpu.device->CreateQueryHeap(&qh, IID_PPV_ARGS(&queries)), "query heap");
+  auto stamps = Buffer(gpu.device.Get(), 16, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
+  UINT64 ticks_per_second = 1;
+  gpu.queue->GetTimestampFrequency(&ticks_per_second);
+  double gpu_total = 0.0, gpu_min = 1e9;
   double total_ms = 0.0;
   for (int f = 0; f < frames; ++f) {
     params->Set("DLSSNR.Color", color.Get());
@@ -389,14 +424,33 @@ int wmain(int argc, wchar_t** argv) {
     params->Set("DLSSNR.MVecScaleX", 1.f);
     params->Set("DLSSNR.MVecScaleY", 1.f);
     const auto start = std::chrono::steady_clock::now();
+    gpu.list->EndQuery(queries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
     r = shim_evaluate(nr_evaluate, gpu.list.Get(), feature, params, nullptr);
     if (!NgxOk(r)) Fail("EvaluateFeature", unsigned(r));
+    gpu.list->EndQuery(queries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 1);
+    gpu.list->ResolveQueryData(queries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, stamps.Get(), 0);
     gpu.Submit();
+    {
+      UINT64* t = nullptr;
+      D3D12_RANGE range{0, 16};
+      if (SUCCEEDED(stamps->Map(0, &range, reinterpret_cast<void**>(&t)))) {
+        const double gpu_ms = double(t[1] - t[0]) * 1000.0 / double(ticks_per_second);
+        stamps->Unmap(0, nullptr);
+        if (f > 0) {
+          gpu_total += gpu_ms;
+          gpu_min = (std::min)(gpu_min, gpu_ms);
+        }
+      }
+    }
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     if (f > 0) total_ms += ms;  // the first frame builds the network
     if (f == 0) std::printf("EvaluateFeature: 0x%08x, first frame %.1f ms\n", unsigned(r), ms);
   }
-  if (frames > 1) std::printf("average after the first: %.2f ms per frame\n", total_ms / (frames - 1));
+  if (frames > 1)
+    std::printf("average after the first: %.2f ms per frame (CPU wall), GPU %.2f ms average, %.2f ms best\n",
+                total_ms / (frames - 1), gpu_total / (frames - 1), gpu_min);
+  if (keys && own_params)
+    for (const auto& [name, present] : own.Asked()) std::printf("  asked %-48s %s\n", name.c_str(), present ? "set" : "-");
 
   gpu.Barrier(output.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
   D3D12_TEXTURE_COPY_LOCATION src{output.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
