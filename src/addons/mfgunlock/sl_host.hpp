@@ -94,6 +94,10 @@ inline std::atomic<uint64_t> game_resets{0};
 inline std::atomic<uint32_t> streamline_chains{0};
 // 1.11.0 (O1): each game frame the host presents (the performance overlay's frame times).
 inline std::atomic<void (*)()> on_game_frame{nullptr};
+// 1.12.0 (DLSS 5, addon_dlss5.inl): the game's frame on Streamline's swap chain and the game's queue,
+// before Streamline gets it (neural rendering runs before frame generation).
+inline std::atomic<void (*)(IDXGISwapChain*, ID3D12CommandQueue*)> on_game_frame_nr{nullptr};
+inline ID3D12CommandQueue* game_queue = nullptr;  // kept for the process
 inline std::atomic_bool options_on{false};
 inline IDXGIFactory2* proxy_factory = nullptr;  // kept alive with the swap chain
 inline ID3D12Device* game_device = nullptr;
@@ -192,7 +196,7 @@ inline bool AttachDevice(IUnknown* queue) {
   ID3D12Device* native = nullptr;
   if (SUCCEEDED(queue->QueryInterface(IID_PPV_ARGS(&d3d12)))) {
     d3d12->GetDevice(IID_PPV_ARGS(&native));
-    d3d12->Release();
+    game_queue = d3d12;  // the reference is kept (1.12.0, DLSS 5)
   }
   if (native == nullptr) {
     state = State::kFailed;
@@ -645,6 +649,8 @@ inline void BeforePresent() {
     if (logged.fetch_add(1) < 5)
       reshade::log::message(reshade::log::level::info, "mfgunlock: Streamline host: DLSS SR is back; DLSS-G resumed.");
   }
+  if (const auto nr = on_game_frame_nr.load(std::memory_order_acquire))
+    nr(static_cast<IDXGISwapChain*>(game_chain.load()), game_queue);
   Mark(sl::PCLMarker::eRenderSubmitEnd, index);
   Mark(sl::PCLMarker::ePresentStart, index);
   const uint64_t presents = frames.fetch_add(1, std::memory_order_relaxed) + 1;

@@ -109,6 +109,22 @@ inline constexpr Option kOverlay[]{
   {L"Overlay",L"PerfOverlayKey",Str::kPerfOverlayKey_o18,Str::kPerfOverlayKeyDesc_o19,L"121",MFGUNLOCK_NUMBER(0,254)},
   {L"Overlay",L"PerfOverlayModifier",Str::kPerfOverlayModifier_o20,Str::kPerfOverlayModifierDesc_o21,L"1",MFGUNLOCK_CHOICES(kOverlayModifiers)},
 };
+// 1.12.0 (DLSS 5, addon_dlss5.inl): read live, except AllowUnsigned (when the runtime is first found).
+inline constexpr Choice kDlss5Networks[]{{Str::kDlss5NetworkNew_n7,L"0"},{Str::kDlss5NetworkOriginal_n8,L"1"}};
+inline constexpr Choice kDlss5Styles[]{{Str::kDlss5StyleDefault_n11,L"0"},{Str::kDlss5StyleNatural_n12,L"1"},
+                                       {Str::kDlss5StyleCinematic_n13,L"2"}};
+inline constexpr Option kDlss5[]{
+  {L"DLSS5",L"Enabled",Str::kDlss5Enabled_n1,Str::kDlss5EnabledDesc_n2,L"0",MFGUNLOCK_CHOICES(kOnOff)},
+  {L"DLSS5",L"Network",Str::kDlss5Network_n5,Str::kDlss5NetworkDesc_n6,L"0",MFGUNLOCK_CHOICES(kDlss5Networks)},
+  {L"DLSS5",L"Style",Str::kDlss5Style_n9,Str::kDlss5StyleDesc_n10,L"0",MFGUNLOCK_CHOICES(kDlss5Styles)},
+  {L"DLSS5",L"Intensity",Str::kDlss5Intensity_n14,Str::kDlss5IntensityDesc_n15,L"100",MFGUNLOCK_NUMBER(0,200)},
+  {L"DLSS5",L"LocalTone",Str::kDlss5Tone_n16,Str::kDlss5ToneDesc_n17,L"100",MFGUNLOCK_NUMBER(0,200)},
+  {L"DLSS5",L"LocalStructure",Str::kDlss5Structure_n18,Str::kDlss5StructureDesc_n19,L"100",MFGUNLOCK_NUMBER(0,200)},
+  {L"DLSS5",L"Skin",Str::kDlss5Skin_n20,Str::kDlss5SkinDesc_n21,L"100",MFGUNLOCK_NUMBER(0,200)},
+  {L"DLSS5",L"ProtectHud",Str::kDlss5AutoMask_n22,Str::kDlss5AutoMaskDesc_n23,L"1",MFGUNLOCK_CHOICES(kOnOff)},
+  {L"DLSS5",L"Scale",Str::kDlss5Scale_n24,Str::kDlss5ScaleDesc_n25,L"50",MFGUNLOCK_NUMBER(25,100)},
+  {L"DLSS5",L"AllowUnsigned",Str::kDlss5AllowUnsigned_n3,Str::kDlss5AllowUnsignedDesc_n4,L"0",MFGUNLOCK_CHOICES(kOnOff)},
+};
 inline constexpr Option kXmxSaveVram{L"DLSSG",L"XmxSaveVram",Str::kXmxSaveVram_v1a,Str::kXmxSaveVramDesc_v1b,L"1",MFGUNLOCK_CHOICES(kOnOff)};
 #undef MFGUNLOCK_CHOICES
 #undef MFGUNLOCK_NUMBER

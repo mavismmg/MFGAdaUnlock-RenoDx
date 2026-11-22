@@ -1994,6 +1994,8 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     }
     // 1.11.0 (R2): other modules hooked into NGX, Streamline or NVAPI.
     report+="\nother_hooks="+mfgunlock::foreignhooks::Describe();
+    // 1.12.0: DLSS 5 (neural rendering), only when turned on.
+    if(dlss5::internal::Enabled()) report+="\ndlss5="+dlss5::Describe();
     report+=CapabilityReport();
     // 1.9.0: the driver profile, read only, and only now: this runs when
     // the report is saved or copied.
@@ -2150,23 +2152,25 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
         T(Str::kToggleFrameGenerationOffAnd_a32a));
   }
 
-  enum class UiPage { General, Quality, DlssInfo, Latency, Support };
+  enum class UiPage { General, Quality, DlssInfo, Latency, Support, Dlss5 };
   static UiPage page=UiPage::General;
   static bool show_runtime_info=false;
   if(ImGui::GetContentRegionAvail().x<ImGui::GetFontSize()*26.f) {
-    int selected=page==UiPage::General?0:page==UiPage::Quality?1:page==UiPage::Latency?2:3;
+    int selected=page==UiPage::General?0:page==UiPage::Quality?1:page==UiPage::Latency?2:page==UiPage::Dlss5?3:4;
     ImGui::SetNextItemWidth(-1);
     if(ImGui::Combo("##dlssg_page",&selected,T(Str::kGeneralQualityLatencyDiagnostics_b9c8)))
-      page=selected==0?UiPage::General:selected==1?UiPage::Quality:selected==2?UiPage::Latency:UiPage::Support;
-    if(selected==3) {
+      page=selected==0?UiPage::General:selected==1?UiPage::Quality:selected==2?UiPage::Latency:selected==3?UiPage::Dlss5:UiPage::Support;
+    if(selected==4) {
       if(ImGui::RadioButton(T(Str::kStatus_f20f),!show_runtime_info)) show_runtime_info=false;
       ImGui::SameLine(); if(ImGui::RadioButton(T(Str::kRuntimeInformation_e591),show_runtime_info)) show_runtime_info=true;
       page=show_runtime_info?UiPage::DlssInfo:UiPage::Support;
     }
-  } else if(const float tab=mfgunlock::ui::TabWidth(4); mfgunlock::ui::BeginTabs("##mfg_unlock_pages")) {
+  } else if(const float tab=mfgunlock::ui::TabWidth(5); mfgunlock::ui::BeginTabs("##mfg_unlock_pages")) {
     if(mfgunlock::ui::TabItem(T(Str::kGeneral_fd0b),tab)) { page=UiPage::General; ImGui::EndTabItem(); }
     if(mfgunlock::ui::TabItem(T(Str::kQuality_bec6),tab)) { page=UiPage::Quality; ImGui::EndTabItem(); }
     if(mfgunlock::ui::TabItem(T(Str::kLatency_5ef9),tab)) { page=UiPage::Latency; ImGui::EndTabItem(); }
+    // 1.12.0 (DLSS 5, addon_dlss5.inl).
+    if(mfgunlock::ui::TabItem(T(Str::kDlss5Tab_n0),tab)) { page=UiPage::Dlss5; ImGui::EndTabItem(); }
     if(mfgunlock::ui::TabItem(T(Str::kDiagnostics_1397),tab)) {
       if(ImGui::RadioButton(T(Str::kStatus_f20f),!show_runtime_info)) show_runtime_info=false;
       ImGui::SameLine(); if(ImGui::RadioButton(T(Str::kRuntimeInformation_e591),show_runtime_info)) show_runtime_info=true;
@@ -2193,5 +2197,6 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   // 1.10.0 (plan 4.3): this page's blocks, in overlay_page_support.inl; textually included so the locals above stay visible.
 #include "./overlay_page_support.inl"
 
+  if (page == UiPage::Dlss5) dlss5::DrawPage();  // 1.12.0
   mfgunlock::ui::Footer(T(Str::kChangesMarkedForRestartKeep_57d2));
 }

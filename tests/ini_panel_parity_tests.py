@@ -16,7 +16,9 @@ INI_EXEMPT = {('XeFG.Learned', 'Executable'),
               # Diagnostics for a tester (1.10.1, plan item 4): logs the passes after DLSS SR.
               ('DLSSG', 'HudTrace'),
               # Escape hatch (1.11.0, H2): lets a game's own NVAPI Reflex through while the host runs.
-              ('DLSSG', 'HostGameReflex')}
+              ('DLSSG', 'HostGameReflex'),
+              # A path (1.12.0, DLSS 5): the runtime's location when it is not in one of the usual places.
+              ('DLSS5', 'RuntimePath')}
 RESHADE_EXEMPT = {
     'DisocclusionGuardLevel',   # migrated to DepthEdgeGuardLevel
     'DynamicReflexSourceCap',   # migrated to ReflexSourceFpsCap
