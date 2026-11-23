@@ -116,6 +116,7 @@ inline constexpr Choice kDlss5Coexist[]{{Str::kDlss5CoexistAside_n62,L"0"},{Str:
 inline constexpr Choice kDlss5Networks[]{{Str::kDlss5NetworkNew_n7,L"0"},{Str::kDlss5NetworkOriginal_n8,L"1"}};
 inline constexpr Choice kDlss5Styles[]{{Str::kDlss5StyleDefault_n11,L"0"},{Str::kDlss5StyleNatural_n12,L"1"},
                                        {Str::kDlss5StyleCinematic_n13,L"2"}};
+inline constexpr Choice kDlss5Passes[]{{Str::kDlss5Pass1_n99,L"1"},{Str::kDlss5Pass2_n100,L"2"},{Str::kDlss5Pass3_n101,L"3"}};
 inline constexpr Option kDlss5[]{
   {L"DLSS5",L"Enabled",Str::kDlss5Enabled_n1,Str::kDlss5EnabledDesc_n2,L"0",MFGUNLOCK_CHOICES(kOnOff)},
   {L"DLSS5",L"Network",Str::kDlss5Network_n5,Str::kDlss5NetworkDesc_n6,L"0",MFGUNLOCK_CHOICES(kDlss5Networks)},
@@ -137,6 +138,7 @@ inline constexpr Option kDlss5[]{
   {L"DLSS5",L"VramMargin",Str::kDlss5VramMargin_n58,Str::kDlss5VramMarginDesc_n59,L"512",MFGUNLOCK_NUMBER(0,4096)},
   {L"DLSS5",L"Coexist",Str::kDlss5Coexist_n60,Str::kDlss5CoexistDesc_n61,L"0",MFGUNLOCK_CHOICES(kDlss5Coexist)},
   {L"DLSS5",L"AllowUnsigned",Str::kDlss5AllowUnsigned_n3,Str::kDlss5AllowUnsignedDesc_n4,L"1",MFGUNLOCK_CHOICES(kOnOff)},
+  {L"DLSS5",L"Passes",Str::kDlss5Passes_n97,Str::kDlss5PassesDesc_n98,L"1",MFGUNLOCK_CHOICES(kDlss5Passes)},
 };
 inline constexpr Option kXmxSaveVram{L"DLSSG",L"XmxSaveVram",Str::kXmxSaveVram_v1a,Str::kXmxSaveVramDesc_v1b,L"1",MFGUNLOCK_CHOICES(kOnOff)};
 #undef MFGUNLOCK_CHOICES

@@ -1118,3 +1118,8 @@
 /* kDlss5TaaFinder_n94 */ "Buscador de movimiento del TAA",
 /* kDlss5TaaFinderDesc_n95 */ "Busca los vectores de movimiento y la profundidad del TAA del propio juego en juegos sin DLSS, y los usa cuando coinciden con el movimiento estimado de la imagen. Experimental.",
 /* kDlss5RoutePreFg_n96 */ "antes de la generación de fotogramas del juego",
+/* kDlss5Passes_n97 */ "Pasadas de NR",
+/* kDlss5PassesDesc_n98 */ "NR de nuevo sobre su propio resultado, para un efecto más fuerte. Cada pasada cuesta casi lo mismo que la primera, y más pasadas pueden traer más contraste y parpadeo. 1 es NR tal cual. Se aplica al instante.",
+/* kDlss5Pass1_n99 */ "1",
+/* kDlss5Pass2_n100 */ "2",
+/* kDlss5Pass3_n101 */ "3",

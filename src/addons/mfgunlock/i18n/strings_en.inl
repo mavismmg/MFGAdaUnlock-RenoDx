@@ -1116,3 +1116,8 @@
 /* kDlss5TaaFinder_n94 */ "TAA motion finder",
 /* kDlss5TaaFinderDesc_n95 */ "Looks for the motion vectors and depth of the game's own TAA in games without DLSS, and uses them once they agree with the image's estimated motion. Experimental.",
 /* kDlss5RoutePreFg_n96 */ "before the game's frame generation",
+/* kDlss5Passes_n97 */ "NR passes",
+/* kDlss5PassesDesc_n98 */ "NR again on its own result, for a stronger effect. Each pass costs about as much as the first, and more can bring out more contrast and flicker. 1 is NR as it is. Applies at once.",
+/* kDlss5Pass1_n99 */ "1",
+/* kDlss5Pass2_n100 */ "2",
+/* kDlss5Pass3_n101 */ "3",

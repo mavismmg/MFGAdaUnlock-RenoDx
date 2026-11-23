@@ -1118,3 +1118,8 @@
 /* kDlss5TaaFinder_n94 */ "TAA 모션 찾기",
 /* kDlss5TaaFinderDesc_n95 */ "DLSS가 없는 게임에서 게임 자체 TAA의 모션 벡터와 깊이를 찾아, 이미지의 추정 움직임과 일치하면 사용합니다. 실험적.",
 /* kDlss5RoutePreFg_n96 */ "게임 프레임 생성 이전",
+/* kDlss5Passes_n97 */ "NR 패스 수",
+/* kDlss5PassesDesc_n98 */ "NR을 자신의 결과에 다시 적용해 효과를 강하게 합니다. 패스마다 첫 패스와 비슷한 비용이 들며, 늘리면 대비와 깜빡임이 커질 수 있습니다. 1은 기본 NR입니다. 즉시 적용됩니다.",
+/* kDlss5Pass1_n99 */ "1",
+/* kDlss5Pass2_n100 */ "2",
+/* kDlss5Pass3_n101 */ "3",

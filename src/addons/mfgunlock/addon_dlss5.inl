@@ -25,7 +25,8 @@ inline mfgunlock::nr::Encoding CurrentEncoding() { return static_cast<mfgunlock:
 // The option's index in adv::kDlss5.
 enum Index : size_t {
   kEnabled, kNetwork, kStyle, kIntensity, kTone, kStructure, kSkin, kProtectHud, kScale, kStability, kHookPoint,
-  kPaperWhite, kMotion, kTaaFinder, kToggleKey, kCompareKey, kKeyModifier, kVramMargin, kCoexist, kAllowUnsigned
+  kPaperWhite, kMotion, kTaaFinder, kToggleKey, kCompareKey, kKeyModifier, kVramMargin, kCoexist, kAllowUnsigned,
+  kPasses
 };
 inline int Setting(Index i) { return _wtoi(adv::Current(adv::kDlss5[i]).c_str()); }
 // Off by the on/off key: until pressed again, the session runs without NR (the setting stays).
@@ -92,6 +93,8 @@ inline void Configure() {
   g_runtime.Motion(std::clamp(Setting(kMotion), 0, 2));
   g_runtime.VramMargin(Setting(kVramMargin));
   g_runtime.Coexist(Setting(kCoexist) == 0);
+  g_runtime.Passes(std::clamp(Setting(kPasses), 1, 3));
+  mfgunlock::nr::vk::Passes(std::clamp(Setting(kPasses), 1, 3));
 }
 
 // ---- Phase F: the game's own TAA motion and depth (D3D12, before Present).
@@ -833,7 +836,7 @@ inline void DrawPage() {
   }
   if (ui::SectionHeader(T(Str::kDlss5SectionQuality_n68), true)) {
     ui::Card card("##dlss5_quality_card");
-    for (Index i : {kScale, kHookPoint, kMotion, kTaaFinder, kStability, kProtectHud}) adv::DrawOption(adv::kDlss5[i]);
+    for (Index i : {kScale, kPasses, kHookPoint, kMotion, kTaaFinder, kStability, kProtectHud}) adv::DrawOption(adv::kDlss5[i]);
   }
   const bool hdr = CurrentEncoding() != mfgunlock::nr::Encoding::kSdr;
   if (ui::SectionHeader(T(Str::kDlss5SectionHdr_n69), hdr)) {

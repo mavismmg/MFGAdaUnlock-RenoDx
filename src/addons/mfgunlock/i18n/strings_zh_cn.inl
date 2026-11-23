@@ -1118,3 +1118,8 @@
 /* kDlss5TaaFinder_n94 */ "TAA 运动查找",
 /* kDlss5TaaFinderDesc_n95 */ "在没有 DLSS 的游戏中查找游戏自身 TAA 的运动矢量和深度，并在其与画面估计的运动一致时使用。实验性。",
 /* kDlss5RoutePreFg_n96 */ "在游戏帧生成之前",
+/* kDlss5Passes_n97 */ "NR 次数",
+/* kDlss5PassesDesc_n98 */ "在 NR 自身的结果上再次运行 NR，效果更强。每次的开销与第一次相近，次数越多对比度和闪烁可能越明显。1 为普通 NR。立即生效。",
+/* kDlss5Pass1_n99 */ "1",
+/* kDlss5Pass2_n100 */ "2",
+/* kDlss5Pass3_n101 */ "3",

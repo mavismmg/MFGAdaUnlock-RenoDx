@@ -1118,3 +1118,8 @@
 /* kDlss5TaaFinder_n94 */ "TAA モーション検出",
 /* kDlss5TaaFinderDesc_n95 */ "DLSS のないゲームで、ゲーム自身の TAA のモーションベクターと深度を探し、画像の推定した動きと一致したら使用します。実験的。",
 /* kDlss5RoutePreFg_n96 */ "ゲームのフレーム生成の前",
+/* kDlss5Passes_n97 */ "NR パス数",
+/* kDlss5PassesDesc_n98 */ "NR を自身の結果にもう一度かけ、効果を強めます。各パスのコストは最初とほぼ同じで、増やすとコントラストやちらつきが強くなることがあります。1 は通常の NR です。すぐに反映されます。",
+/* kDlss5Pass1_n99 */ "1",
+/* kDlss5Pass2_n100 */ "2",
+/* kDlss5Pass3_n101 */ "3",

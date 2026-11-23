@@ -1121,6 +1121,11 @@ enum class Str : unsigned {
   kDlss5TaaFinder_n94,
   kDlss5TaaFinderDesc_n95,
   kDlss5RoutePreFg_n96,
+  kDlss5Passes_n97,
+  kDlss5PassesDesc_n98,
+  kDlss5Pass1_n99,
+  kDlss5Pass2_n100,
+  kDlss5Pass3_n101,
   kCount
 };
 }  // namespace mfgunlock::i18n

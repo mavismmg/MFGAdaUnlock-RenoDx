@@ -684,6 +684,8 @@ class Runtime {
   void Off() { Pause(State::kOff); }
   // How much of NR's change from earlier frames is kept, 0..100 ([DLSS5] Stability); read every frame.
   void Stability(int percent) { stability_ = percent < 0 ? 0 : (percent > 100 ? 100 : percent); }
+  // Passes: NR again on its own output, each pass a feature with its own history (1 to 3).
+  void Passes(int n) { passes_ = n < 1 ? 1 : (n > pass_cap_ ? pass_cap_ : n); }
   // The light of SDR white in an HDR image, in nits (the game's, or Windows' SDR content brightness).
   void Paper(float nits) { paper_ = nits < 48.f ? 48.f : (nits > 1000.f ? 1000.f : nits); }
   // Compare: the left half of the image without NR (the hotkey).
@@ -877,7 +879,7 @@ class Runtime {
     Bury();
     const bool after_upscale = g != nullptr;  // the game's list and its upscaler's output
     const bool inverted = (g != nullptr && g->depth_inverted) || (g == nullptr && taa_proved_ && taa_.depth_inverted);
-    if (!(look == look_) || !feature_ || inverted != created_inverted_) {
+    if (!(look == look_) || !feature_ || inverted != created_inverted_ || passes_ != created_passes_) {
       Retire(false);
       look_ = look;
       created_inverted_ = inverted;
@@ -898,9 +900,25 @@ class Runtime {
       params_.Set("DLSSNR.DepthInverted", inverted ? 1 : 0);
       const int r = create_(create_fn_, l, 18, &params_, &feature_);
       if (r != 1 || feature_ == nullptr) return Fail(("CreateFeature 0x" + Hex(r)).c_str());
+      // The later passes: their own features (history) and the textures between them.
+      created_passes_ = 1;
+      for (int i = 0; i + 1 < passes_; ++i) {
+        if (!chain_[i]) chain_[i] = Texture(low_w_, low_h_, DXGI_FORMAT_R16G16B16A16_FLOAT,
+                                            D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        if (!chain_[i]) break;
+        const int c = create_(create_fn_, l, 18, &params_, &extra_[i]);
+        if (c != 1 || extra_[i] == nullptr) {
+          extra_[i] = nullptr;
+          Log("a later NR pass could not be created (0x" + Hex(c) + "): fewer passes");
+          break;
+        }
+        created_passes_ = i + 2;
+      }
+      if (created_passes_ < passes_) passes_ = pass_cap_ = created_passes_;  // not again each frame
       Log("NR feature created at " + std::to_string(low_w_) + "x" + std::to_string(low_h_) + " (preset " +
           std::to_string(look.preset) + ", style " + std::to_string(look.style) + ", intensity " +
-          std::to_string(look.intensity) + "%)");
+          std::to_string(look.intensity) + "%, " + std::to_string(created_passes_) + " pass" +
+          (created_passes_ > 1 ? "es)" : ")"));
     }
 
     if (applied_ == 0) Log("first frame: recording");
@@ -1018,9 +1036,8 @@ class Runtime {
       g = &present_guides;
     }
 
-    // 2. NR on the reduced image, with the game's guides where there are some.
-    params_.Set("DLSSNR.Color", low_.Get());
-    params_.Set("DLSSNR.Output", enhanced_.Get());
+    // 2. NR on the reduced image, with the game's guides where there are some; each later pass on the
+    // output of the one before.
     params_.Set("DLSSNR.MVec", g ? g->mvec : static_cast<ID3D12Resource*>(nullptr));
     params_.Set("DLSSNR.Depth", g ? g->depth : static_cast<ID3D12Resource*>(nullptr));
     params_.Set("DLSSNR.Width", low_w_);
@@ -1043,8 +1060,18 @@ class Runtime {
     }
     reset_ = false;
     if (applied_ == 0) Log("first frame: evaluate");
-    const int r = evaluate_(evaluate_fn_, l, feature_, &params_, nullptr);
-    if (r != 1) return Fail(("EvaluateFeature 0x" + Hex(r)).c_str());
+    const int passes = created_passes_;
+    for (int i = 0; i < passes; ++i) {
+      ID3D12Resource* const in = i == 0 ? low_.Get() : chain_[i - 1].Get();
+      ID3D12Resource* const out = i + 1 == passes ? enhanced_.Get() : chain_[i].Get();
+      params_.Set("DLSSNR.Color", in);
+      params_.Set("DLSSNR.Output", out);
+      const int r = evaluate_(evaluate_fn_, l, i == 0 ? feature_ : extra_[i - 1], &params_, nullptr);
+      if (r != 1) return Fail(("EvaluateFeature 0x" + Hex(r)).c_str());
+      if (i + 1 < passes) Barrier(l, out, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    }
+    for (int i = 0; i + 1 < passes; ++i)
+      Barrier(l, chain_[i].Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
     // 3. Steady NR's change over frames (the runtime set its own heaps and root signature).
     Barrier(l, enhanced_.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -1096,8 +1123,19 @@ class Runtime {
     Retired r;
     r.feature = feature_;
     feature_ = nullptr;
+    for (void*& extra : extra_) {
+      if (extra == nullptr) continue;
+      Retired e;
+      e.feature = extra;
+      e.after = frame_index_ + kRetireFrames;
+      retired_.push_back(std::move(e));
+      extra = nullptr;
+    }
+    created_passes_ = 0;
     if (textures) {
-      r.textures = {full_, low_, enhanced_, steady_[0], steady_[1], luma_[0], luma_[1], motion_coarse_, motion_, flat_depth_};
+      r.textures = {full_, low_, enhanced_, steady_[0], steady_[1], luma_[0], luma_[1], motion_coarse_, motion_, flat_depth_,
+                    chain_[0], chain_[1]};
+      chain_[0].Reset(); chain_[1].Reset();
       full_.Reset(); low_.Reset(); enhanced_.Reset(); steady_[0].Reset(); steady_[1].Reset();
       luma_[0].Reset(); luma_[1].Reset(); motion_coarse_.Reset(); motion_.Reset(); flat_depth_.Reset();
     }
@@ -1736,6 +1774,25 @@ class Runtime {
   std::mutex lock_;
   UINT parity_ = 0;
   int stability_ = 60;
+  int passes_ = 1, created_passes_ = 0, pass_cap_ = 3;
+  void* extra_[2]{};                   // the features of passes 2 and 3
+  ComPtr<ID3D12Resource> chain_[2];    // between the passes
+  ComPtr<ID3D12Resource> Texture(uint32_t w, uint32_t h, DXGI_FORMAT f, D3D12_RESOURCE_FLAGS flags,
+                                 D3D12_RESOURCE_STATES s) {
+    D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC d{};
+    d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    d.Width = w;
+    d.Height = h;
+    d.DepthOrArraySize = 1;
+    d.MipLevels = 1;
+    d.Format = f;
+    d.SampleDesc.Count = 1;
+    d.Flags = flags;
+    ComPtr<ID3D12Resource> r;
+    device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &d, s, nullptr, IID_PPV_ARGS(&r));
+    return r;
+  }
   float keep_ = 0.f;
   D3D12_RENDER_TARGET_VIEW_DESC rtv_desc_{};
   ComPtr<ID3D12Resource> full_, low_, enhanced_;

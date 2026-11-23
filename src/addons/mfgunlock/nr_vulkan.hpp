@@ -30,6 +30,7 @@
 #endif
 
 namespace mfgunlock::nr::vk {
+inline std::atomic<int> g_passes{1};  // NR passes (Passes setting, 1 to 3)
 
 // Where the runtime and the shim are (dlss5's Locate); set by addon_dlss5.inl.
 inline std::atomic<bool (*)(std::wstring&, std::wstring&)> g_locate{nullptr};
@@ -327,12 +328,16 @@ class Runtime {
     if (full_.res.handle) {
       Retired r;
       r.images = {full_, low_, enhanced_, out_};
+      for (Image& c : chain_)
+        if (c.res.handle) r.images.push_back(c);
       r.feature = feature_;
       r.tables[0] = tables_[0];
       r.tables[1] = tables_[1];
       r.after = frame_ + 8;
       retired_.push_back(r);
+      RetireExtras();
     }
+    for (Image& c : chain_) c = {};
     // New tables per size: a table a pending command buffer still uses is not written again.
     if (!dev_->allocate_descriptor_tables(2, layout_, 0, tables_)) return Fail("descriptor tables");
     full_ = low_ = enhanced_ = out_ = {};
@@ -388,7 +393,8 @@ class Runtime {
     using namespace reshade::api;
     using U = resource_usage;
     const VkCommandBuffer native = reinterpret_cast<VkCommandBuffer>(cmd->get_native());
-    if (!(look == look_) || !feature_) {
+    const int passes = (std::clamp)(g_passes.load(std::memory_order_relaxed), 1, pass_cap_);
+    if (!(look == look_) || !feature_ || passes != created_passes_) {
       if (feature_) {
         Retired r;
         r.feature = feature_;
@@ -396,6 +402,7 @@ class Runtime {
         retired_.push_back(r);
         feature_ = nullptr;
       }
+      RetireExtras();
       look_ = look;
       reset_ = true;
       params_.Set("DLSSNR.Enabled", 1);
@@ -419,8 +426,23 @@ class Runtime {
         Fail(t);
         return;
       }
+      // The later passes: their own features (history) and the images between them.
+      created_passes_ = 1;
+      for (int i = 0; i + 1 < passes; ++i) {
+        if (!chain_[i].res.handle && !Allocate(chain_[i], low_.width, low_.height, resource_usage::unordered_access)) break;
+        if (create_(create_fn_, native, 18, &params_, &extra_[i]) != 1 || !extra_[i]) {
+          extra_[i] = nullptr;
+          break;
+        }
+        created_passes_ = i + 2;
+      }
+      if (created_passes_ < passes) {
+        pass_cap_ = created_passes_;  // not again each frame
+        Log("a later NR pass could not be created: fewer passes");
+      }
       char t[96];
-      std::snprintf(t, sizeof(t), "NR feature created at %ux%u", low_.width, low_.height);
+      std::snprintf(t, sizeof(t), "NR feature created at %ux%u, %d pass%s", low_.width, low_.height, created_passes_,
+                    created_passes_ > 1 ? "es" : "");
       Log(t);
     }
     float paper_value = paper;
@@ -434,8 +456,7 @@ class Runtime {
     Dispatch(cmd, reduce_, tables_[0], low_.width, low_.height, push);
     cmd->barrier(low_.res, U::unordered_access, U::general);
     cmd->barrier(enhanced_.res, U::unordered_access, U::general);
-    color_ = Resource(low_, false);
-    output_ = Resource(enhanced_, true);
+    for (int i = 0; i + 1 < created_passes_; ++i) cmd->barrier(chain_[i].res, U::unordered_access, U::general);
     params_.Set("DLSSNR.Color", static_cast<void*>(&color_));
     params_.Set("DLSSNR.Output", static_cast<void*>(&output_));
     params_.Set("DLSSNR.Width", low_.width);
@@ -452,17 +473,29 @@ class Runtime {
       params_.Set((b + "SubrectHeight").c_str(), low_.height);
     }
     reset_ = false;
-    const int r = evaluate_(evaluate_fn_, native, feature_, &params_, nullptr);
-    if (r != 1) {
-      char t[64];
-      std::snprintf(t, sizeof(t), "EvaluateFeature 0x%08x", static_cast<unsigned>(r));
-      cmd->barrier(bb, U::copy_source, state);
-      Fail(t);
-      return;
+    // Each later pass on the output of the one before.
+    for (int i = 0; i < created_passes_; ++i) {
+      const Image& in = i == 0 ? low_ : chain_[i - 1];
+      const Image& out = i + 1 == created_passes_ ? enhanced_ : chain_[i];
+      color_ = Resource(in, false);
+      output_ = Resource(out, true);
+      const int r = evaluate_(evaluate_fn_, native, i == 0 ? feature_ : extra_[i - 1], &params_, nullptr);
+      if (r != 1) {
+        char t[64];
+        std::snprintf(t, sizeof(t), "EvaluateFeature 0x%08x", static_cast<unsigned>(r));
+        cmd->barrier(bb, U::copy_source, state);
+        Fail(t);
+        return;
+      }
+      if (i + 1 < created_passes_) {  // written, then read by the next pass
+        cmd->barrier(out.res, U::general, U::unordered_access);
+        cmd->barrier(out.res, U::unordered_access, U::general);
+      }
     }
     // Compose (reads the reduced image and NR's, writes the output).
     cmd->barrier(low_.res, U::general, U::unordered_access);
     cmd->barrier(enhanced_.res, U::general, U::unordered_access);
+    for (int i = 0; i + 1 < created_passes_; ++i) cmd->barrier(chain_[i].res, U::general, U::unordered_access);
     Dispatch(cmd, compose_, tables_[1], out_.width, out_.height, push);
     // The result into the back buffer.
     cmd->barrier(out_.res, U::unordered_access, U::copy_source);
@@ -552,6 +585,20 @@ class Runtime {
   uint64_t ticks_ = 1;
   double gpu_ms_ = 0.0;
   Image full_, low_, enhanced_, out_;
+  Image chain_[2];             // between the passes
+  void* extra_[2]{};           // the features of passes 2 and 3
+  int created_passes_ = 0, pass_cap_ = 3;
+  void RetireExtras() {
+    for (void*& extra : extra_) {
+      if (!extra) continue;
+      Retired r;
+      r.feature = extra;
+      r.after = frame_ + 8;
+      retired_.push_back(r);
+      extra = nullptr;
+    }
+    created_passes_ = 0;
+  }
   std::vector<Retired> retired_;
   Parameters params_;
   NVSDK_NGX_Resource_VK color_{}, output_{};
@@ -566,6 +613,7 @@ class Runtime {
 };
 inline Runtime g_runtime;
 }  // namespace internal
+inline void Passes(int n) { g_passes.store(n, std::memory_order_relaxed); }
 
 inline bool NeedsRestart() { return internal::g_runtime.needs_restart(); }
 // In a Vulkan game, from ReShade's begin_effects event: after every add-on's Present (an add-on that writes
