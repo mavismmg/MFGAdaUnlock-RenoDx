@@ -191,3 +191,29 @@ the effective downstream request separately.
 | `[Overlay]` | `PerfOverlayModifier` | `1` | Key held with the shortcut: `0` none, `1` Shift, `2` Ctrl, `3` Alt |
 | `[DLSSG]` | `HostGameReflex` | `1` | Add frame generation: `0` holds back the game's own NVAPI Reflex calls while MFG Unlock's Streamline runs Reflex. Leave unset unless asked |
 | `[Diagnostics]` | `CrashDump` | `0` | Writes `MFGAdaUnlock-crash.txt` and a dump on a crash, and a dump with `MFGAdaUnlock-hang.txt` when the game stops responding inside a call MFG Unlock watches. The hang record's text file is written either way |
+
+## DLSS 5 neural rendering (MFGAdaUnlock.ini)
+
+1.12.0. The **DLSS 5** tab writes these keys. `Enabled` needs a game restart; the others apply at once.
+
+| Section | Key | Default | Meaning |
+|---|---|---|---|
+| `[DLSS5]` | `Enabled` | `0` | Runs NVIDIA's DLSS 5 neural rendering on the game's frames. Needs `nvngx_dlssnr.dll` beside the game's exe (or `RuntimePath`) |
+| `[DLSS5]` | `RuntimePath` | empty | Full path of `nvngx_dlssnr.dll` when it is not beside the game's exe |
+| `[DLSS5]` | `Network` | `0` | `0` the current network, `1` the original one |
+| `[DLSS5]` | `Style` | `0` | `0` Default, `1` Natural, `2` Cinematic |
+| `[DLSS5]` | `Intensity`, `LocalTone`, `LocalStructure`, `Skin` | `100` | Strength of the effect and of its parts, `0`–`200` percent |
+| `[DLSS5]` | `ProtectHud` | `1` | Lets NR mask the HUD it recognizes |
+| `[DLSS5]` | `Scale` | `100` | NR's resolution in percent of the output, `25`–`100`; `50` costs about a quarter |
+| `[DLSS5]` | `Passes` | `1` | NR again on its own result, `1`–`3`; each pass costs about as much as the first |
+| `[DLSS5]` | `HookPoint` | `0` | Where NR runs: `0` Auto, `1` after the game's upscaler only, `2` Present |
+| `[DLSS5]` | `Motion` | `0` | Motion for NR: `0` Auto (the game's vectors, else estimated from the image), `1` the game's only, `2` off |
+| `[DLSS5]` | `TaaFinder` | `0` | Before Present: looks for the game's own TAA motion vectors and depth (experimental; restart) |
+| `[DLSS5]` | `Stability` | `60` | Keeps part of earlier frames' result where nothing moved, against flicker, when NR has no motion, `0`–`100` |
+| `[DLSS5]` | `PaperWhite` | `0` | HDR: the brightness of SDR white in nits; `0` follows Windows' SDR content brightness |
+| `[DLSS5]` | `ToggleKey`, `CompareKey` | `119`, `118` | Virtual-key codes of the on/off and compare keys (F8, F7); `0` turns a key off |
+| `[DLSS5]` | `KeyModifier` | `2` | Key held with them: `0` none, `1` Shift, `2` Ctrl, `3` Alt |
+| `[DLSS5]` | `VramMargin` | `512` | MiB of video memory kept free; below it NR pauses and frees its memory |
+| `[DLSS5]` | `Coexist` | `0` | With another DLSS 5 add-on loaded: `0` MFG Unlock's NR stands aside, `1` runs anyway |
+| `[DLSS5.Looks]` | look name | | Looks saved from the tab |
+| `[Diagnostics]` | `ForceDRED` | `0` | Also: on a device loss, the unfinished command lists and the page fault in the log, and the process' exceptions with their stacks |

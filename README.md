@@ -9,24 +9,19 @@
 </p>
 
 > [!NOTE]
-> ### New in 1.11.0
+> ### New in 1.12.0
 >
-> - **Performance overlay** (Shift+F10, or **General → Performance overlay**):
->   output and game frame rate, frame times, 1% and 0.1% lows, hitches and the frame
->   generation status in words; at **Full**, a frame time graph, latency, GPU time and
->   video memory. Off by default, also shown with the ReShade menu closed.
-> - **Add frame generation with RenoDX DLSS** (Lies of P, Hi-Fi RUSH): the
->   "Compatibility issue" (Reflex not detected) is fixed; **The Medium** and other
->   Unreal games no longer fail at every frame (status 0x10).
-> - **"DLSS 5" addons** that hook NVIDIA's NGX no longer lose sight of frame generation
->   with XeMFG DLSS-G or Add frame generation, and NVIDIA **Dynamic MFG** asks the runtime
->   itself in games that never do (Microsoft Flight Simulator 2020; to be confirmed).
-> - No more false "the last session may have closed unexpectedly" after a normal
->   exit; a game that stops responding leaves `MFGAdaUnlock-hang.txt`; the support
->   report names other addons hooked into NGX, Streamline or NVAPI.
+> - **DLSS 5 neural rendering** on the game's own frames, in D3D12 and Vulkan games,
+>   with frame generation and HDR: after the game's DLSS when it has it, before its
+>   frame generation, or before Present. Its own **DLSS 5** tab: looks, resolution,
+>   NR passes, stability, HDR paper white, Ctrl+F8 on/off and Ctrl+F7 compare. Off by
+>   default; bring your own `nvngx_dlssnr.dll` beside the game's exe.
+> - Tested in Cyberpunk 2077, Crimson Desert, The Last of Us Part II, A Plague Tale:
+>   Resonance, Resident Evil Requiem (with REFramework) and Red Dead Redemption 2 (Vulkan).
+> - Switches and segmented selectors in the panel.
 >
-> See the [1.11.0 release notes](docs/releases/1.11.0.md) (and the
-> [1.10.1 release notes](docs/releases/1.10.1.md) for the previous version).
+> See the [1.12.0 release notes](docs/releases/1.12.0.md) (and the
+> [1.11.0 release notes](docs/releases/1.11.0.md) for the previous version).
 
 > [!IMPORTANT]
 > ### 1.10.0: XMX is now called XeMFG DLSS-G
@@ -320,6 +315,9 @@ Later releases added, also by [mavismmg](https://github.com/mavismmg):
 - **Performance overlay (1.11):** frame rate, frame times, 1% and 0.1% lows, frame
   generation status, latency and video memory over the game; Dynamic MFG for games that
   never ask the runtime; a hang record and a session notice that knows a normal exit.
+- **DLSS 5 neural rendering (1.12):** NVIDIA's NR on the game's frames in D3D12 and
+  Vulkan games, after the game's upscaler, before its frame generation or before
+  Present, with MFG Unlock's own motion estimation where the game gives none.
 
 These additions extend Dreamt's addon and dashdogy's research; they do not
 replace or claim authorship of either original contribution.

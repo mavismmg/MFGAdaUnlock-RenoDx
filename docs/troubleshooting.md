@@ -77,6 +77,15 @@ Part of the [MFG Unlock](../README.md) documentation. Sections: [Troubleshooting
   and send that file with `ReShade.log`. With `[Diagnostics] CrashDump=1` a dump
   file is written too; **Save support files** collects both.
 
+### DLSS 5 does not run, or the game crashes with it
+
+- Read the status line at the top of the **DLSS 5** tab, and the `DLSS 5` lines of `ReShade.log`: each reason NR is not running is written once.
+- "nvngx_dlssnr.dll not found": put your own copy beside the game's exe, or set `[DLSS5] RuntimePath`.
+- DLSS 5 was turned on after the game started, and the game's frame generation is on (or the game is Vulkan): restart the game.
+- Another DLSS 5 add-on is loaded: MFG Unlock's NR stands aside. Remove the other add-on, or set **Other DLSS 5 mods** to run anyway with the other add-on's NR off.
+- RE Engine games (Resident Evil Requiem) need REFramework with ReShade. With it, NR runs only in gameplay, after the game's DLSS.
+- **Ctrl+F8** turns NR off at once. For a crash, set `[Diagnostics] ForceDRED=1`, reproduce it, and send `ReShade.log`.
+
 ### Performance collapses when RenoDX DLSS5 is also installed
 
 - Follow the [Using with RenoDX DLSS5](xemfg.md#using-with-renodx-dlss5) section.

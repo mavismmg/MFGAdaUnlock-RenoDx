@@ -22,6 +22,7 @@
 // and back through invertible curves; the linear one around a metered average brightness.
 #include <windows.h>
 #include <d3d12.h>
+#pragma comment(lib, "d3d12.lib")  // D3D12GetDebugInterface (DRED, [Diagnostics] ForceDRED)
 #include <dxgi1_4.h>
 #include <d3dcompiler.h>
 #include <softpub.h>

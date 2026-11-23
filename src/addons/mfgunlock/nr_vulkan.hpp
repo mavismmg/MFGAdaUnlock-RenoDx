@@ -31,6 +31,7 @@
 
 namespace mfgunlock::nr::vk {
 inline std::atomic<int> g_passes{1};  // NR passes (Passes setting, 1 to 3)
+inline void Passes(int n) { g_passes.store(n, std::memory_order_relaxed); }
 
 // Where the runtime and the shim are (dlss5's Locate); set by addon_dlss5.inl.
 inline std::atomic<bool (*)(std::wstring&, std::wstring&)> g_locate{nullptr};
@@ -613,7 +614,6 @@ class Runtime {
 };
 inline Runtime g_runtime;
 }  // namespace internal
-inline void Passes(int n) { g_passes.store(n, std::memory_order_relaxed); }
 
 inline bool NeedsRestart() { return internal::g_runtime.needs_restart(); }
 // In a Vulkan game, from ReShade's begin_effects event: after every add-on's Present (an add-on that writes

@@ -346,7 +346,7 @@ void DrawControls(PanelPage page) {
     if(reports(T(Str::kCopyDetailedCounters_50f9),T(Str::kCopiesTechnicalStatusErrorCodes_2238))) {
       mfgunlock::xemfg::Status model;
       const bool modelAvailable=TryModelStatus(model);
-      std::ostringstream report; report<<"MFG Unlock 1.11.0\nstartup_failed="<<ModelStartupFailed()
+      std::ostringstream report; report<<"MFG Unlock 1.12.0\nstartup_failed="<<ModelStartupFailed()
           <<" model_status_available="<<modelAvailable<<" model_detail="<<(modelAvailable?model.detail:"busy")
           <<"\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
           <<"\nCUDA="<<status.cudaState<<" compute="<<status.cudaMajor<<'.'<<status.cudaMinor<<" layers="<<status.cudaLayers
