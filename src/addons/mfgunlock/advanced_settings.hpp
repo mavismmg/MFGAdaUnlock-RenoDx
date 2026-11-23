@@ -110,6 +110,9 @@ inline constexpr Option kOverlay[]{
   {L"Overlay",L"PerfOverlayModifier",Str::kPerfOverlayModifier_o20,Str::kPerfOverlayModifierDesc_o21,L"1",MFGUNLOCK_CHOICES(kOverlayModifiers)},
 };
 // 1.12.0 (DLSS 5, addon_dlss5.inl): read live, except AllowUnsigned (when the runtime is first found).
+inline constexpr Choice kDlss5HookPoints[]{{Str::kDlss5HookAuto_n42,L"0"},{Str::kDlss5HookUpscaled_n43,L"1"},{Str::kDlss5HookPresent_n44,L"2"}};
+inline constexpr Choice kDlss5Motion[]{{Str::kDlss5MotionAuto_n49,L"0"},{Str::kDlss5MotionGame_n50,L"1"},{Str::kDlss5MotionOff_n51,L"2"}};
+inline constexpr Choice kDlss5Coexist[]{{Str::kDlss5CoexistAside_n62,L"0"},{Str::kDlss5CoexistRun_n63,L"1"}};
 inline constexpr Choice kDlss5Networks[]{{Str::kDlss5NetworkNew_n7,L"0"},{Str::kDlss5NetworkOriginal_n8,L"1"}};
 inline constexpr Choice kDlss5Styles[]{{Str::kDlss5StyleDefault_n11,L"0"},{Str::kDlss5StyleNatural_n12,L"1"},
                                        {Str::kDlss5StyleCinematic_n13,L"2"}};
@@ -122,9 +125,18 @@ inline constexpr Option kDlss5[]{
   {L"DLSS5",L"LocalStructure",Str::kDlss5Structure_n18,Str::kDlss5StructureDesc_n19,L"100",MFGUNLOCK_NUMBER(0,200)},
   {L"DLSS5",L"Skin",Str::kDlss5Skin_n20,Str::kDlss5SkinDesc_n21,L"100",MFGUNLOCK_NUMBER(0,200)},
   {L"DLSS5",L"ProtectHud",Str::kDlss5AutoMask_n22,Str::kDlss5AutoMaskDesc_n23,L"1",MFGUNLOCK_CHOICES(kOnOff)},
-  {L"DLSS5",L"Scale",Str::kDlss5Scale_n24,Str::kDlss5ScaleDesc_n25,L"50",MFGUNLOCK_NUMBER(25,100)},
+  {L"DLSS5",L"Scale",Str::kDlss5Scale_n24,Str::kDlss5ScaleDesc_n25,L"100",MFGUNLOCK_NUMBER(25,100)},
   {L"DLSS5",L"Stability",Str::kDlss5Stability_n38,Str::kDlss5StabilityDesc_n39,L"60",MFGUNLOCK_NUMBER(0,100)},
-  {L"DLSS5",L"AllowUnsigned",Str::kDlss5AllowUnsigned_n3,Str::kDlss5AllowUnsignedDesc_n4,L"0",MFGUNLOCK_CHOICES(kOnOff)},
+  {L"DLSS5",L"HookPoint",Str::kDlss5HookPoint_n40,Str::kDlss5HookPointDesc_n41,L"0",MFGUNLOCK_CHOICES(kDlss5HookPoints)},
+  {L"DLSS5",L"PaperWhite",Str::kDlss5PaperWhite_n45,Str::kDlss5PaperWhiteDesc_n46,L"0",MFGUNLOCK_NUMBER(0,1000)},
+  {L"DLSS5",L"Motion",Str::kDlss5Motion_n47,Str::kDlss5MotionDesc_n48,L"0",MFGUNLOCK_CHOICES(kDlss5Motion)},
+  {L"DLSS5",L"TaaFinder",Str::kDlss5TaaFinder_n94,Str::kDlss5TaaFinderDesc_n95,L"0",MFGUNLOCK_CHOICES(kOnOff)},
+  {L"DLSS5",L"ToggleKey",Str::kDlss5ToggleKey_n52,Str::kDlss5ToggleKeyDesc_n53,L"119",MFGUNLOCK_NUMBER(0,254)},
+  {L"DLSS5",L"CompareKey",Str::kDlss5CompareKey_n54,Str::kDlss5CompareKeyDesc_n55,L"118",MFGUNLOCK_NUMBER(0,254)},
+  {L"DLSS5",L"KeyModifier",Str::kDlss5KeyModifier_n56,Str::kDlss5KeyModifierDesc_n57,L"2",MFGUNLOCK_CHOICES(kOverlayModifiers)},
+  {L"DLSS5",L"VramMargin",Str::kDlss5VramMargin_n58,Str::kDlss5VramMarginDesc_n59,L"512",MFGUNLOCK_NUMBER(0,4096)},
+  {L"DLSS5",L"Coexist",Str::kDlss5Coexist_n60,Str::kDlss5CoexistDesc_n61,L"0",MFGUNLOCK_CHOICES(kDlss5Coexist)},
+  {L"DLSS5",L"AllowUnsigned",Str::kDlss5AllowUnsigned_n3,Str::kDlss5AllowUnsignedDesc_n4,L"1",MFGUNLOCK_CHOICES(kOnOff)},
 };
 inline constexpr Option kXmxSaveVram{L"DLSSG",L"XmxSaveVram",Str::kXmxSaveVram_v1a,Str::kXmxSaveVramDesc_v1b,L"1",MFGUNLOCK_CHOICES(kOnOff)};
 #undef MFGUNLOCK_CHOICES
@@ -153,6 +165,22 @@ inline void DrawOption(const Option& option) {
       bool on=Current(option)==L"1";
       if(Toggle("##advanced_switch",on)) Store(option,on?L"1":L"0");
       return;
+    }
+    // 1.12.0: a short choice (up to four, labels that fit the row) shown whole, as the backend selector.
+    if(option.choices && option.choiceCount<=4) {
+      const char* labels[4]{};
+      float needed=0.f;
+      int selected=0;
+      for(int i=0;i<option.choiceCount;++i) {
+        labels[i]=T(option.choices[i].label);
+        needed+=ImGui::CalcTextSize(labels[i]).x+ImGui::GetStyle().FramePadding.x*2.f;
+        if(!_wcsicmp(option.choices[i].value,Current(option).c_str())) selected=i;
+      }
+      if(needed<=ImGui::GetContentRegionAvail().x) {
+        if(Segmented("##advanced_segments",selected,labels,option.choiceCount))
+          Store(option,option.choices[selected].value);
+        return;
+      }
     }
     if(option.choices) {
       int selected=0;

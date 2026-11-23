@@ -1229,6 +1229,8 @@ inline std::atomic<void (*)()> g_on_reflex_sleep{nullptr};
 // (below) then goes in too, so neural rendering runs there, once per game frame and before Streamline's
 // frame generation. Turned on later in the session, it needs a restart in a game with its own FG.
 inline std::atomic_bool g_nr_wanted{false};
+inline std::atomic<float> g_sl_mvec_scale_x{0.f}, g_sl_mvec_scale_y{0.f};
+inline std::atomic<int> g_sl_depth_inverted{-1};
 inline std::atomic<void (*)(IUnknown*, IUnknown*)> g_on_proxy_present_nr{nullptr};
 // The command queue the game made Streamline's proxy swap chain with: the proxy's GetDevice does not
 // give it back (E_NOINTERFACE). Kept, with a reference, for the process.
@@ -2358,6 +2360,11 @@ inline sl::Result HookedSetConstants(const sl::Constants& values,
                                      const sl::FrameToken& frame,
                                      const sl::ViewportHandle& viewport) {
   if (g_real_set_constants == nullptr) return sl::Result::eErrorNotInitialized;
+  // 1.12.0 (DLSS 5): how the game's motion vectors scale to the screen and which way its depth runs,
+  // for NR before frame generation (nr_runtime.hpp, upscaler::BeforeEvaluate).
+  g_sl_mvec_scale_x.store(values.mvecScale.x, std::memory_order_relaxed);
+  g_sl_mvec_scale_y.store(values.mvecScale.y, std::memory_order_relaxed);
+  g_sl_depth_inverted.store(values.depthInverted == sl::Boolean::eTrue ? 1 : 0, std::memory_order_relaxed);
   if (g_force_fg_enabled.load(std::memory_order_relaxed)) {
     reflexdrive::OnConstants(frame);
     TryForceFrameGeneration(viewport);

@@ -159,6 +159,7 @@
 #include "perf_stats.hpp"
 #include "foreign_hooks.hpp"
 #include "nr_runtime.hpp"
+#include "nr_vulkan.hpp"  // 1.12.0 (DLSS 5, phase E)
 
 #include <deps/imgui/imgui.h>
 #include <include/reshade.hpp>

@@ -275,6 +275,17 @@ inline void OnOverlay(reshade::api::effect_runtime* runtime) {
       ImGui::TextUnformatted(line);
     }
     ImGui::TextDisabled("%s", method.c_str());
+    // 1.12.0 (DLSS 5): neural rendering's route, motion and cost while it runs.
+    const auto& nr = mfgunlock::nr::g_status;
+    if (nr.route.load(std::memory_order_relaxed) != 0) {
+      static const char* kRoutes[] = {"", "before Present", "after upscaling", "Vulkan", "before frame generation"};
+      static const char* kGuides[] = {"no motion", "game motion", "estimated motion", "TAA motion"};
+      char cost[24] = "";
+      if (nr.ms.load() > 0.f) std::snprintf(cost, sizeof(cost), " %.1f ms", nr.ms.load());
+      std::snprintf(line, sizeof(line), "DLSS 5 NR%s  %s, %s%s", cost, kRoutes[std::clamp(nr.route.load(), 0, 4)],
+                    kGuides[std::clamp(nr.guides.load(), 0, 3)], nr.compare.load() ? "  (compare)" : "");
+      ImGui::TextUnformatted(line);
+    }
   }
   if (level >= 2) {
     if (!v.graph_ms.empty())

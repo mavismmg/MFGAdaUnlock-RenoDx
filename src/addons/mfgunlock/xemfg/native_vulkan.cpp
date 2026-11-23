@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "native_vulkan.hpp"
+#include "../nr_vk_bridge.hpp"  // 1.12.0 (DLSS 5)
 #include "sl_vulkan.hpp"
 #include <deque>
 #include <array>
@@ -79,6 +80,7 @@ bool FromSelf(const void* caller) noexcept {
 }
 // Streamline's own calls (its proxies call the loader's exports) pass on too in its hosted mode.
 bool Passed(const void* caller) noexcept {
+  if(mfgunlock::nr::vk::t_forwarding_game_call) return false;  // the game's call, through DLSS 5's hook
   return internalDepth>0 || FromSelf(caller) || (streamlineMode.load(std::memory_order_relaxed) && slvk::IsStreamlineCaller(caller));
 }
 std::atomic<bool> takeoverSeen{};

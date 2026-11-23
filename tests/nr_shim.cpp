@@ -37,6 +37,24 @@ MFG_SHIM int MfgNr_Shutdown(void* fn) {
   volatile int result = reinterpret_cast<ShutdownFn>(fn)();
   return result;
 }
+// NVSDK_NGX_D3D12_Shutdown1(device): the runtime's state for that device, before Init on another.
+MFG_SHIM int MfgNr_ShutdownDevice(void* fn, void* device) {
+  volatile int result = reinterpret_cast<int(__cdecl*)(void*)>(fn)(device);
+  return result;
+}
+// Vulkan (1.12.0, phase E): NVSDK_NGX_VULKAN_Init_Ext2 and the device extensions NR needs.
+MFG_SHIM int MfgNr_VkInit(void* fn, unsigned long long app_id, const wchar_t* data_path, void* instance,
+                          void* physical, void* device, void* gipa, void* gdpa, int sdk, const void* info) {
+  using Fn = int(__cdecl*)(unsigned long long, const wchar_t*, void*, void*, void*, void*, void*, int, const void*);
+  volatile int result = reinterpret_cast<Fn>(fn)(app_id, data_path, instance, physical, device, gipa, gdpa, sdk, info);
+  return result;
+}
+MFG_SHIM int MfgNr_VkDeviceExtensions(void* fn, void* instance, void* physical, const void* discovery,
+                                      unsigned* count, void** properties) {
+  using Fn = int(__cdecl*)(void*, void*, const void*, unsigned*, void**);
+  volatile int result = reinterpret_cast<Fn>(fn)(instance, physical, discovery, count, properties);
+  return result;
+}
 // The ABI this shim forwards with; the caller refuses another.
 MFG_SHIM int MfgNr_AbiVersion() { return 1; }
 

@@ -175,6 +175,32 @@ target_include_directories(nr_probe PRIVATE "${RENODX_SOURCE_DIR}/external/Strea
 target_compile_features(nr_probe PRIVATE cxx_std_20)
 target_link_libraries(nr_probe PRIVATE d3d12 dxgi advapi32 ole32 windowscodecs wintrust crypt32 version)
 add_dependencies(nr_probe mfgunlock_nvngx)
+# 1.12.0 (DLSS 5): the shim travels inside the add-on (resource MFGUNLOCK_NR_SHIM), written out on first use,
+# so a game needs only nvngx_dlssnr.dll beside its exe.
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/nr_shim_embed_$<CONFIG>.rc"
+  CONTENT "MFGUNLOCK_NR_SHIM RCDATA \"$<TARGET_FILE:mfgunlock_nvngx>\"
+")
+target_sources(mfgunlock_native_xemfg PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/nr_shim_embed_$<CONFIG>.rc")
+set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/nr_shim_embed_$<CONFIG>.rc" PROPERTIES
+  OBJECT_DEPENDS "$<TARGET_FILE:mfgunlock_nvngx>" GENERATED TRUE)
+add_dependencies(mfgunlock_native_xemfg mfgunlock_nvngx)
+# 1.12.0 (DLSS 5, phase E): neural rendering's Vulkan passes, HLSL to SPIR-V with dxc at build time.
+find_program(XEMFG_DXC dxc HINTS "${CMAKE_SOURCE_DIR}/../../../sl-samples/sample-v2.11.1/_build/_deps/dxc-src/bin/x64"
+  "$ENV{WindowsSdkVerBinPath}x64")
+if(XEMFG_DXC)
+  set(NR_VK_HLSL "${CMAKE_CURRENT_SOURCE_DIR}/../nr_vulkan.hlsl")
+  set(NR_VK_OUT "${CMAKE_CURRENT_BINARY_DIR}/nr_vk")
+  add_custom_command(OUTPUT "${NR_VK_OUT}/nr_vulkan_spv.h"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${NR_VK_OUT}"
+    COMMAND "${XEMFG_DXC}" -spirv -T cs_6_0 -E reduce_vk -fspv-target-env=vulkan1.1 -Fo "${NR_VK_OUT}/reduce_vk.spv" "${NR_VK_HLSL}"
+    COMMAND "${XEMFG_DXC}" -spirv -T cs_6_0 -E compose_vk -fspv-target-env=vulkan1.1 -Fo "${NR_VK_OUT}/compose_vk.spv" "${NR_VK_HLSL}"
+    COMMAND "${Python3_EXECUTABLE}" -I "${CMAKE_SOURCE_DIR}/../tools/spv_header.py" "${NR_VK_OUT}/nr_vulkan_spv.h"
+      "kNrReduceVk=${NR_VK_OUT}/reduce_vk.spv" "kNrComposeVk=${NR_VK_OUT}/compose_vk.spv"
+    DEPENDS "${NR_VK_HLSL}" "${CMAKE_SOURCE_DIR}/../tools/spv_header.py" VERBATIM)
+  target_sources(mfgunlock_native_xemfg PRIVATE "${NR_VK_OUT}/nr_vulkan_spv.h")
+  target_include_directories(mfgunlock_native_xemfg PRIVATE "${NR_VK_OUT}" "${XEMFG_VULKAN_HEADERS}")
+  target_compile_definitions(mfgunlock_native_xemfg PRIVATE MFGUNLOCK_NR_VULKAN)
+endif()
 add_executable(xemfg_window_tests "${CMAKE_SOURCE_DIR}/xemfg_window_tests.cpp" native_window.cpp)
 target_compile_definitions(xemfg_window_tests PRIVATE NOMINMAX UNICODE _UNICODE)
 target_link_libraries(xemfg_window_tests PRIVATE user32)

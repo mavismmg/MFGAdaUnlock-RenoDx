@@ -143,11 +143,15 @@ NVSDK_NGX_Result NVSDK_CONV HookedCoreEvaluate(ID3D12GraphicsCommandList* list, 
   const mfgunlock::hook::Nesting nest(t_evaluate_depth);
   const auto real = reinterpret_cast<NgxEvaluateFn>(mfgunlock::hook::Trampoline(g_core_evaluate_hook, nest.level));
   if (nest.level > 0) return real != nullptr ? real(list, handle, params, callback) : NVSDK_NGX_Result_Fail;
+  mfgunlock::nr::upscaler::BeforeEvaluate(list, handle, params);  // 1.12.0 (DLSS 5): NR before frame generation
   if (handle == XmxHandle()) return mfgunlock::xmx::EvaluateWithoutNvidia(list, params);
   if (real == nullptr) return NVSDK_NGX_Result_Fail;
   const NVSDK_NGX_Result result = real(list, handle, params, callback);
   // 1.10.0 (sl_host.hpp): the game's DLSS SR inputs and output, tagged for its hosted Streamline.
-  if (!NgxFailed(result)) mfgunlock::slhost::AfterEvaluate(list, handle, params);
+  if (!NgxFailed(result)) {
+    mfgunlock::slhost::AfterEvaluate(list, handle, params);
+    mfgunlock::nr::upscaler::Evaluated(list, handle, params);  // 1.12.0 (DLSS 5): NR after the upscaler
+  }
   return result;
 }
 NVSDK_NGX_Result NVSDK_CONV HookedCoreRelease(NVSDK_NGX_Handle* handle) {
@@ -161,6 +165,7 @@ NVSDK_NGX_Result NVSDK_CONV HookedCoreRelease(NVSDK_NGX_Handle* handle) {
     return NVSDK_NGX_Result_Success;
   }
   mfgunlock::slhost::ObserveRelease(handle);
+  mfgunlock::nr::upscaler::Released(handle);
   if (real == nullptr) return NVSDK_NGX_Result_Fail;
   return real(handle);
 }
@@ -232,6 +237,11 @@ NVSDK_NGX_Result NVSDK_CONV HookedCreateFeature(ID3D12GraphicsCommandList* list,
   const NVSDK_NGX_Result result = g_real_create_feature(list, feature, parameters, handle);
   if (feature == NVSDK_NGX_Feature_SuperSampling && !NgxFailed(result) && handle != nullptr)
     mfgunlock::slhost::ObserveCreate(parameters, *handle);
+  if (!NgxFailed(result) && handle != nullptr)
+    mfgunlock::nr::upscaler::Created(static_cast<int>(feature), parameters, *handle);
+  // MFG Unlock's own NR never goes through the driver's NGX: feature 18 here is someone else's.
+  if (!NgxFailed(result) && static_cast<int>(feature) == 18)
+    mfgunlock::nr::internal::g_foreign_create.store(true, std::memory_order_relaxed);
   return result;
 }
 
@@ -246,7 +256,8 @@ bool EnsureResident();
 
 bool PresetHookWanted() {
   return mfgunlock::dlsspreset::g_selected.load(std::memory_order_relaxed) != 0 ||
-         mfgunlock::xmx::preada::Admitted() || XmxSkipsNvidiaFeature() || mfgunlock::slhost::Wanted();
+         mfgunlock::xmx::preada::Admitted() || XmxSkipsNvidiaFeature() || mfgunlock::slhost::Wanted() ||
+         mfgunlock::framecount::internal::g_nr_wanted.load(std::memory_order_relaxed);  // 1.12.0 (DLSS 5)
 }
 
 void TryInstallPresetHook() {
@@ -268,7 +279,9 @@ void TryInstallPresetHook() {
     for (const char* export_name : {"NVSDK_NGX_D3D12_CreateFeature", "NVSDK_NGX_D3D12_EvaluateFeature"})
       NoteForeignNgxHook(mod, export_name);
     // The XMX handle's Evaluate and Release first, so CreateFeature never hands it out unrouted.
-    if ((XmxSkipsNvidiaFeature() || mfgunlock::slhost::Wanted()) && !g_xmx_core_hooks_installed.load(std::memory_order_relaxed) &&
+    if ((XmxSkipsNvidiaFeature() || mfgunlock::slhost::Wanted() ||
+         mfgunlock::framecount::internal::g_nr_wanted.load(std::memory_order_relaxed)) &&
+        !g_xmx_core_hooks_installed.load(std::memory_order_relaxed) &&
         mfgunlock::hook::InstallGeneration(mod, kXmxCoreHooks, narrow))
       g_xmx_core_hooks_installed.store(true, std::memory_order_release);
     if (mfgunlock::hook::InstallGeneration(mod, kNgxPresetHooks, narrow)) {
@@ -295,8 +308,15 @@ void CheckNgxHooksStillInstalled() {
   // 1.11.0 (G2): a module that hooked after ours (or removed ours) also hooks NGX.
   for (const char* export_name : {"NVSDK_NGX_D3D12_CreateFeature", "NVSDK_NGX_D3D12_EvaluateFeature"})
     NoteForeignNgxHook(g_ngx_hooked_module, export_name);
-  if (g_xmx_core_hooks_installed.load(std::memory_order_acquire))
+  if (g_xmx_core_hooks_installed.load(std::memory_order_acquire)) {
     mfgunlock::hook::Reinstall(g_ngx_hooked_module, kXmxCoreHooks, label);
+  } else if (XmxSkipsNvidiaFeature() || mfgunlock::slhost::Wanted() ||
+             mfgunlock::framecount::internal::g_nr_wanted.load(std::memory_order_relaxed)) {
+    // 1.12.0: the evaluation hooks did not go in with CreateFeature's (another mod, DLSS5 NR in TLOU2,
+    // re-hooks NGX at the same time): again, once a second, until they do.
+    if (mfgunlock::hook::InstallGeneration(g_ngx_hooked_module, kXmxCoreHooks, label))
+      g_xmx_core_hooks_installed.store(true, std::memory_order_release);
+  }
   mfgunlock::hook::Reinstall(g_ngx_hooked_module, kNgxPresetHooks, label);
   ReleaseSRWLockExclusive(&lock);
 }

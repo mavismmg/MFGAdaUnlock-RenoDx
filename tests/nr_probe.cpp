@@ -216,6 +216,12 @@ int wmain(int argc, wchar_t** argv) {
   unsigned preset = 0, style = 0, automask = 1;
   float intensity = 1.f, tone = 1.f, structure = 1.f, skin = 1.f;
   unsigned long long app_id = 0x1000000ull;
+  // 1.12.0 (DLSS 5, phase A): a time test. NR on a static image (pan 0) or one moving left by `pan` pixels a
+  // frame, with motion vectors and depth given or not: how much its output changes between frames where
+  // the content is the same (flicker, or the vectors' convention when they are wrong).
+  int temporal = 0, pan = 0;
+  std::wstring guides = L"none";
+  float guide_ratio = 1.f;  // the guides' size against the color's (a game renders below its output)
   for (int i = 1; i < argc; ++i) {
     const std::wstring a = argv[i];
     const auto next = [&]() -> std::wstring { return i + 1 < argc ? argv[++i] : L""; };
@@ -238,6 +244,10 @@ int wmain(int argc, wchar_t** argv) {
     else if (a == L"--keys") keys = true;
     else if (a == L"--size") { const std::wstring v = next(); swscanf_s(v.c_str(), L"%ux%u", &size_w, &size_h); }
     else if (a == L"--scale") scale = float(_wtof(next().c_str()));
+    else if (a == L"--temporal") temporal = _wtoi(next().c_str());
+    else if (a == L"--pan") pan = _wtoi(next().c_str());
+    else if (a == L"--guides") guides = next();
+    else if (a == L"--guide-ratio") guide_ratio = float(_wtof(next().c_str()));
   }
   if (snippet_path.empty() || image_path.empty() || out_path.empty()) {
     std::printf("usage: nr_probe --snippet <nvngx_dlssnr.dll> --image <in.png> --out <out.png> [options]\n");
@@ -489,5 +499,141 @@ int wmain(int argc, wchar_t** argv) {
   }
   std::printf("output: %ls\nmean absolute change: %.3f of 255\n", out_path.c_str(), diff);
   shim_release(nr_release, feature);
+  if (temporal > 0) {
+    const UINT margin = 64, cw = w - margin;
+    params->Set("DLSSNR.Width", cw);
+    NVSDK_NGX_Handle* moving = nullptr;
+    r = shim_create(nr_create, gpu.list.Get(), kFeatureNr, params, reinterpret_cast<void**>(&moving));
+    if (!NgxOk(r)) Fail("CreateFeature (temporal)", unsigned(r));
+    gpu.Submit();
+    const UINT gw = UINT(cw * guide_ratio + 0.5f), gh = UINT(h * guide_ratio + 0.5f);
+    const auto texture = [&](UINT tw, DXGI_FORMAT format, D3D12_RESOURCE_STATES state, UINT th = 0) {
+      D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_DEFAULT};
+      D3D12_RESOURCE_DESC d{};
+      d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+      d.Width = tw;
+      d.Height = th ? th : h;
+      d.DepthOrArraySize = 1;
+      d.MipLevels = 1;
+      d.Format = format;
+      d.SampleDesc.Count = 1;
+      d.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+      ComPtr<ID3D12Resource> t;
+      Check(gpu.device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &d, state, nullptr, IID_PPV_ARGS(&t)),
+            "temporal texture");
+      return t;
+    };
+    // A texture filled with one value per pixel, through an upload buffer.
+    std::vector<ComPtr<ID3D12Resource>> keep;
+    const auto filled = [&](DXGI_FORMAT format, UINT texel_bytes, const void* texel) {
+      auto t = texture(gw, format, D3D12_RESOURCE_STATE_COPY_DEST, gh);
+      const D3D12_RESOURCE_DESC d = t->GetDesc();
+      D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+      UINT64 bytes = 0;
+      gpu.device->GetCopyableFootprints(&d, 0, 1, 0, &fp, nullptr, nullptr, &bytes);
+      auto up = Buffer(gpu.device.Get(), bytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+      uint8_t* m = nullptr;
+      Check(up->Map(0, nullptr, reinterpret_cast<void**>(&m)), "map fill");
+      for (UINT y = 0; y < gh; ++y)
+        for (UINT x = 0; x < gw; ++x) std::memcpy(m + fp.Offset + size_t(y) * fp.Footprint.RowPitch + x * texel_bytes, texel, texel_bytes);
+      up->Unmap(0, nullptr);
+      D3D12_TEXTURE_COPY_LOCATION dst{t.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+      D3D12_TEXTURE_COPY_LOCATION src{up.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
+      src.PlacedFootprint = fp;
+      gpu.list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+      gpu.Barrier(t.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+      keep.push_back(up);
+      return t;
+    };
+    // Content moves left by `pan`: the pixel at x came from x + pan, so the vector to the previous
+    // position is +pan pixels (DLSS's convention); the other modes test the alternatives.
+    float mv = 0.f, mv_scale = 1.f;
+    const bool with_guides = guides != L"none";
+    if (guides == L"px") mv = float(pan);
+    else if (guides == L"neg") mv = -float(pan);
+    else if (guides == L"norm") mv = float(pan) / float(cw);
+    else if (guides == L"normneg") mv = -float(pan) / float(cw);
+    else if (guides == L"normscaled") { mv = float(pan) / float(cw); mv_scale = float(cw); }
+    else if (guides == L"gpx") mv = float(pan) * guide_ratio;  // pixels of the guides' own size
+    const HALF mv_texel[2] = {XMConvertFloatToHalf(mv), XMConvertFloatToHalf(0.f)};
+    const float depth_texel = 0.5f;
+    auto mvec = filled(DXGI_FORMAT_R16G16_FLOAT, 4, mv_texel);
+    auto depth = filled(DXGI_FORMAT_R32_FLOAT, 4, &depth_texel);
+    auto in2 = texture(cw, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D12_RESOURCE_STATE_COPY_DEST);
+    auto out2 = texture(cw, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    const D3D12_RESOURCE_DESC od = out2->GetDesc();
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT ofp{};
+    UINT64 obytes = 0;
+    gpu.device->GetCopyableFootprints(&od, 0, 1, 0, &ofp, nullptr, nullptr, &obytes);
+    auto back = Buffer(gpu.device.Get(), obytes, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
+    gpu.Barrier(color.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    gpu.Submit();
+    std::vector<float> prev, cur(size_t(cw) * h);
+    double sum = 0.0;
+    int counted = 0;
+    for (int f = 0; f < temporal; ++f) {
+      const UINT x0 = pan > 0 ? UINT(pan * f) % (margin - UINT(pan)) : 0;
+      if (pan > 0 && f > 0 && x0 < UINT(pan)) prev.clear();  // wrapped: not the same content
+      D3D12_BOX box{x0, 0, 0, x0 + cw, h, 1};
+      D3D12_TEXTURE_COPY_LOCATION dst{in2.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+      D3D12_TEXTURE_COPY_LOCATION src{color.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+      gpu.list->CopyTextureRegion(&dst, 0, 0, 0, &src, &box);
+      gpu.Barrier(in2.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+      params->Set("DLSSNR.Color", in2.Get());
+      params->Set("DLSSNR.Output", out2.Get());
+      params->Set("DLSSNR.MVec", with_guides ? mvec.Get() : nullptr);
+      params->Set("DLSSNR.Depth", with_guides ? depth.Get() : nullptr);
+      params->Set("DLSSNR.Width", cw);
+      params->Set("DLSSNR.Height", h);
+      params->Set("DLSSNR.Reset", f == 0 ? 1 : 0);
+      for (const char* name : {"DLSSNR.Color", "DLSSNR.Output", "DLSSNR.MVec", "DLSSNR.Depth"}) {
+        const bool guide = name[7] == 'M' || name[7] == 'D';
+        char key[96];
+        std::snprintf(key, sizeof(key), "%sSubrectBaseX", name);
+        params->Set(key, 0u);
+        std::snprintf(key, sizeof(key), "%sSubrectBaseY", name);
+        params->Set(key, 0u);
+        std::snprintf(key, sizeof(key), "%sSubrectWidth", name);
+        params->Set(key, guide ? gw : cw);
+        std::snprintf(key, sizeof(key), "%sSubrectHeight", name);
+        params->Set(key, guide ? gh : h);
+      }
+      params->Set("DLSSNR.MVecScaleX", mv_scale);
+      params->Set("DLSSNR.MVecScaleY", mv_scale == 1.f ? 1.f : float(h));
+      r = shim_evaluate(nr_evaluate, gpu.list.Get(), moving, params, nullptr);
+      if (!NgxOk(r)) Fail("EvaluateFeature (temporal)", unsigned(r));
+      gpu.Barrier(in2.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+      gpu.Barrier(out2.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+      D3D12_TEXTURE_COPY_LOCATION osrc{out2.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+      D3D12_TEXTURE_COPY_LOCATION odst{back.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
+      odst.PlacedFootprint = ofp;
+      gpu.list->CopyTextureRegion(&odst, 0, 0, 0, &osrc, nullptr);
+      gpu.Barrier(out2.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+      gpu.Submit();
+      uint8_t* m = nullptr;
+      D3D12_RANGE range{0, SIZE_T(obytes)};
+      Check(back->Map(0, &range, reinterpret_cast<void**>(&m)), "map temporal");
+      for (UINT y = 0; y < h; ++y) {
+        const auto* row = reinterpret_cast<const HALF*>(m + ofp.Offset + size_t(y) * ofp.Footprint.RowPitch);
+        for (UINT x = 0; x < cw; ++x)
+          cur[size_t(y) * cw + x] = 0.2126f * XMConvertHalfToFloat(row[x * 4]) + 0.7152f * XMConvertHalfToFloat(row[x * 4 + 1]) +
+                                    0.0722f * XMConvertHalfToFloat(row[x * 4 + 2]);
+      }
+      back->Unmap(0, nullptr);
+      // The same content: this frame's x against the previous frame's x + pan.
+      if (!prev.empty() && f >= 3) {
+        double d = 0.0;
+        size_t n = 0;
+        for (UINT y = 0; y < h; ++y)
+          for (UINT x = 0; x + UINT(pan) < cw; ++x, ++n) d += std::fabs(double(cur[size_t(y) * cw + x]) - prev[size_t(y) * cw + x + pan]);
+        sum += d / double(n) * 255.0;
+        ++counted;
+      }
+      prev = cur;
+    }
+    std::printf("temporal: pan %d px/frame, guides %ls (mv %.4f, scale %.0f): change between frames %.3f of 255 (%d pairs)\n",
+                pan, guides.c_str(), mv, mv_scale, counted ? sum / counted : -1.0, counted);
+    shim_release(nr_release, moving);
+  }
   return diff > 0.5 ? 0 : 3;
 }
