@@ -289,7 +289,16 @@
             case H::kSwapChain: ui::StatusChip(T(Str::kHostWaitingDlss_h1d), ui::Warning); break;
             case H::kMissingFiles: ui::StatusChip(T(Str::kHostMissingFiles_h1f), ui::Danger); break;
             case H::kFailed: ui::StatusChip(T(Str::kHostFailed_h1g), ui::Danger); break;
-            default: ui::StatusChip(T(Str::kHostWaitingSwapchain_h1h), ui::Warning); break;
+            default:
+              // 1.12.1: the game's swap chain went past Streamline (KCD2 with GITC Uplift).
+              if (const std::string by = vk_host == 0 ? mfgunlock::slhost::OutsideBy() : std::string(); !by.empty()) {
+                char line[768];
+                std::snprintf(line, sizeof(line), T(Str::kHostSwapChainOutside_s9), by.c_str());
+                ui::StatusChip(line, ui::Danger);
+              } else {
+                ui::StatusChip(T(Str::kHostWaitingSwapchain_h1h), ui::Warning);
+              }
+              break;
           }
           ui::Readout("##add_fg_route", T(Str::kRoute_p9), T(Str::kRouteHostedShort_p10), T(Str::kHostStreamlineDesc_h1b));
           // 1.10.1: DLSS-G does not generate on an FP16 (scRGB) HDR swap chain (KCD2's HDR).

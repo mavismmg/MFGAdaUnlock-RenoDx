@@ -1052,7 +1052,7 @@
 /* kDlss5StateRunning_n28 */ "動作中: %s",
 /* kDlss5StateNoRuntime_n29 */ "nvngx_dlssnr.dll が見つかりません。ゲームの exe の横 (またはアドオンの横、MFGUnlock-DLSS5) に置いてください。",
 /* kDlss5StateUnsigned_n30 */ "ランタイムに NVIDIA の署名がありません。使うには「署名のないランタイムを許可」をオンにして再起動してください。",
-/* kDlss5StateNoShim_n31 */ "アドオンが NR のシムを %LOCALAPPDATA%\MFGUnlock に書き込めませんでした。そのフォルダーの権限を確認するか、mfgunlock_nvngx.dll を MFGUnlock-DLSS5 に置いてください。",
+/* kDlss5StateNoShim_n31 */ "アドオンが NR のシムを %LOCALAPPDATA%\\MFGUnlock に書き込めませんでした。そのフォルダーの権限を確認するか、mfgunlock_nvngx.dll を MFGUnlock-DLSS5 に置いてください。",
 /* kDlss5StateInitFailed_n32 */ "ランタイムがこの GPU またはドライバーを拒否しました。",
 /* kDlss5StateFormat_n33 */ "HDR または未対応のバックバッファーです。NR には SDR 画像が必要です。",
 /* kDlss5StateGameFg_n34 */ "ゲーム自身のフレーム生成がオンで、DLSS 5 はゲーム起動後にオンにされました。併用するにはゲームを再起動してください。",
@@ -1123,3 +1123,4 @@
 /* kDlss5Pass1_n99 */ "1",
 /* kDlss5Pass2_n100 */ "2",
 /* kDlss5Pass3_n101 */ "3",
+/* kHostSwapChainOutside_s9 */ "ゲームは MFG Unlock の Streamline を通さずにウィンドウを作成したため、フレーム生成を追加できません。別のモジュールがスワップチェーンの作成を引き受けました: %s。ゲームのフォルダーから取り除き (効果をオフにするだけでは不十分です)、ゲームを再起動してください。",

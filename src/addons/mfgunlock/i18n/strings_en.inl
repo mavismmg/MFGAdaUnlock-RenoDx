@@ -1050,7 +1050,7 @@
 /* kDlss5StateRunning_n28 */ "Running: %s",
 /* kDlss5StateNoRuntime_n29 */ "nvngx_dlssnr.dll not found. Put it beside the game's exe (or the add-on, or in MFGUnlock-DLSS5).",
 /* kDlss5StateUnsigned_n30 */ "The runtime is not signed by NVIDIA. Turn on Allow an unsigned runtime to use it, and restart.",
-/* kDlss5StateNoShim_n31 */ "The add-on could not write its NR shim to %LOCALAPPDATA%\MFGUnlock. Check that folder's permissions, or put mfgunlock_nvngx.dll in MFGUnlock-DLSS5.",
+/* kDlss5StateNoShim_n31 */ "The add-on could not write its NR shim to %LOCALAPPDATA%\\MFGUnlock. Check that folder's permissions, or put mfgunlock_nvngx.dll in MFGUnlock-DLSS5.",
 /* kDlss5StateInitFailed_n32 */ "The runtime refused this GPU or driver.",
 /* kDlss5StateFormat_n33 */ "HDR or an unsupported back buffer: NR needs an SDR image.",
 /* kDlss5StateGameFg_n34 */ "The game's own frame generation is on and DLSS 5 was turned on after the game started: restart the game to use NR with it.",
@@ -1121,3 +1121,4 @@
 /* kDlss5Pass1_n99 */ "1",
 /* kDlss5Pass2_n100 */ "2",
 /* kDlss5Pass3_n101 */ "3",
+/* kHostSwapChainOutside_s9 */ "The game created its window without passing through MFG Unlock's Streamline, so frame generation cannot be added. Another module took the swap chain's creation: %s. Remove it from the game's folder (turning its effect off is not enough) and restart the game.",

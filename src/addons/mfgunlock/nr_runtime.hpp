@@ -609,7 +609,7 @@ class Runtime {
       return false;
     }
     DXGI_FORMAT format{};
-    if (!Prepare(device.Get(), backbuffer, encoding, scale_percent, false, format)) return false;
+    if (!Prepare(device.Get(), backbuffer, encoding, scale_percent, false, format, queue)) return false;
     Frame& f = frames_[frame_index_++ % kFrames];
     if (fence_->GetCompletedValue() < f.fence) {
       fence_->SetEventOnCompletion(f.fence, event_);
@@ -721,7 +721,10 @@ class Runtime {
 
   // The checks and setup both routes share: state, format, encoding, device, textures.
   bool Prepare(ID3D12Device* device, ID3D12Resource* target, Encoding encoding, int scale_percent, bool after_upscale,
-               DXGI_FORMAT& format) {
+               DXGI_FORMAT& format, ID3D12CommandQueue* queue = nullptr) {
+    // Whether the frames so far were recorded into the game's own lists (after the upscaler, before frame
+    // generation): MFG Unlock's fence does not see those.
+    const bool recorded_in_game_lists = route_after_upscale_;
     const State s = state();
     if (s == State::kNoRuntime || s == State::kUnsigned || s == State::kNoShim || s == State::kInitFailed ||
         s == State::kFailed)
@@ -770,8 +773,23 @@ class Runtime {
     }
     // A device of another kind (ReShade's wrapper or the native one behind it): the runtime starts again
     // on it, since lists, heaps and pipelines of one are not used with the other.
+    // 1.12.1: at most one such restart every few seconds. CONTROL Resonant (game's DLSS-G with XeMFG DLSS-G,
+    // 2026-11-24) turned its frame generation off and on in menus: NR went back and forth between the game's
+    // Present and the frame generation's list, restarting four times in six seconds, and the GPU hung right
+    // after two restarts 2 s apart. Within the window the other route's frames go without NR.
     if (device_ && device != device_.Get()) {
+      const uint64_t now = GetTickCount64();
+      if (switched_tick_ != 0 && now - switched_tick_ < kSwitchHoldMs) {
+        if (!switch_held_logged_) {
+          switch_held_logged_ = true;
+          Log("the route changed again within a few seconds: NR stays on its device a little longer");
+        }
+        return false;
+      }
+      switched_tick_ = now;
+      switch_held_logged_ = false;
       Log("another device object (the route changed): NR starts again on it");
+      if (recorded_in_game_lists) DrainGameWork(device, queue);
       Teardown();
     }
     if (!device_ && !Start(device)) return false;
@@ -1153,6 +1171,24 @@ class Runtime {
       }
   }
 
+  // Before a restart that follows frames recorded into the game's lists: those lists may still be queued on
+  // the GPU with NR's feature and textures in them. The game's queue at hand (the Present route) is waited
+  // for; frame generation's other queues get a few frames' time.
+  static void DrainGameWork(ID3D12Device* device, ID3D12CommandQueue* queue) {
+    if (queue != nullptr && device != nullptr) {
+      ComPtr<ID3D12Fence> fence;
+      if (SUCCEEDED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence))) &&
+          SUCCEEDED(queue->Signal(fence.Get(), 1)) && fence->GetCompletedValue() < 1) {
+        const HANDLE done = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        if (done != nullptr) {
+          if (SUCCEEDED(fence->SetEventOnCompletion(1, done))) WaitForSingleObject(done, 1000);
+          CloseHandle(done);
+        }
+      }
+    }
+    Sleep(50);
+  }
+
   // Everything made on the device, released, so the runtime can start again on another one.
   void Teardown() {
     if (fence_ && fence_value_ && fence_->GetCompletedValue() < fence_value_) {
@@ -1304,8 +1340,26 @@ class Runtime {
     release_fn_ = GetProcAddress(nr, "NVSDK_NGX_D3D12_ReleaseFeature");
     shutdown_ = reinterpret_cast<ShimShutdown>(GetProcAddress(shim, "MfgNr_ShutdownDevice"));
     shutdown_fn_ = GetProcAddress(nr, "NVSDK_NGX_D3D12_Shutdown1");
-    if (!init || !create_ || !evaluate_ || !release_ || !init_fn || !create_fn_ || !evaluate_fn_ || !release_fn_)
+    if (!init || !create_ || !evaluate_ || !release_ || !init_fn || !create_fn_ || !evaluate_fn_ || !release_fn_) {
+      // 1.12.1: which ones (Once Human, 2026-11-24: an unsigned nvngx_dlssnr.dll, "missing exports" alone).
+      std::string missing;
+      const auto add = [&](const void* fn, const char* name) {
+        if (fn == nullptr) missing += (missing.empty() ? "" : ", ") + std::string(name);
+      };
+      add(reinterpret_cast<const void*>(init), "mfgunlock_nvngx.dll!MfgNr_Init");
+      add(reinterpret_cast<const void*>(create_), "mfgunlock_nvngx.dll!MfgNr_Create");
+      add(reinterpret_cast<const void*>(evaluate_), "mfgunlock_nvngx.dll!MfgNr_Evaluate");
+      add(reinterpret_cast<const void*>(release_), "mfgunlock_nvngx.dll!MfgNr_Release");
+      add(init_fn, "nvngx_dlssnr.dll!NVSDK_NGX_D3D12_Init_Ext");
+      add(create_fn_, "nvngx_dlssnr.dll!NVSDK_NGX_D3D12_CreateFeature");
+      add(evaluate_fn_, "nvngx_dlssnr.dll!NVSDK_NGX_D3D12_EvaluateFeature");
+      add(release_fn_, "nvngx_dlssnr.dll!NVSDK_NGX_D3D12_ReleaseFeature");
+      Log("missing exports: " + missing +
+          (init_fn == nullptr || create_fn_ == nullptr ? " (this nvngx_dlssnr.dll is not NVIDIA's NR runtime, or of "
+                                                         "another kind; use NVIDIA's own file)"
+                                                       : ""));
       return Fail("missing exports");
+    }
     wchar_t temp[MAX_PATH]{};
     GetTempPathW(MAX_PATH, temp);
     const int r = init(init_fn, 0x1000000ull, temp, device, 0x15, nullptr);
@@ -1772,6 +1826,10 @@ class Runtime {
   ComPtr<ID3D12Resource> meter_read_;
   float rate_ = 1.f;
   bool created_inverted_ = false, route_after_upscale_ = false;
+  // The last restart on another device object, and whether the hold after it was logged (Prepare).
+  static constexpr uint64_t kSwitchHoldMs = 5000;
+  uint64_t switched_tick_ = 0;
+  bool switch_held_logged_ = false;
   std::mutex lock_;
   UINT parity_ = 0;
   int stability_ = 60;

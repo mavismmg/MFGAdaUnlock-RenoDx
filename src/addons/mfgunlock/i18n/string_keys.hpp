@@ -1126,6 +1126,7 @@ enum class Str : unsigned {
   kDlss5Pass1_n99,
   kDlss5Pass2_n100,
   kDlss5Pass3_n101,
+  kHostSwapChainOutside_s9,
   kCount
 };
 }  // namespace mfgunlock::i18n

@@ -1052,7 +1052,7 @@
 /* kDlss5StateRunning_n28 */ "실행 중: %s",
 /* kDlss5StateNoRuntime_n29 */ "nvngx_dlssnr.dll을 찾을 수 없습니다. 게임 exe 옆(또는 애드온 옆, MFGUnlock-DLSS5)에 두세요.",
 /* kDlss5StateUnsigned_n30 */ "런타임에 NVIDIA 서명이 없습니다. 사용하려면 서명되지 않은 런타임 허용을 켜고 재시작하세요.",
-/* kDlss5StateNoShim_n31 */ "애드온이 NR 심을 %LOCALAPPDATA%\MFGUnlock에 쓰지 못했습니다. 그 폴더의 권한을 확인하거나 mfgunlock_nvngx.dll을 MFGUnlock-DLSS5에 두세요.",
+/* kDlss5StateNoShim_n31 */ "애드온이 NR 심을 %LOCALAPPDATA%\\MFGUnlock에 쓰지 못했습니다. 그 폴더의 권한을 확인하거나 mfgunlock_nvngx.dll을 MFGUnlock-DLSS5에 두세요.",
 /* kDlss5StateInitFailed_n32 */ "런타임이 이 GPU 또는 드라이버를 거부했습니다.",
 /* kDlss5StateFormat_n33 */ "HDR 또는 지원되지 않는 백 버퍼입니다. NR에는 SDR 이미지가 필요합니다.",
 /* kDlss5StateGameFg_n34 */ "게임 자체 프레임 생성이 켜져 있고 DLSS 5는 게임 시작 후에 켜졌습니다. 함께 사용하려면 게임을 재시작하세요.",
@@ -1123,3 +1123,4 @@
 /* kDlss5Pass1_n99 */ "1",
 /* kDlss5Pass2_n100 */ "2",
 /* kDlss5Pass3_n101 */ "3",
+/* kHostSwapChainOutside_s9 */ "게임이 MFG Unlock의 Streamline을 거치지 않고 창을 만들었으므로 프레임 생성을 추가할 수 없습니다. 다른 모듈이 스왑 체인 생성을 가져갔습니다: %s. 게임 폴더에서 제거하고(효과를 끄는 것만으로는 부족합니다) 게임을 다시 시작하세요.",

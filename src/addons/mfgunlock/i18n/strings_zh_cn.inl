@@ -1052,7 +1052,7 @@
 /* kDlss5StateRunning_n28 */ "运行中：%s",
 /* kDlss5StateNoRuntime_n29 */ "未找到 nvngx_dlssnr.dll。请将其放在游戏 exe 旁（或插件旁、MFGUnlock-DLSS5 中）。",
 /* kDlss5StateUnsigned_n30 */ "运行时没有 NVIDIA 签名。要使用它，请开启“允许未签名的运行时”并重启。",
-/* kDlss5StateNoShim_n31 */ "插件无法将 NR 垫片写入 %LOCALAPPDATA%\MFGUnlock。请检查该文件夹的权限，或将 mfgunlock_nvngx.dll 放入 MFGUnlock-DLSS5。",
+/* kDlss5StateNoShim_n31 */ "插件无法将 NR 垫片写入 %LOCALAPPDATA%\\MFGUnlock。请检查该文件夹的权限，或将 mfgunlock_nvngx.dll 放入 MFGUnlock-DLSS5。",
 /* kDlss5StateInitFailed_n32 */ "运行时拒绝了此 GPU 或驱动。",
 /* kDlss5StateFormat_n33 */ "HDR 或不支持的后台缓冲区：NR 需要 SDR 画面。",
 /* kDlss5StateGameFg_n34 */ "游戏自身的帧生成已开启，且 DLSS 5 是在游戏启动后开启的：请重启游戏以同时使用 NR。",
@@ -1123,3 +1123,4 @@
 /* kDlss5Pass1_n99 */ "1",
 /* kDlss5Pass2_n100 */ "2",
 /* kDlss5Pass3_n101 */ "3",
+/* kHostSwapChainOutside_s9 */ "游戏在创建窗口时没有经过 MFG Unlock 的 Streamline，因此无法添加帧生成。另一个模块接管了交换链的创建：%s。请将它从游戏文件夹中移除（仅关闭其效果不够），然后重启游戏。",

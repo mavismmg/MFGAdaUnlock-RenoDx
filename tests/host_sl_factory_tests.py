@@ -62,6 +62,9 @@ def run(sl_factory):
             problems.append('a second Streamline swap chain (sl.log)')
         if sl_factory and 'created by another addon' not in log:
             problems.append('the swap chain made on Streamline\'s factory was not adopted')
+        # 1.12.1: the bypass notice (KCD2 with GITC Uplift) must not fire when Streamline got the swap chain.
+        if 'without passing through MFG Unlock\'s Streamline' in log:
+            problems.append('the swap chain was reported as created outside Streamline')
         for p in problems:
             print(f'{name}: FAIL {p}')
         return not problems

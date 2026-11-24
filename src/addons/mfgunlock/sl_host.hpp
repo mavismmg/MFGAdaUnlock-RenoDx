@@ -144,6 +144,33 @@ inline std::string Report() {
 // Our own Streamline is up: the parts of the addon that look for sl.interposer.dll see it.
 inline bool Hosting() { return Current() >= State::kReady; }
 
+// 1.12.1: ReShade saw the game's D3D12 swap chain while Streamline still waited for it: the creation
+// did not pass through CreateForHwnd/CreateLegacy (KCD2 with GITC Uplift, 2026-11-23). The state stays
+// kReady (a later swap chain may still come through); the panel and the report name who took it.
+namespace internal {
+inline std::string outside_by;  // under report_lock
+}
+inline void OnGameSwapchain(std::string (*takers)()) {
+  using namespace internal;
+  if (Current() != State::kReady || inside_creation || inside_streamline_creation) return;
+  static std::atomic_bool once{false};
+  if (once.exchange(true)) return;
+  std::string who = takers ? takers() : std::string();
+  if (who.empty()) who = "not identified";
+  {
+    std::lock_guard guard(report_lock);
+    outside_by = who;
+  }
+  SetReport("the game created its swap chain without passing through MFG Unlock's Streamline (other modules in "
+            "that path: " + who + "); frame generation cannot be added this session");
+}
+// Who took the swap chain's creation, while it matters (empty otherwise).
+inline std::string OutsideBy() {
+  if (Current() != State::kReady) return {};
+  std::lock_guard guard(internal::report_lock);
+  return internal::outside_by;
+}
+
 // ------------------------------------------------------------------ swap chain
 
 namespace internal {

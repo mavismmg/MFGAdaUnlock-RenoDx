@@ -894,6 +894,10 @@ void OnFinishPresent(reshade::api::command_queue* /*queue*/,
 void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
   mfgunlock::sessionexit::OnInitSwapchain(resize);  // 1.11.0 (S1)
   mfgunlock::scguard::OnInitSwapchain(swapchain);  // 1.10.1 (plan item 7)
+  // 1.12.1: Add frame generation's Streamline bypassed (sl_host.hpp, OnGameSwapchain).
+  if (!resize && swapchain != nullptr && mfgunlock::slhost::Wanted() && swapchain->get_device() != nullptr &&
+      swapchain->get_device()->get_api() == reshade::api::device_api::d3d12)
+    mfgunlock::slhost::OnGameSwapchain(&mfgunlock::foreignhooks::SwapChainTakers);
   bool primary_transition = false;
   if (swapchain != nullptr) {
     if (auto* device = swapchain->get_device(); device != nullptr) {

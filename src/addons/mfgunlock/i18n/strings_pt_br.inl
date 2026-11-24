@@ -1052,7 +1052,7 @@
 /* kDlss5StateRunning_n28 */ "Rodando: %s",
 /* kDlss5StateNoRuntime_n29 */ "nvngx_dlssnr.dll não encontrado. Coloque ao lado do exe do jogo (ou do add-on, ou em MFGUnlock-DLSS5).",
 /* kDlss5StateUnsigned_n30 */ "O runtime não é assinado pela NVIDIA. Ligue Permitir um runtime sem assinatura para usá-lo e reinicie.",
-/* kDlss5StateNoShim_n31 */ "O add-on não conseguiu gravar o shim do NR em %LOCALAPPDATA%\MFGUnlock. Verifique as permissões dessa pasta, ou coloque mfgunlock_nvngx.dll em MFGUnlock-DLSS5.",
+/* kDlss5StateNoShim_n31 */ "O add-on não conseguiu gravar o shim do NR em %LOCALAPPDATA%\\MFGUnlock. Verifique as permissões dessa pasta, ou coloque mfgunlock_nvngx.dll em MFGUnlock-DLSS5.",
 /* kDlss5StateInitFailed_n32 */ "O runtime recusou esta GPU ou este driver.",
 /* kDlss5StateFormat_n33 */ "HDR ou um back buffer não suportado: o NR precisa de uma imagem SDR.",
 /* kDlss5StateGameFg_n34 */ "A geração de quadros do próprio jogo está ligada e o DLSS 5 foi ligado depois de o jogo abrir: reinicie o jogo para usar o NR com ela.",
@@ -1123,3 +1123,4 @@
 /* kDlss5Pass1_n99 */ "1",
 /* kDlss5Pass2_n100 */ "2",
 /* kDlss5Pass3_n101 */ "3",
+/* kHostSwapChainOutside_s9 */ "O jogo criou a janela sem passar pelo Streamline do MFG Unlock, então a geração de quadros não pode ser adicionada. Outro módulo assumiu a criação da swap chain: %s. Tire-o da pasta do jogo (desligar o efeito dele não basta) e reinicie o jogo.",
