@@ -224,6 +224,10 @@ int wmain(int argc, wchar_t** argv) {
   float guide_ratio = 1.f;  // the guides' size against the color's (a game renders below its output)
   // 1.12.1: a static "HUD" box over the panning image (--hud), its vectors zeroed or not (--hud-mv 0|1).
   bool hud = false, hud_mv = true;
+  // 1.12.1: DLSSNR.ControlMask (left half 1, right half 0) with DLSSNR.MaskBlendMode N (--control-mask N; -1 off),
+  // and --mask-value V for the left half (0..1).
+  int control_mask = -1;
+  float mask_value = 1.f;
   for (int i = 1; i < argc; ++i) {
     const std::wstring a = argv[i];
     const auto next = [&]() -> std::wstring { return i + 1 < argc ? argv[++i] : L""; };
@@ -251,6 +255,8 @@ int wmain(int argc, wchar_t** argv) {
     else if (a == L"--guides") guides = next();
     else if (a == L"--guide-ratio") guide_ratio = float(_wtof(next().c_str()));
     else if (a == L"--hud") hud = true;
+    else if (a == L"--control-mask") control_mask = _wtoi(next().c_str());
+    else if (a == L"--mask-value") mask_value = float(_wtof(next().c_str()));
     else if (a == L"--hud-mv") hud_mv = _wtoi(next().c_str()) != 0;
   }
   if (snippet_path.empty() || image_path.empty() || out_path.empty()) {
@@ -369,6 +375,7 @@ int wmain(int argc, wchar_t** argv) {
   params->Set("DLSSNR.UICorrection", 0u);
   params->Set("DLSSNR.ScalingRatio", scale);
   params->Set("DLSSNR.DepthInverted", 0);
+  if (control_mask >= 0) params->Set("DLSSNR.MaskBlendMode", unsigned(control_mask));
   // Round trip: the parameter block's methods are the ones this header declares.
   unsigned check_width = 0;
   float check_intensity = -1.f;
@@ -407,6 +414,38 @@ int wmain(int argc, wchar_t** argv) {
   gpu.list->CopyTextureRegion(&tex, 0, 0, 0, &buf, nullptr);
   gpu.Barrier(color.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
   gpu.Submit();
+  // The control mask: R8, the left half `mask_value`, the right half 0.
+  ComPtr<ID3D12Resource> mask, mask_upload;
+  if (control_mask >= 0) {
+    D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC d{};
+    d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    d.Width = w;
+    d.Height = h;
+    d.DepthOrArraySize = 1;
+    d.MipLevels = 1;
+    d.Format = DXGI_FORMAT_R8_UNORM;
+    d.SampleDesc.Count = 1;
+    Check(gpu.device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                              IID_PPV_ARGS(&mask)),
+          "mask");
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT mfp{};
+    UINT64 mbytes = 0;
+    gpu.device->GetCopyableFootprints(&d, 0, 1, 0, &mfp, nullptr, nullptr, &mbytes);
+    mask_upload = Buffer(gpu.device.Get(), mbytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+    uint8_t* m = nullptr;
+    Check(mask_upload->Map(0, nullptr, reinterpret_cast<void**>(&m)), "map mask");
+    const uint8_t on = uint8_t(std::lround(mask_value * 255.f));
+    for (UINT y = 0; y < h; ++y)
+      for (UINT x = 0; x < w; ++x) m[mfp.Offset + size_t(y) * mfp.Footprint.RowPitch + x] = x < w / 2 ? on : 0;
+    mask_upload->Unmap(0, nullptr);
+    D3D12_TEXTURE_COPY_LOCATION mdst{mask.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+    D3D12_TEXTURE_COPY_LOCATION msrc{mask_upload.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
+    msrc.PlacedFootprint = mfp;
+    gpu.list->CopyTextureRegion(&mdst, 0, 0, 0, &msrc, nullptr);
+    gpu.Barrier(mask.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    gpu.Submit();
+  }
 
   // GPU time of each evaluate, from timestamps around it.
   ComPtr<ID3D12QueryHeap> queries;
@@ -437,6 +476,14 @@ int wmain(int argc, wchar_t** argv) {
     }
     params->Set("DLSSNR.MVecScaleX", 1.f);
     params->Set("DLSSNR.MVecScaleY", 1.f);
+    if (control_mask >= 0) {
+      params->Set("DLSSNR.ControlMask", mask.Get());
+      params->Set("DLSSNR.MaskBlendMode", unsigned(control_mask));
+      params->Set("DLSSNR.ControlMaskSubrectBaseX", 0u);
+      params->Set("DLSSNR.ControlMaskSubrectBaseY", 0u);
+      params->Set("DLSSNR.ControlMaskSubrectWidth", w);
+      params->Set("DLSSNR.ControlMaskSubrectHeight", h);
+    }
     const auto start = std::chrono::steady_clock::now();
     gpu.list->EndQuery(queries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
     r = shim_evaluate(nr_evaluate, gpu.list.Get(), feature, params, nullptr);
@@ -474,7 +521,7 @@ int wmain(int argc, wchar_t** argv) {
   gpu.Submit();
 
   Image result{w, h, std::vector<uint8_t>(size_t(w) * h * 4)};
-  double diff = 0.0;
+  double diff = 0.0, diff_left = 0.0, diff_right = 0.0;
   {
     uint8_t* mapped = nullptr;
     D3D12_RANGE range{0, SIZE_T(total)};
@@ -487,7 +534,11 @@ int wmain(int argc, wchar_t** argv) {
         const uint8_t b = uint8_t(std::lround(v * 255.f));
         const size_t i = size_t(y) * w * 4 + x;
         result.rgba[i] = (x % 4 == 3) ? 255 : b;
-        if (x % 4 != 3) diff += std::fabs(double(b) - double(input.rgba[i]));
+        if (x % 4 != 3) {
+          const double d = std::fabs(double(b) - double(input.rgba[i]));
+          diff += d;
+          (x / 4 < w / 2 ? diff_left : diff_right) += d;
+        }
       }
     }
     readback->Unmap(0, nullptr);
@@ -502,6 +553,8 @@ int wmain(int argc, wchar_t** argv) {
     SaveImage(diff_path, amplified);
   }
   std::printf("output: %ls\nmean absolute change: %.3f of 255\n", out_path.c_str(), diff);
+  std::printf("mean absolute change: left half %.3f, right half %.3f of 255\n", diff_left / (double(w / 2) * h * 3),
+              diff_right / (double(w - w / 2) * h * 3));
   shim_release(nr_release, feature);
   if (temporal > 0) {
     const UINT margin = 64, cw = w - margin;

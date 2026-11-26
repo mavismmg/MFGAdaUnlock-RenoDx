@@ -1129,3 +1129,5 @@
 /* kDlss5BudgetDesc_n104 */ "프레임당 NR의 GPU 시간(밀리초)입니다. NR의 해상도가 이를 따릅니다. NR 비용이 크면 낮아지고, 작으면 해상도 설정값까지 다시 올라갑니다. 0 = 끔(해상도 설정값 그대로 사용).",
 /* kDlss5StateNotNr_n105 */ "찾은 nvngx_dlssnr.dll은 NVIDIA의 뉴럴 렌더링 런타임이 아닙니다. NR에 필요한 함수가 없습니다(아래 목록). NVIDIA의 파일을 사용하세요.",
 /* kDlss5AllowThisFile_n106 */ "이 파일 허용",
+/* kDlss5Silhouettes_n107 */ "실루엣 보호 (%)",
+/* kDlss5SilhouettesDesc_n108 */ "뒤에 있는 것에 대해 움직이는 것(장면 앞의 캐릭터 등)의 가장자리에서 NR의 변화를 줄입니다. 그곳에서는 NR의 기록이 잔상이나 후광을 남길 수 있습니다. 게임의 모션 벡터와 깊이가 필요합니다(업스케일러 다음, 프레임 생성 전, 또는 Streamline 태그). 0 = 끔.",

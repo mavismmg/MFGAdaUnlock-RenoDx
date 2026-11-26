@@ -174,9 +174,17 @@ Texture2D<float4> motion : register(t10);        // estimated motion, half the r
 Texture2D<float4> taa_motion : register(t11);    // the game's TAA motion (phase F)
 Texture2D<float4> hudless : register(t12);       // 1.12.1 (N2): the game's image before the HUD
 Texture2D<float4> game_mv : register(t13);       // 1.12.1 (N2): the game's motion vectors
+Texture2D<float4> game_depth : register(t14);    // 1.12.1 (silhouettes): the game's depth
+Texture2D<float4> protect : register(t15);       // 1.12.1 (silhouettes): 1 where NR's change gives way
 RWTexture2D<float4> written : register(u0);  // the compute pass's output
 SamplerState linear_clamp : register(s0);
-cbuffer Encoding : register(b0) { uint mode; float paper; float keep; float rate; uint split; };
+cbuffer Encoding : register(b0) {
+  uint mode; float paper; float keep; float rate; uint split;
+  // 1.12.1 (silhouettes): the game's vectors' and depth's rectangles in their textures, the vectors' scale
+  // to their texture's pixels, whether depth is inverted, and how much NR's change gives way at silhouettes.
+  uint mv_x; uint mv_y; uint mv_w; uint mv_h; uint depth_x; uint depth_y; uint depth_w; uint depth_h;
+  float mv_scale_x; float mv_scale_y; uint depth_inv; float silhouette;
+};
 struct V { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
 V vs(uint id : SV_VertexID) {
   V o; o.uv = float2((id << 1) & 2, id & 2); o.pos = float4(o.uv * float2(2, -2) + float2(-1, 1), 0, 1); return o;
@@ -338,7 +346,9 @@ float Sad(float2 p, float2 v, float spread, float2 inv) {
   float luma = Luma(reduced.Load(int3(p, 0)).rgb);
   float4 before = history.Load(int3(p, 0));
   float k = keep * saturate(1.0 - abs(luma - before.a) * 12.0);
-  written[id.xy] = float4(lerp(now, clamp(before.rgb, lo, hi), k), luma);
+  // 1.12.1 (silhouettes): less of NR's change where its history may hold another object (t15, 0 when off).
+  const float give = 1.0 - silhouette * protect.Load(int3(p, 0)).r;
+  written[id.xy] = float4(lerp(now, clamp(before.rgb, lo, hi), k) * give, luma);
 }
 // 1.12.1 (N2): where the frame differs from the image before the HUD. A HUD does not move with the camera,
 // but the game's vectors there do: NR then pulled its history of the HUD from the scene behind (measured
@@ -363,6 +373,51 @@ bool Hud(float3 a, float3 b) {
       hud = hud || Hud(full.SampleLevel(linear_clamp, q, 0).rgb, hudless.SampleLevel(linear_clamp, q, 0).rgb);
     }
   written[id.xy] = float4(hud ? float2(0, 0) : game_mv.Load(int3(id.xy, 0)).xy, 0, 0);
+}
+// 1.12.1 (silhouettes): where NR's history may hold another object, at NR's resolution. NR reprojects its
+// history with the game's vectors; at the edge of something moving against what is behind it (a character
+// against the scene), the history it pulls is of the other one: a trail or a halo. Marked:
+// - a depth edge (12% apart, either way of depth) with motion that differs across it by over half a pixel;
+// - a pixel whose vector leads into motion unlike its own (what it reprojects to moved otherwise: uncovered).
+float2 GameMv(float2 uv) {
+  const float2 t = float2(mv_x, mv_y) + uv * float2(mv_w, mv_h);
+  uint w, h;
+  game_mv.GetDimensions(w, h);
+  return game_mv.SampleLevel(linear_clamp, t / float2(w, h), 0).xy * float2(mv_scale_x, mv_scale_y);
+}
+float GameNear(float2 uv) {  // larger is nearer, about 1/distance either way of depth
+  const float2 t = float2(depth_x, depth_y) + uv * float2(depth_w, depth_h);
+  uint w, h;
+  game_depth.GetDimensions(w, h);
+  const float d = game_depth.SampleLevel(linear_clamp, t / float2(w, h), 0).r;
+  return depth_inv != 0 ? d : 1.0 - d;
+}
+[numthreads(8, 8, 1)] void silhouette_cs(uint3 id : SV_DispatchThreadID) {
+  uint w, h;
+  written.GetDimensions(w, h);
+  if (id.x >= w || id.y >= h) return;
+  const float2 uv = (float2(id.xy) + 0.5) / float2(w, h);
+  const float2 to_screen = 1.0 / float2(mv_w, mv_h);           // the vectors' pixels -> UV
+  const float2 px = float2(w, h) / float2(mv_w, mv_h);          // the vectors' pixels -> NR's pixels
+  const float2 step = max(1.0, float(mv_w) / float(w)) / float2(mv_w, mv_h);
+  const float2 v = GameMv(uv);
+  const float n = GameNear(uv);
+  float mark = 0;
+  [unroll] for (int y = -1; y <= 1; ++y)
+    [unroll] for (int x = -1; x <= 1; ++x) {
+      if (x == 0 && y == 0) continue;
+      const float2 q = uv + float2(x, y) * step;
+      const float m = GameNear(q);
+      const float edge = abs(n - m) / max(max(n, m), 1e-6);
+      const float apart = length((GameMv(q) - v) * px);
+      mark = max(mark, saturate((edge - 0.12) * 20.0) * saturate((apart - 0.5) * 0.5));
+    }
+  [unroll] for (int i = 1; i <= 2; ++i) {
+    const float2 back = uv + v * to_screen * (0.5 * i);
+    const float apart = length((GameMv(back) - v) * px);
+    mark = max(mark, saturate((apart - 1.0) / 3.0));
+  }
+  written[id.xy] = mark;
 }
 // 1.12.1 (N2, N3), over a 32x18 grid: r the mean luma change of the reduced image since the last frame (a
 // camera cut), g the share of the screen the HUD covers.
@@ -873,6 +928,8 @@ class Runtime {
   bool taa_proved() const { return taa_proved_; }
   // VRAM reserve in MB that NR keeps free (0: never pause for memory).
   void VramMargin(int mb) { vram_margin_mb_ = mb < 0 ? 0 : mb; }
+  // 1.12.1: how much NR's change gives way at silhouettes, 0..100 ([DLSS5] Silhouettes).
+  void Silhouettes(int percent) { silhouette_ = percent < 0 ? 0 : (percent > 100 ? 100 : percent); }
   // Stand aside while another DLSS 5 mod runs NR (Off: run anyway).
   void Coexist(bool stand_aside) { stand_aside_ = stand_aside; }
   const std::wstring& foreign() const { return foreign_; }
@@ -1153,6 +1210,18 @@ class Runtime {
     const Guides* given = game_now ? &game_.g : g;
     const bool mask_inputs = look.automask && given != nullptr && given->mvec != nullptr && given->hudless != nullptr &&
                              HudlessFits(given->hudless, target);
+    // 1.12.1 (silhouettes): with the game's vectors and depth (not the image's estimate), when asked for.
+    silhouette_on_ = silhouette_ > 0 && given != nullptr && given->mvec != nullptr && given->depth != nullptr &&
+                     given->mv_w > 0 && given->depth_w > 0 && DepthRead(given->depth->GetDesc().Format) != DXGI_FORMAT_UNKNOWN &&
+                     VectorFormat(given->mvec->GetDesc().Format) != DXGI_FORMAT_UNKNOWN && Protection();
+    if (silhouette_on_) {
+      silhouette_guides_ = *given;
+      if (!silhouette_logged_) {
+        silhouette_logged_ = true;
+        Log("silhouettes: NR's change gives way where its history may hold another object (" +
+            std::to_string(silhouette_) + "%)");
+      }
+    }
     WriteTable(format, taa_now ? &taa_ : nullptr, mask_inputs ? given : nullptr);
 
     // Compute passes only, as the upscaler itself: a game restores its compute state after it, not
@@ -1254,6 +1323,11 @@ class Runtime {
     // 1c. 1.12.1 (N3, N2): a camera cut where the game gives no reset (motion from the image or its TAA), and
     // how much of the screen the HUD covers; read three frames later.
     Stats(l, estimate || use_taa, mask_inputs);
+    if (silhouette_on_) {  // 1.12.1 (silhouettes)
+      Barrier(l, protect_.Get(), kRead, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+      Dispatch(l, pso_silhouette_cs_.Get(), kUavProtect, low_w_, low_h_, 8);
+      Barrier(l, protect_.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kRead);
+    }
     // 1d. 1.12.1 (N2): the game's vectors, zero on the HUD, unless the image "before the HUD" differs from the
     // frame over much of the screen (an effect after it: RenoDX, a filter).
     Guides masked_guides;
@@ -1449,6 +1523,43 @@ class Runtime {
     device_->CreateUnorderedAccessView(masked_mv_.Get(), nullptr, &uv, Cpu(kUavMasked));
     return true;
   }
+  // 1.12.1 (silhouettes): a format a shader reads the game's depth with (UNKNOWN: not one it can).
+  static DXGI_FORMAT DepthRead(DXGI_FORMAT f) {
+    switch (f) {
+      case DXGI_FORMAT_D32_FLOAT: case DXGI_FORMAT_R32_TYPELESS: case DXGI_FORMAT_R32_FLOAT: return DXGI_FORMAT_R32_FLOAT;
+      case DXGI_FORMAT_D24_UNORM_S8_UINT: case DXGI_FORMAT_R24G8_TYPELESS: return DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+      case DXGI_FORMAT_D32_FLOAT_S8X24_UINT: case DXGI_FORMAT_R32G8X24_TYPELESS: return DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+      case DXGI_FORMAT_D16_UNORM: case DXGI_FORMAT_R16_TYPELESS: case DXGI_FORMAT_R16_UNORM: return DXGI_FORMAT_R16_UNORM;
+      case DXGI_FORMAT_R16_FLOAT: return DXGI_FORMAT_R16_FLOAT;
+      default: return DXGI_FORMAT_UNKNOWN;
+    }
+  }
+  // The protection texture at NR's size (R8, read state between frames).
+  bool Protection() {
+    if (protect_) {
+      const D3D12_RESOURCE_DESC d = protect_->GetDesc();
+      if (d.Width == low_w_ && d.Height == low_h_) return true;
+      protect_old_ = std::move(protect_);  // lists of earlier frames may still read it
+    }
+    D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC d{};
+    d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    d.Width = low_w_;
+    d.Height = low_h_;
+    d.DepthOrArraySize = 1;
+    d.MipLevels = 1;
+    d.Format = DXGI_FORMAT_R8_UNORM;
+    d.SampleDesc.Count = 1;
+    d.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    if (FAILED(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &d, kRead, nullptr, IID_PPV_ARGS(&protect_))))
+      return false;
+    protect_->SetName(L"MFG Unlock DLSS 5 silhouette protection");
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uv{};
+    uv.Format = DXGI_FORMAT_R8_UNORM;
+    uv.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    device_->CreateUnorderedAccessView(protect_.Get(), nullptr, &uv, Cpu(kUavProtect));
+    return true;
+  }
   // 1.12.1 (N2, N3): the statistics of three frames ago, then this frame's, into a ring of four readbacks.
   // `cut_route`: this frame's motion is the image's or the TAA's (no reset of the game's); `hud`: the image
   // before the HUD is bound.
@@ -1529,6 +1640,8 @@ class Runtime {
     cs_luma_.Reset(); cs_coarse_.Reset(); cs_fine_.Reset(); cs_flat_.Reset(); cs_calibrate_.Reset();
     calib_.Reset(); calib_read_.Reset(); calib_pending_ = false;
     stats_.Reset(); stats_read_.Reset(); masked_mv_.Reset(); masked_old_.Reset();  // 1.12.1 (N2, N3)
+    protect_.Reset(); protect_old_.Reset(); cs_silhouette_.Reset(); pso_silhouette_cs_.Reset();
+    silhouette_on_ = false;
     cs_hudmask_.Reset(); cs_stats_.Reset(); pso_hudmask_cs_.Reset(); pso_stats_cs_.Reset();
     for (auto& w : stats_written_) w = 0;
     hud_mask_ok_ = false;
@@ -1766,7 +1879,7 @@ class Runtime {
         !build("luma_cs", "cs_5_0", cs_luma_) || !build("coarse_cs", "cs_5_0", cs_coarse_) ||
         !build("fine_cs", "cs_5_0", cs_fine_) || !build("flat_cs", "cs_5_0", cs_flat_) ||
         !build("calibrate_cs", "cs_5_0", cs_calibrate_) || !build("hudmask_cs", "cs_5_0", cs_hudmask_) ||
-        !build("stats_cs", "cs_5_0", cs_stats_))
+        !build("stats_cs", "cs_5_0", cs_stats_) || !build("silhouette_cs", "cs_5_0", cs_silhouette_))
       return Fail("shader compilation");
     D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kTable, 0, 0, 0};
     D3D12_DESCRIPTOR_RANGE uav_range{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 0};
@@ -1775,7 +1888,7 @@ class Runtime {
     table[0].DescriptorTable = {1, &range};
     table[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     table[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    table[1].Constants = {0, 0, 5};
+    table[1].Constants = {0, 0, kConstants};
     table[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     table[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     table[2].DescriptorTable = {1, &uav_range};
@@ -1814,8 +1927,10 @@ class Runtime {
     pso_calibrate_cs_ = compute(cs_calibrate_.Get());
     pso_hudmask_cs_ = compute(cs_hudmask_.Get());
     pso_stats_cs_ = compute(cs_stats_.Get());
+    pso_silhouette_cs_ = compute(cs_silhouette_.Get());
     if (!pso_reduce_cs_ || !pso_stabilize_cs_ || !pso_meter_cs_ || !pso_compose_cs_ || !pso_luma_cs_ || !pso_coarse_cs_ ||
-        !pso_fine_cs_ || !pso_flat_cs_ || !pso_calibrate_cs_ || !pso_hudmask_cs_ || !pso_stats_cs_)
+        !pso_fine_cs_ || !pso_flat_cs_ || !pso_calibrate_cs_ || !pso_hudmask_cs_ || !pso_stats_cs_ ||
+        !pso_silhouette_cs_)
       return Fail("pipeline");
     // Two tables, one per history parity (t3/t5 last frame's, t4/t6 this frame's), the passes' outputs,
     // then a ring of unordered-access views of the upscaler's output.
@@ -1933,9 +2048,9 @@ class Runtime {
     l->SetDescriptorHeaps(1, heaps);
     l->SetGraphicsRootSignature(root_.Get());
     l->SetGraphicsRootDescriptorTable(0, Table());
-    uint32_t constants[5];
+    uint32_t constants[kConstants];
     Constants(constants);
-    l->SetGraphicsRoot32BitConstants(1, 5, constants, 0);
+    l->SetGraphicsRoot32BitConstants(1, kConstants, constants, 0);
     l->SetPipelineState(pso);
     D3D12_VIEWPORT vp{0, 0, float(w), float(h), 0, 1};
     D3D12_RECT sc{0, 0, LONG(w), LONG(h)};
@@ -1956,9 +2071,9 @@ class Runtime {
     l->SetDescriptorHeaps(1, heaps);
     l->SetComputeRootSignature(root_.Get());
     l->SetComputeRootDescriptorTable(0, Table());
-    uint32_t constants[5];
+    uint32_t constants[kConstants];
     Constants(constants);
-    l->SetComputeRoot32BitConstants(1, 5, constants, 0);
+    l->SetComputeRoot32BitConstants(1, kConstants, constants, 0);
     D3D12_GPU_DESCRIPTOR_HANDLE out = srv_heap_->GetGPUDescriptorHandleForHeapStart();
     out.ptr += UINT64(device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)) * (kBase + slot);
     l->SetComputeRootDescriptorTable(2, out);
@@ -1973,6 +2088,8 @@ class Runtime {
     return table;
   }
   void WriteTable(DXGI_FORMAT format, const TaaInputs* taa, const Guides* masked = nullptr) {
+    if (masked == nullptr && silhouette_on_) masked = &silhouette_guides_;  // t13: the game's vectors
+    const bool hudless_bound = masked != nullptr && masked->hudless != nullptr;
     table_slot_ = (table_slot_ + 1) % kTableRing;
     D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
     sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -1994,8 +2111,13 @@ class Runtime {
         {motion_.Get(), DXGI_FORMAT_R16G16_FLOAT},
         {taa ? taa->motion : nullptr, taa ? taa->motion_format : DXGI_FORMAT_R16G16_FLOAT},
         // 1.12.1 (N2): the image before the HUD and the game's vectors, for the mask and the statistics.
-        {masked ? masked->hudless : nullptr, masked ? Unorm(masked->hudless->GetDesc().Format) : DXGI_FORMAT_R8G8B8A8_UNORM},
+        {hudless_bound ? masked->hudless : nullptr,
+         hudless_bound ? Unorm(masked->hudless->GetDesc().Format) : DXGI_FORMAT_R8G8B8A8_UNORM},
         {masked ? masked->mvec : nullptr, masked ? VectorFormat(masked->mvec->GetDesc().Format) : DXGI_FORMAT_R16G16_FLOAT},
+        // 1.12.1 (silhouettes): the game's depth, and the protection made from it this frame.
+        {silhouette_on_ ? silhouette_guides_.depth : nullptr,
+         silhouette_on_ ? DepthRead(silhouette_guides_.depth->GetDesc().Format) : DXGI_FORMAT_R32_FLOAT},
+        {silhouette_on_ ? protect_.Get() : nullptr, DXGI_FORMAT_R8_UNORM},
     };
     for (UINT i = 0; i < kTable; ++i) {
       sv.Format = views[i].f;
@@ -2076,11 +2198,21 @@ class Runtime {
     }
   }
   // mode; nits of SDR white in HDR; history weight; meter easing; compare split.
-  void Constants(uint32_t (&c)[5]) const {
+  static constexpr UINT kConstants = 17;
+  void Constants(uint32_t (&c)[kConstants]) const {
     const float values[3] = {paper_, keep_, rate_};
     c[0] = static_cast<uint32_t>(mode_);
     std::memcpy(&c[1], values, sizeof(values));
     c[4] = compare_ ? 1u : 0u;
+    // 1.12.1 (silhouettes)
+    const Guides& s = silhouette_guides_;
+    c[5] = s.mv_x; c[6] = s.mv_y; c[7] = s.mv_w; c[8] = s.mv_h;
+    c[9] = s.depth_x; c[10] = s.depth_y; c[11] = s.depth_w; c[12] = s.depth_h;
+    const float scale[2] = {s.mv_scale_x, s.mv_scale_y};
+    std::memcpy(&c[13], scale, sizeof(scale));
+    c[15] = s.depth_inverted ? 1u : 0u;
+    const float give = silhouette_on_ ? silhouette_ / 100.f : 0.f;
+    std::memcpy(&c[16], &give, sizeof(give));
   }
   static void Barrier(ID3D12GraphicsCommandList* l, ID3D12Resource* r, D3D12_RESOURCE_STATES from,
                       D3D12_RESOURCE_STATES to) {
@@ -2106,13 +2238,14 @@ class Runtime {
   uint64_t frame_index_ = 0;
   // full, reduced, enhanced, steadied before/now, meter before/now, luma before/now, coarse and fine
   // estimated motion, the game's TAA motion.
-  static constexpr UINT kTable = 14;
+  static constexpr UINT kTable = 16;
   static constexpr UINT kTableRing = 8;
   static constexpr UINT kUavLow = kTableRing * kTable, kUavSteady = kUavLow + 1, kUavMeter = kUavSteady + 2;
   static constexpr UINT kUavLuma = kUavMeter + 2, kUavCoarse = kUavLuma + 2, kUavMotion = kUavCoarse + 1;
   static constexpr UINT kUavFlat = kUavMotion + 1, kUavCalib = kUavFlat + 1;
   static constexpr UINT kUavStats = kUavCalib + 1, kUavMasked = kUavStats + 1;  // 1.12.1 (N2, N3)
-  static constexpr UINT kUavRingStart = kUavMasked + 1;
+  static constexpr UINT kUavProtect = kUavMasked + 1;                            // 1.12.1 (silhouettes)
+  static constexpr UINT kUavRingStart = kUavProtect + 1;
   static constexpr UINT kUavRing = 8;  // views of the upscaler's output, one per frame in flight
   static constexpr UINT kBase = 0;  // where our views start in the heap
   // Our textures rest readable by compute only: the upscaler's command list can be a compute list, where
@@ -2149,6 +2282,13 @@ class Runtime {
   bool hud_mask_ok_ = false;
   int hud_reports_ = 0, cut_reports_ = 0;
   uint64_t last_cut_ = 0;
+  // 1.12.1 (silhouettes): the strength (0..100), this frame's guides, the protection texture at NR's size.
+  int silhouette_ = 0;
+  bool silhouette_on_ = false, silhouette_logged_ = false;
+  Guides silhouette_guides_{};
+  ComPtr<ID3D12Resource> protect_, protect_old_;
+  ComPtr<ID3DBlob> cs_silhouette_;
+  ComPtr<ID3D12PipelineState> pso_silhouette_cs_;
   std::string version_, missing_;  // 1.12.1 (D4)
   uint64_t vram_before_ = 0;       // 1.12.1 (D6)
   bool vram_measured_ = false;

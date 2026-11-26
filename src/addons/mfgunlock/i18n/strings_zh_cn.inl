@@ -1129,3 +1129,5 @@
 /* kDlss5BudgetDesc_n104 */ "每帧给 NR 的 GPU 时间（毫秒）。NR 的分辨率随之调整：NR 开销高时降低，开销低时回升到“分辨率”设定值。0 = 关闭（按“分辨率”设定使用）。",
 /* kDlss5StateNotNr_n105 */ "找到的 nvngx_dlssnr.dll 不是 NVIDIA 的神经渲染运行时：缺少 NR 需要的函数（见下方）。请使用 NVIDIA 的文件。",
 /* kDlss5AllowThisFile_n106 */ "允许此文件",
+/* kDlss5Silhouettes_n107 */ "保护轮廓 (%)",
+/* kDlss5SilhouettesDesc_n108 */ "在相对背后场景移动的物体（例如场景前的角色）的边缘减弱 NR 的改变，那里 NR 的历史可能留下拖影或光晕。需要游戏的运动矢量和深度（在其超分之后、帧生成之前，或标记到其 Streamline）。0 = 关闭。",

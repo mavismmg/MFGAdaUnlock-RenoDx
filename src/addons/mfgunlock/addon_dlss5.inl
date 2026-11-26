@@ -26,7 +26,7 @@ inline mfgunlock::nr::Encoding CurrentEncoding() { return static_cast<mfgunlock:
 enum Index : size_t {
   kEnabled, kNetwork, kStyle, kIntensity, kTone, kStructure, kSkin, kProtectHud, kScale, kStability, kHookPoint,
   kPaperWhite, kMotion, kTaaFinder, kToggleKey, kCompareKey, kKeyModifier, kVramMargin, kCoexist, kAllowUnsigned,
-  kPasses, kBudget
+  kPasses, kBudget, kSilhouettes
 };
 inline int Setting(Index i) { return _wtoi(adv::Current(adv::kDlss5[i]).c_str()); }
 // Off by the on/off key: until pressed again, the session runs without NR (the setting stays).
@@ -97,6 +97,7 @@ inline void Configure() {
   g_runtime.VramMargin(Setting(kVramMargin));
   g_runtime.Coexist(Setting(kCoexist) == 0);
   g_runtime.Passes(std::clamp(Setting(kPasses), 1, 3));
+  g_runtime.Silhouettes(Setting(kSilhouettes));  // 1.12.1
   mfgunlock::nr::vk::Passes(std::clamp(Setting(kPasses), 1, 3));
 }
 // 1.12.1 (D5): NR's resolution (%) for D3D12. With [DLSS5] Budget (ms) set, it follows NR's measured GPU
@@ -1007,7 +1008,7 @@ inline void DrawPage() {
   }
   if (ui::SectionHeader(T(Str::kDlss5SectionQuality_n68), true)) {
     ui::Card card("##dlss5_quality_card");
-    for (Index i : {kScale, kBudget, kPasses, kHookPoint, kMotion, kTaaFinder, kStability, kProtectHud})
+    for (Index i : {kScale, kBudget, kPasses, kHookPoint, kMotion, kTaaFinder, kStability, kProtectHud, kSilhouettes})
       adv::DrawOption(adv::kDlss5[i]);
   }
   const bool hdr = CurrentEncoding() != mfgunlock::nr::Encoding::kSdr;

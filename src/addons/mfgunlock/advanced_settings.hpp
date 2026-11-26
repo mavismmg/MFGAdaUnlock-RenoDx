@@ -141,6 +141,8 @@ inline constexpr Option kDlss5[]{
   {L"DLSS5",L"Passes",Str::kDlss5Passes_n97,Str::kDlss5PassesDesc_n98,L"1",MFGUNLOCK_CHOICES(kDlss5Passes)},
   // 1.12.1 (D5): a GPU time for NR in ms (0 off): NR's resolution follows it, up to Scale.
   {L"DLSS5",L"Budget",Str::kDlss5Budget_n103,Str::kDlss5BudgetDesc_n104,L"0",MFGUNLOCK_NUMBER(0,20)},
+  // 1.12.1: how much NR's change gives way at silhouettes (0 off), with the game's vectors and depth.
+  {L"DLSS5",L"Silhouettes",Str::kDlss5Silhouettes_n107,Str::kDlss5SilhouettesDesc_n108,L"0",MFGUNLOCK_NUMBER(0,100)},
 };
 inline constexpr Option kXmxSaveVram{L"DLSSG",L"XmxSaveVram",Str::kXmxSaveVram_v1a,Str::kXmxSaveVramDesc_v1b,L"1",MFGUNLOCK_CHOICES(kOnOff)};
 #undef MFGUNLOCK_CHOICES

@@ -1129,3 +1129,5 @@
 /* kDlss5BudgetDesc_n104 */ "Un tiempo de GPU para NR por fotograma, en milisegundos. La resolución de NR lo sigue: baja cuando NR cuesta más y vuelve hasta Resolución cuando cuesta menos. 0 = desactivado (se usa Resolución tal cual).",
 /* kDlss5StateNotNr_n105 */ "El nvngx_dlssnr.dll encontrado no es el runtime de renderizado neuronal de NVIDIA: le faltan funciones que NR necesita (abajo). Usa el archivo de NVIDIA.",
 /* kDlss5AllowThisFile_n106 */ "Permitir este archivo",
+/* kDlss5Silhouettes_n107 */ "Proteger siluetas (%)",
+/* kDlss5SilhouettesDesc_n108 */ "Menos cambio de NR en los bordes de lo que se mueve frente a lo que tiene detrás (un personaje frente a la escena), donde el historial de NR puede dejar estela o halo. Necesita los vectores de movimiento y la profundidad del juego (tras su upscaler, antes de su generación de fotogramas o etiquetados en su Streamline). 0 = desactivado.",

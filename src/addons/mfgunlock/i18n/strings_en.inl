@@ -1127,3 +1127,5 @@
 /* kDlss5BudgetDesc_n104 */ "A GPU time for NR per frame, in milliseconds. NR's resolution then follows it: lower when NR costs more, back up to Resolution when it costs less. 0 = off (Resolution is used as set).",
 /* kDlss5StateNotNr_n105 */ "The nvngx_dlssnr.dll found is not NVIDIA's neural rendering runtime: it lacks the functions NR needs (listed below). Use NVIDIA's own file.",
 /* kDlss5AllowThisFile_n106 */ "Allow this file",
+/* kDlss5Silhouettes_n107 */ "Protect silhouettes (%)",
+/* kDlss5SilhouettesDesc_n108 */ "Less of NR's change at the edges of things that move against what is behind them (a character against the scene), where NR's history can leave a trail or a halo. Needs the game's motion vectors and depth (after its upscaler, before its frame generation, or tagged to its Streamline). 0 = off.",
