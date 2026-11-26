@@ -1972,7 +1972,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   }
   const char* xmx_waiting=xmx_bypassed?T(Str::kNvidiaIsGenerating_0bf6):xmx_report.evaluating?T(Str::kWaitingForFrames_9c2f):T(Str::kPausedOrOffInThe_52c7);
   const auto xmx_support_report=[&] {
-    std::string report="MFG Unlock 1.12.0\nmethod=";
+    std::string report="MFG Unlock 1.12.1\nmethod=";
     report+=xmx_selected?"XeMFG DLSS-G":"DLSS-G";
     report+=std::string("\nrenderer=")+RenderApiName(render_api)+"\nstatus="+player_state;
     if(xmx_selected) {

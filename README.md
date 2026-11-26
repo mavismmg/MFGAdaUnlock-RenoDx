@@ -9,19 +9,19 @@
 </p>
 
 > [!NOTE]
-> ### New in 1.12.0
+> ### New in 1.12.1
 >
-> - **DLSS 5 neural rendering** on the game's own frames, in D3D12 and Vulkan games,
->   with frame generation and HDR: after the game's DLSS when it has it, before its
->   frame generation, or before Present. Its own **DLSS 5** tab: looks, resolution,
->   NR passes, stability, HDR paper white, Ctrl+F8 on/off and Ctrl+F7 compare. Off by
->   default; bring your own `nvngx_dlssnr.dll` beside the game's exe.
-> - Tested in Cyberpunk 2077, Crimson Desert, The Last of Us Part II, A Plague Tale:
->   Resonance, Resident Evil Requiem (with REFramework) and Red Dead Redemption 2 (Vulkan).
-> - Switches and segmented selectors in the panel.
+> - **DLSS 5 with less ghosting:** camera cuts reset NR's history, the HUD no longer
+>   drags with the camera in games that give an image without it, and a new
+>   **Protect silhouettes** option softens trails at a moving character's outline.
+> - **The game's own motion before Present** in games with their own Streamline:
+>   about half the cost and less flicker (CONTROL: 10.6 ms to 5.2 ms).
+> - **DLSS 5 with XeMFG**, a **GPU budget** for NR, and the runtime checked before it loads.
+> - Fixes: a GPU hang in CONTROL Resonant when frame generation was toggled in the menu,
+>   and a notice when another add-on (GITC Uplift) takes the swap chain from Add frame generation.
 >
-> See the [1.12.0 release notes](docs/releases/1.12.0.md) (and the
-> [1.11.0 release notes](docs/releases/1.11.0.md) for the previous version).
+> See the [1.12.1 release notes](docs/releases/1.12.1.md) (and the
+> [1.12.0 release notes](docs/releases/1.12.0.md) for DLSS 5 itself).
 
 > [!IMPORTANT]
 > ### 1.10.0: XMX is now called XeMFG DLSS-G
