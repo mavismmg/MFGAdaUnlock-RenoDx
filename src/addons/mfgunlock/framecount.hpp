@@ -1232,6 +1232,10 @@ inline std::atomic<void (*)()> g_on_reflex_sleep{nullptr};
 inline std::atomic_bool g_nr_wanted{false};
 inline std::atomic<float> g_sl_mvec_scale_x{0.f}, g_sl_mvec_scale_y{0.f};
 inline std::atomic<int> g_sl_depth_inverted{-1};
+// 1.12.1 (N1, N5): the game's camera reset (kept until NR's Present route takes it) and how its vectors
+// were made (-1 unknown, 0 no, 1 yes), for DLSS 5.
+inline std::atomic_bool g_sl_reset{false};
+inline std::atomic<int> g_sl_mv_jittered{-1}, g_sl_mv_dilated{-1};
 inline std::atomic<void (*)(IUnknown*, IUnknown*)> g_on_proxy_present_nr{nullptr};
 // The command queue the game made Streamline's proxy swap chain with: the proxy's GetDevice does not
 // give it back (E_NOINTERFACE). Kept, with a reference, for the process.
@@ -2368,6 +2372,9 @@ inline sl::Result HookedSetConstants(const sl::Constants& values,
   g_sl_mvec_scale_x.store(values.mvecScale.x, std::memory_order_relaxed);
   g_sl_mvec_scale_y.store(values.mvecScale.y, std::memory_order_relaxed);
   g_sl_depth_inverted.store(values.depthInverted == sl::Boolean::eTrue ? 1 : 0, std::memory_order_relaxed);
+  if (values.reset == sl::Boolean::eTrue) g_sl_reset.store(true, std::memory_order_relaxed);  // 1.12.1 (N1)
+  g_sl_mv_jittered.store(values.motionVectorsJittered == sl::Boolean::eTrue ? 1 : 0, std::memory_order_relaxed);
+  g_sl_mv_dilated.store(values.motionVectorsDilated == sl::Boolean::eTrue ? 1 : 0, std::memory_order_relaxed);
   if (g_force_fg_enabled.load(std::memory_order_relaxed)) {
     reflexdrive::OnConstants(frame);
     TryForceFrameGeneration(viewport);

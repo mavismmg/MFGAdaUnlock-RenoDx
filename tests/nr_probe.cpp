@@ -222,6 +222,8 @@ int wmain(int argc, wchar_t** argv) {
   int temporal = 0, pan = 0;
   std::wstring guides = L"none";
   float guide_ratio = 1.f;  // the guides' size against the color's (a game renders below its output)
+  // 1.12.1: a static "HUD" box over the panning image (--hud), its vectors zeroed or not (--hud-mv 0|1).
+  bool hud = false, hud_mv = true;
   for (int i = 1; i < argc; ++i) {
     const std::wstring a = argv[i];
     const auto next = [&]() -> std::wstring { return i + 1 < argc ? argv[++i] : L""; };
@@ -248,6 +250,8 @@ int wmain(int argc, wchar_t** argv) {
     else if (a == L"--pan") pan = _wtoi(next().c_str());
     else if (a == L"--guides") guides = next();
     else if (a == L"--guide-ratio") guide_ratio = float(_wtof(next().c_str()));
+    else if (a == L"--hud") hud = true;
+    else if (a == L"--hud-mv") hud_mv = _wtoi(next().c_str()) != 0;
   }
   if (snippet_path.empty() || image_path.empty() || out_path.empty()) {
     std::printf("usage: nr_probe --snippet <nvngx_dlssnr.dll> --image <in.png> --out <out.png> [options]\n");
@@ -559,6 +563,22 @@ int wmain(int argc, wchar_t** argv) {
     const float depth_texel = 0.5f;
     auto mvec = filled(DXGI_FORMAT_R16G16_FLOAT, 4, mv_texel);
     auto depth = filled(DXGI_FORMAT_R32_FLOAT, 4, &depth_texel);
+    // The HUD box: a fixed part of the source image, drawn at the same place every frame (a HUD does not
+    // move with the camera). Its vectors are zero with --hud-mv 0, the camera's otherwise.
+    const UINT hud_x = cw / 4, hud_y = h * 3 / 4, hud_w = cw / 2, hud_h = h / 10;
+    if (hud && !hud_mv && with_guides) {
+      const HALF zero[2] = {XMConvertFloatToHalf(0.f), XMConvertFloatToHalf(0.f)};
+      auto zeros = filled(DXGI_FORMAT_R16G16_FLOAT, 4, zero);
+      gpu.Barrier(zeros.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+      gpu.Barrier(mvec.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+      const UINT gx = UINT(hud_x * guide_ratio), gy = UINT(hud_y * guide_ratio);
+      D3D12_BOX zb{0, 0, 0, UINT(hud_w * guide_ratio), UINT(hud_h * guide_ratio), 1};
+      D3D12_TEXTURE_COPY_LOCATION zd{mvec.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+      D3D12_TEXTURE_COPY_LOCATION zs{zeros.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+      gpu.list->CopyTextureRegion(&zd, gx, gy, 0, &zs, &zb);
+      gpu.Barrier(mvec.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+      keep.push_back(zeros);
+    }
     auto in2 = texture(cw, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D12_RESOURCE_STATE_COPY_DEST);
     auto out2 = texture(cw, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     const D3D12_RESOURCE_DESC od = out2->GetDesc();
@@ -569,7 +589,7 @@ int wmain(int argc, wchar_t** argv) {
     gpu.Barrier(color.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
     gpu.Submit();
     std::vector<float> prev, cur(size_t(cw) * h);
-    double sum = 0.0;
+    double sum = 0.0, hud_sum = 0.0;
     int counted = 0;
     for (int f = 0; f < temporal; ++f) {
       const UINT x0 = pan > 0 ? UINT(pan * f) % (margin - UINT(pan)) : 0;
@@ -578,6 +598,10 @@ int wmain(int argc, wchar_t** argv) {
       D3D12_TEXTURE_COPY_LOCATION dst{in2.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
       D3D12_TEXTURE_COPY_LOCATION src{color.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
       gpu.list->CopyTextureRegion(&dst, 0, 0, 0, &src, &box);
+      if (hud) {  // the same source patch at the same place every frame
+        D3D12_BOX hb{0, 0, 0, hud_w, hud_h, 1};
+        gpu.list->CopyTextureRegion(&dst, hud_x, hud_y, 0, &src, &hb);
+      }
       gpu.Barrier(in2.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
       params->Set("DLSSNR.Color", in2.Get());
       params->Set("DLSSNR.Output", out2.Get());
@@ -620,6 +644,13 @@ int wmain(int argc, wchar_t** argv) {
                                     0.0722f * XMConvertHalfToFloat(row[x * 4 + 2]);
       }
       back->Unmap(0, nullptr);
+      // The HUD box: still, so compared at the same place.
+      if (hud && !prev.empty() && f >= 3) {
+        double d = 0.0;
+        for (UINT y = hud_y; y < hud_y + hud_h; ++y)
+          for (UINT x = hud_x; x < hud_x + hud_w; ++x) d += std::fabs(double(cur[size_t(y) * cw + x]) - prev[size_t(y) * cw + x]);
+        hud_sum += d / double(hud_w * hud_h) * 255.0;
+      }
       // The same content: this frame's x against the previous frame's x + pan.
       if (!prev.empty() && f >= 3) {
         double d = 0.0;
@@ -633,6 +664,9 @@ int wmain(int argc, wchar_t** argv) {
     }
     std::printf("temporal: pan %d px/frame, guides %ls (mv %.4f, scale %.0f): change between frames %.3f of 255 (%d pairs)\n",
                 pan, guides.c_str(), mv, mv_scale, counted ? sum / counted : -1.0, counted);
+    if (hud)
+      std::printf("temporal: HUD box (vectors %s): change between frames %.3f of 255\n", hud_mv ? "the camera's" : "zero",
+                  counted ? hud_sum / counted : -1.0);
     shim_release(nr_release, moving);
   }
   return diff > 0.5 ? 0 : 3;

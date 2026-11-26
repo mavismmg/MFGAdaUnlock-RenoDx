@@ -303,6 +303,8 @@ inline bool LocateFiles(std::wstring& runtime, std::wstring& shim) {
   shim = g_runtime.shim_path();
   return !runtime.empty() && !shim.empty();
 }
+// 1.12.1 (N5): a Streamline constant's yes/no for the log.
+inline const char* SlFlag(int v) { return v < 0 ? "unknown" : v ? "yes" : "no"; }
 inline bool GameFrameGeneration() {
   return mfgunlock::framecount::g_actual_frames_presented.load(std::memory_order_relaxed) > 1 ||
          (mfgunlock::xmx::generator::Enabled() && mfgunlock::xmx::generator::Snapshot().generating);
@@ -321,8 +323,8 @@ inline void Run(ID3D12CommandQueue* queue, ID3D12Resource* backbuffer, mfgunlock
 // (scaled like before frame generation: Streamline's scale takes them to the screen's 0..1).
 inline bool TaggedGuides(mfgunlock::nr::GameGuides& out) {
   if (Setting(kMotion) == 2) return false;
-  mfgunlock::nr::slguides::Guide motion, depth;
-  if (!mfgunlock::nr::slguides::Take(motion, depth)) return false;
+  mfgunlock::nr::slguides::Guide motion, depth, hudless;
+  if (!mfgunlock::nr::slguides::Take(motion, depth, &hudless)) return false;
   auto& g = out.g;
   g.mvec = motion.resource;
   g.depth = depth.resource;
@@ -335,13 +337,21 @@ inline bool TaggedGuides(mfgunlock::nr::GameGuides& out) {
   g.depth_inverted = mfgunlock::framecount::internal::g_sl_depth_inverted.load(std::memory_order_relaxed) == 1;
   out.mvec_state = motion.state;
   out.depth_state = depth.state;
+  // 1.12.1 (N2): the image before the HUD, when tagged and copied (its copy is in a shader-read state).
+  if (hudless.resource != nullptr && hudless.state == D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+    g.hudless = hudless.resource;
+  // 1.12.1 (N1): the game's camera cut, once.
+  g.reset = mfgunlock::framecount::internal::g_sl_reset.exchange(false, std::memory_order_relaxed);
   static std::atomic_bool logged{false};
   if (!logged.exchange(true)) {
     char text[200];
     std::snprintf(text, sizeof(text),
                   "mfgunlock: DLSS 5: before Present with the motion vectors and depth the game gives its Streamline "
-                  "(%ux%u, depth %ux%u, vector scale %.3g x %.3g).",
-                  g.mv_w, g.mv_h, g.depth_w, g.depth_h, g.mv_scale_x, g.mv_scale_y);
+                  "(%ux%u, depth %ux%u, vector scale %.3g x %.3g, image before the HUD %s, vectors jittered %s, "
+                  "dilated %s).",
+                  g.mv_w, g.mv_h, g.depth_w, g.depth_h, g.mv_scale_x, g.mv_scale_y, g.hudless ? "yes" : "no",
+                  SlFlag(mfgunlock::framecount::internal::g_sl_mv_jittered.load()),
+                  SlFlag(mfgunlock::framecount::internal::g_sl_mv_dilated.load()));  // 1.12.1 (N5)
     reshade::log::message(reshade::log::level::info, text);
   }
   return true;
@@ -515,9 +525,10 @@ inline void AfterUpscaler(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Param
     char text[200];
     std::snprintf(text, sizeof(text),
                   "mfgunlock: DLSS 5: after the game's upscaler: output %llux%u (format %d), guides %ux%u, "
-                  "vector scale %.3g x %.3g, depth %s.",
+                  "vector scale %.3g x %.3g, depth %s, vectors jittered %s.",
                   static_cast<unsigned long long>(od.Width), od.Height, static_cast<int>(od.Format), g.depth_w,
-                  g.depth_h, g.mv_scale_x, g.mv_scale_y, g.depth_inverted ? "inverted" : "normal");
+                  g.depth_h, g.mv_scale_x, g.mv_scale_y, g.depth_inverted ? "inverted" : "normal",
+                  (flags & NVSDK_NGX_DLSS_Feature_Flags_MVJittered) ? "yes" : "no");  // 1.12.1 (N5)
     reshade::log::message(reshade::log::level::info, text);
   }
 }
@@ -531,10 +542,11 @@ inline void BeforeFrameGeneration(ID3D12GraphicsCommandList* list, const NVSDK_N
   if (!Enabled()) return;
   if (Setting(kHookPoint) != kHookPresent && GetTickCount64() - g_upscaled_tick.load(std::memory_order_relaxed) < 500)
     return;  // done after the upscaler
-  ID3D12Resource *backbuffer = nullptr, *mvec = nullptr, *depth = nullptr;
+  ID3D12Resource *backbuffer = nullptr, *mvec = nullptr, *depth = nullptr, *hudless = nullptr;
   p->Get("DLSSG.Backbuffer", &backbuffer);
   p->Get("DLSSG.MVecs", &mvec);
   p->Get("DLSSG.Depth", &depth);
+  p->Get("DLSSG.HUDLess", &hudless);  // 1.12.1 (N2)
   if (!backbuffer) return Skipped(5, "frame generation's call has no back buffer");
   g_prefg_seen.store(GetTickCount64(), std::memory_order_relaxed);
   // Multi-frame generation calls once per generated frame (three times a real frame at 4x), each with the
@@ -559,7 +571,12 @@ inline void BeforeFrameGeneration(ID3D12GraphicsCommandList* list, const NVSDK_N
     g.mv_scale_x = sx != 0.f ? sx * g.mv_w : 1.f;
     g.mv_scale_y = sy != 0.f ? sy * g.mv_h : 1.f;
     g.depth_inverted = mfgunlock::framecount::internal::g_sl_depth_inverted.load(std::memory_order_relaxed) == 1;
+    g.hudless = hudless;  // 1.12.1 (N2)
   }
+  // 1.12.1 (N1): the game's camera cut. Before, NR kept the scene before the cut in its history.
+  unsigned reset = 0;
+  p->Get("DLSSG.Reset", &reset);
+  g.reset = reset != 0;
   // Frame generation's inputs are read by compute: the state the game's Streamline left them in.
   D3D12_COMMAND_LIST_TYPE type = list->GetType();
   const D3D12_RESOURCE_STATES state = type == D3D12_COMMAND_LIST_TYPE_DIRECT
@@ -577,9 +594,11 @@ inline void BeforeFrameGeneration(ID3D12GraphicsCommandList* list, const NVSDK_N
     char text[220];
     std::snprintf(text, sizeof(text),
                   "mfgunlock: DLSS 5: before the game's frame generation: frame %llux%u (format %d), guides %ux%u, "
-                  "vector scale %.3g x %.3g, depth %s.",
+                  "vector scale %.3g x %.3g, depth %s, image before the HUD %s, vectors jittered %s, dilated %s.",
                   static_cast<unsigned long long>(bd.Width), bd.Height, static_cast<int>(bd.Format), g.mv_w, g.mv_h,
-                  g.mv_scale_x, g.mv_scale_y, g.depth_inverted ? "inverted" : "normal");
+                  g.mv_scale_x, g.mv_scale_y, g.depth_inverted ? "inverted" : "normal", hudless ? "yes" : "no",
+                  SlFlag(mfgunlock::framecount::internal::g_sl_mv_jittered.load()),
+                  SlFlag(mfgunlock::framecount::internal::g_sl_mv_dilated.load()));  // 1.12.1 (N5)
     reshade::log::message(reshade::log::level::info, text);
   }
 }

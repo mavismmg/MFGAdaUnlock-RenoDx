@@ -39,7 +39,7 @@ struct Slot {
   uint64_t tick = 0;
 };
 inline std::mutex lock;
-inline Slot slots[2];  // 0 motion vectors, 1 depth
+inline Slot slots[3];  // 0 motion vectors, 1 depth, 2 the color before the HUD (1.12.1, N2)
 // Replaced copies, kept a while: frames still on the GPU may read them.
 struct Retired {
   Microsoft::WRL::ComPtr<ID3D12Resource> resource;
@@ -47,8 +47,20 @@ struct Retired {
 };
 inline std::vector<Retired> retired;
 
-// The format of the copy: one NR reads, in the source's copy group.
-inline DXGI_FORMAT CopyFormat(DXGI_FORMAT f, bool depth) {
+// The format of the copy: one NR reads, in the source's copy group. `color`: the image before the HUD.
+inline DXGI_FORMAT CopyFormat(DXGI_FORMAT f, bool depth, bool color = false) {
+  if (color) {
+    switch (f) {
+      case DXGI_FORMAT_R8G8B8A8_TYPELESS: case DXGI_FORMAT_R8G8B8A8_UNORM: case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+        return DXGI_FORMAT_R8G8B8A8_UNORM;
+      case DXGI_FORMAT_B8G8R8A8_TYPELESS: case DXGI_FORMAT_B8G8R8A8_UNORM: case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+        return DXGI_FORMAT_B8G8R8A8_UNORM;
+      case DXGI_FORMAT_R10G10B10A2_TYPELESS: case DXGI_FORMAT_R10G10B10A2_UNORM: return DXGI_FORMAT_R10G10B10A2_UNORM;
+      case DXGI_FORMAT_R16G16B16A16_TYPELESS: case DXGI_FORMAT_R16G16B16A16_FLOAT: return DXGI_FORMAT_R16G16B16A16_FLOAT;
+      case DXGI_FORMAT_R11G11B10_FLOAT: return DXGI_FORMAT_R11G11B10_FLOAT;
+      default: return DXGI_FORMAT_UNKNOWN;
+    }
+  }
   if (depth) {
     switch (f) {
       case DXGI_FORMAT_D32_FLOAT: case DXGI_FORMAT_R32_TYPELESS: case DXGI_FORMAT_R32_FLOAT: return DXGI_FORMAT_R32_FLOAT;
@@ -75,9 +87,9 @@ inline void Barrier(ID3D12GraphicsCommandList* l, ID3D12Resource* r, D3D12_RESOU
 }
 // The tag copied into `slot`'s texture on the game's list. False when it cannot be copied.
 inline bool CopyTag(Slot& slot, ID3D12Resource* source, D3D12_RESOURCE_STATES state, bool depth,
-                    ID3D12GraphicsCommandList* list) {
+                    ID3D12GraphicsCommandList* list, bool color = false) {
   const D3D12_RESOURCE_DESC sd = source->GetDesc();
-  const DXGI_FORMAT format = CopyFormat(sd.Format, depth);
+  const DXGI_FORMAT format = CopyFormat(sd.Format, depth, color);
   if (sd.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || sd.MipLevels != 1 || sd.DepthOrArraySize != 1 ||
       sd.SampleDesc.Count != 1 || format == DXGI_FORMAT_UNKNOWN)
     return false;
@@ -100,7 +112,8 @@ inline bool CopyTag(Slot& slot, ID3D12Resource* source, D3D12_RESOURCE_STATES st
     if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
                                                IID_PPV_ARGS(&slot.copy))))
       return false;
-    slot.copy->SetName(depth ? L"MFG Unlock DLSS 5 game depth" : L"MFG Unlock DLSS 5 game motion");
+    slot.copy->SetName(color ? L"MFG Unlock DLSS 5 game image before the HUD"
+                       : depth ? L"MFG Unlock DLSS 5 game depth" : L"MFG Unlock DLSS 5 game motion");
     slot.copy_state = D3D12_RESOURCE_STATE_COPY_DEST;
   }
   Barrier(list, slot.copy.Get(), slot.copy_state, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -127,17 +140,18 @@ inline void Observe(const sl::ResourceTag* tags, uint32_t count, sl::CommandBuff
   for (uint32_t i = 0; i < count && i < 64; ++i) {
     const sl::ResourceTag& tag = tags[i];
     const bool motion = tag.type == sl::kBufferTypeMotionVectors, depth = tag.type == sl::kBufferTypeDepth;
-    if (!(motion || depth) || tag.resource == nullptr || tag.resource->native == nullptr ||
+    const bool hudless = tag.type == sl::kBufferTypeHUDLessColor;  // 1.12.1 (N2)
+    if (!(motion || depth || hudless) || tag.resource == nullptr || tag.resource->native == nullptr ||
         tag.resource->state == UINT_MAX)
       continue;
     auto* source = static_cast<ID3D12Resource*>(tag.resource->native);
     const auto state = static_cast<D3D12_RESOURCE_STATES>(tag.resource->state);
-    Slot& slot = slots[depth ? 1 : 0];
+    Slot& slot = slots[hudless ? 2 : depth ? 1 : 0];
     bool ok = false;
     // Copied only on a direct list: a compute list takes no pixel-shader states in its barriers.
     auto* list = reinterpret_cast<ID3D12GraphicsCommandList*>(command_buffer);
     if (list != nullptr && list->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT)
-      ok = CopyTag(slot, source, state, depth, list);
+      ok = CopyTag(slot, source, state, depth, list, hudless);
     else if (tag.lifecycle == sl::ResourceLifecycle::eValidUntilPresent) {
       slot.latest.resource = source;
       slot.latest.state = state;
@@ -157,14 +171,16 @@ inline void Observe(const sl::ResourceTag* tags, uint32_t count, sl::CommandBuff
   }
 }
 
-// This frame's motion vectors and depth, when both were tagged in the last 250 ms.
-inline bool Take(Guide& motion, Guide& depth) {
+// This frame's motion vectors and depth, when both were tagged in the last 250 ms; and the image before the
+// HUD, when the game tags one (null otherwise).
+inline bool Take(Guide& motion, Guide& depth, Guide* hudless = nullptr) {
   using namespace internal;
   std::lock_guard guard(lock);
   const uint64_t now = GetTickCount64();
   if (slots[0].tick == 0 || slots[1].tick == 0 || now - slots[0].tick > 250 || now - slots[1].tick > 250) return false;
   motion = slots[0].latest;
   depth = slots[1].latest;
+  if (hudless) *hudless = slots[2].tick != 0 && now - slots[2].tick <= 250 ? slots[2].latest : Guide{};
   return true;
 }
 

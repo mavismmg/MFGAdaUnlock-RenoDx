@@ -81,6 +81,8 @@ struct Guides {
   float mv_scale_x = 1.f, mv_scale_y = 1.f;
   bool depth_inverted = false;
   bool reset = false;
+  // 1.12.1 (N2): the game's image before the HUD (same size and format as the frame), readable by compute.
+  ID3D12Resource* hudless = nullptr;
 };
 
 // 1.12.1 (D1): the game's own guides on the Present route (tagged to its Streamline, nr_sl_guides.hpp),
@@ -170,6 +172,8 @@ Texture2D<float4> luma_now : register(t8);
 Texture2D<float4> motion_coarse : register(t9);  // estimated motion, 8x8 blocks of the reduced image
 Texture2D<float4> motion : register(t10);        // estimated motion, half the reduced image's size
 Texture2D<float4> taa_motion : register(t11);    // the game's TAA motion (phase F)
+Texture2D<float4> hudless : register(t12);       // 1.12.1 (N2): the game's image before the HUD
+Texture2D<float4> game_mv : register(t13);       // 1.12.1 (N2): the game's motion vectors
 RWTexture2D<float4> written : register(u0);  // the compute pass's output
 SamplerState linear_clamp : register(s0);
 cbuffer Encoding : register(b0) { uint mode; float paper; float keep; float rate; uint split; };
@@ -335,6 +339,42 @@ float Sad(float2 p, float2 v, float spread, float2 inv) {
   float4 before = history.Load(int3(p, 0));
   float k = keep * saturate(1.0 - abs(luma - before.a) * 12.0);
   written[id.xy] = float4(lerp(now, clamp(before.rgb, lo, hi), k), luma);
+}
+// 1.12.1 (N2): where the frame differs from the image before the HUD. A HUD does not move with the camera,
+// but the game's vectors there do: NR then pulled its history of the HUD from the scene behind (measured
+// with nr_probe --hud: 23% more change between frames on a still HUD).
+bool Hud(float3 a, float3 b) {
+  float3 d = abs(a - b);
+  return max(d.r, max(d.g, d.b)) > 0.02 * max(1.0, max(a.r, max(a.g, a.b)));
+}
+// The game's vectors, zero on the HUD and a pixel around it. In the vectors' own texels (often the render
+// resolution): each looks at the frame's pixels it covers.
+[numthreads(8, 8, 1)] void hudmask_cs(uint3 id : SV_DispatchThreadID) {
+  uint w, h, cw, ch;
+  written.GetDimensions(w, h);
+  if (id.x >= w || id.y >= h) return;
+  full.GetDimensions(cw, ch);
+  const float2 uv = (float2(id.xy) + 0.5) / float2(w, h);
+  const float2 step = max(1.0, float(cw) / float(w)) / float2(cw, ch);
+  bool hud = false;
+  [unroll] for (int y = -1; y <= 1; ++y)
+    [unroll] for (int x = -1; x <= 1; ++x) {
+      const float2 q = uv + float2(x, y) * step;
+      hud = hud || Hud(full.SampleLevel(linear_clamp, q, 0).rgb, hudless.SampleLevel(linear_clamp, q, 0).rgb);
+    }
+  written[id.xy] = float4(hud ? float2(0, 0) : game_mv.Load(int3(id.xy, 0)).xy, 0, 0);
+}
+// 1.12.1 (N2, N3), over a 32x18 grid: r the mean luma change of the reduced image since the last frame (a
+// camera cut), g the share of the screen the HUD covers.
+[numthreads(1, 1, 1)] void stats_cs(uint3 id : SV_DispatchThreadID) {
+  float cut = 0, hud = 0;
+  [loop] for (int j = 0; j < 18; ++j)
+    [loop] for (int i = 0; i < 32; ++i) {
+      const float2 uv = (float2(i, j) + 0.5) / float2(32, 18);
+      cut += abs(luma_now.SampleLevel(linear_clamp, uv, 0).r - luma_before.SampleLevel(linear_clamp, uv, 0).r);
+      hud += Hud(full.SampleLevel(linear_clamp, uv, 0).rgb, hudless.SampleLevel(linear_clamp, uv, 0).rgb) ? 1.0 : 0.0;
+    }
+  written[uint2(0, 0)] = float4(cut / 576.0, hud / 576.0, 0, 1);
 }
 float4 Composed(int2 p, float2 uv) {
   float4 f = full.Load(int3(p, 0));
@@ -751,6 +791,7 @@ class Runtime {
     taa_ = taa != nullptr && taa->motion != nullptr ? *taa : TaaInputs{};
     game_on_ = game != nullptr && game->g.mvec != nullptr && game->g.depth != nullptr;
     if (game_on_) game_ = *game;
+    if (game_on_ && game_.g.reset && motion_mode_ != 2) reset_ = true;  // 1.12.1 (N1): the game's camera cut
     if (!Record(l, backbuffer, bb_state, format, look, nullptr, f)) {
       l->Close();
       return false;
@@ -1107,7 +1148,12 @@ class Runtime {
     const bool use_taa = taa_now && taa_proved_;
     guides_kind_ = g != nullptr ? (g->mvec ? 1 : 0) : game_now ? 1 : use_taa ? 3 : estimate ? 2 : 0;
     keep_ = (fresh || guides_kind_ != 0) ? 0.f : stability_ * 0.009f;  // 100% keeps 90% where nothing moved
-    WriteTable(format, taa_now ? &taa_ : nullptr);
+    // 1.12.1 (N2): the game's vectors and its image before the HUD, when it gives one of the frame's size and
+    // format (before its frame generation, or tagged to its Streamline on the Present route).
+    const Guides* given = game_now ? &game_.g : g;
+    const bool mask_inputs = look.automask && given != nullptr && given->mvec != nullptr && given->hudless != nullptr &&
+                             HudlessFits(given->hudless, target);
+    WriteTable(format, taa_now ? &taa_ : nullptr, mask_inputs ? given : nullptr);
 
     // Compute passes only, as the upscaler itself: a game restores its compute state after it, not
     // necessarily its graphics state (the Streamline sample went black when these were draws).
@@ -1203,6 +1249,26 @@ class Runtime {
       present_guides.mv_w = present_guides.depth_w = motion_w_;
       present_guides.mv_h = present_guides.depth_h = motion_h_;
       g = &present_guides;
+    }
+
+    // 1c. 1.12.1 (N3, N2): a camera cut where the game gives no reset (motion from the image or its TAA), and
+    // how much of the screen the HUD covers; read three frames later.
+    Stats(l, estimate || use_taa, mask_inputs);
+    // 1d. 1.12.1 (N2): the game's vectors, zero on the HUD, unless the image "before the HUD" differs from the
+    // frame over much of the screen (an effect after it: RenoDX, a filter).
+    Guides masked_guides;
+    if (mask_inputs && hud_mask_ok_ && g != nullptr && g->mvec == given->mvec) {
+      const D3D12_RESOURCE_DESC md = given->mvec->GetDesc();
+      const DXGI_FORMAT mf = VectorFormat(md.Format) == DXGI_FORMAT_R32G32_FLOAT ? DXGI_FORMAT_R32G32_FLOAT
+                                                                                : DXGI_FORMAT_R16G16_FLOAT;
+      if (MaskedVectors(static_cast<uint32_t>(md.Width), md.Height, mf)) {
+        Barrier(l, masked_mv_.Get(), kRead, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        Dispatch(l, pso_hudmask_cs_.Get(), kUavMasked, static_cast<UINT>(md.Width), md.Height, 8);
+        Barrier(l, masked_mv_.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kRead);
+        masked_guides = *g;
+        masked_guides.mvec = masked_mv_.Get();
+        g = &masked_guides;
+      }
     }
 
     // 2. NR on the reduced image, with the game's guides where there are some; each later pass on the
@@ -1343,6 +1409,102 @@ class Runtime {
     Sleep(50);
   }
 
+  // 1.12.1 (N2): a format a shader reads the game's vectors with.
+  static DXGI_FORMAT VectorFormat(DXGI_FORMAT f) {
+    switch (f) {
+      case DXGI_FORMAT_R16G16_TYPELESS: return DXGI_FORMAT_R16G16_FLOAT;
+      case DXGI_FORMAT_R32G32_TYPELESS: return DXGI_FORMAT_R32G32_FLOAT;
+      default: return f;
+    }
+  }
+  // The image before the HUD compares with the frame: same size, same kind of format.
+  static bool HudlessFits(ID3D12Resource* hudless, ID3D12Resource* frame) {
+    const D3D12_RESOURCE_DESC h = hudless->GetDesc(), f = frame->GetDesc();
+    return h.Width == f.Width && h.Height == f.Height && Unorm(h.Format) == Unorm(f.Format);
+  }
+  // The HUD-masked vectors' texture, of the game's vectors' size.
+  bool MaskedVectors(uint32_t w, uint32_t h, DXGI_FORMAT f) {
+    if (masked_mv_) {
+      const D3D12_RESOURCE_DESC d = masked_mv_->GetDesc();
+      if (d.Width == w && d.Height == h && d.Format == f) return true;
+      masked_old_ = std::move(masked_mv_);  // lists of earlier frames may still read it
+    }
+    D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC d{};
+    d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    d.Width = w;
+    d.Height = h;
+    d.DepthOrArraySize = 1;
+    d.MipLevels = 1;
+    d.Format = f;
+    d.SampleDesc.Count = 1;
+    d.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    if (FAILED(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &d, kRead, nullptr,
+                                                IID_PPV_ARGS(&masked_mv_))))
+      return false;
+    masked_mv_->SetName(L"MFG Unlock DLSS 5 vectors without the HUD");
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uv{};
+    uv.Format = f;
+    uv.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    device_->CreateUnorderedAccessView(masked_mv_.Get(), nullptr, &uv, Cpu(kUavMasked));
+    return true;
+  }
+  // 1.12.1 (N2, N3): the statistics of three frames ago, then this frame's, into a ring of four readbacks.
+  // `cut_route`: this frame's motion is the image's or the TAA's (no reset of the game's); `hud`: the image
+  // before the HUD is bound.
+  void Stats(ID3D12GraphicsCommandList* l, bool cut_route, bool hud) {
+    if (!stats_read_) stats_read_ = Buffer(4 * 256);
+    if (!stats_read_) return;
+    const UINT read_slot = static_cast<UINT>((frame_index_ + 1) % 4), write_slot = static_cast<UINT>(frame_index_ % 4);
+    if (stats_written_[read_slot] != 0 && frame_index_ + 1 >= stats_written_[read_slot] + 3) {
+      float* v = nullptr;
+      D3D12_RANGE range{read_slot * 256, read_slot * 256 + 16};
+      if (SUCCEEDED(stats_read_->Map(0, &range, reinterpret_cast<void**>(&v)))) {
+        const float cut = v[read_slot * 64], share = v[read_slot * 64 + 1];
+        D3D12_RANGE none{0, 0};
+        stats_read_->Unmap(0, &none);
+        // N3: a camera cut: NR's history is of the scene before it.
+        const uint64_t now = GetTickCount64();
+        if (stats_cut_route_[read_slot] && cut > 0.12f && now - last_cut_ > 500) {
+          last_cut_ = now;
+          reset_ = true;
+          if (cut_reports_++ < 5) {
+            char t[96];
+            std::snprintf(t, sizeof(t), "camera cut (luma change %.2f): NR's history starts again", cut);
+            Log(t);
+          }
+        }
+        // N2: the mask only while the HUD is a small part of the screen.
+        if (hud) {
+          const bool ok = share < 0.3f;
+          if (ok != hud_mask_ok_ && hud_reports_++ < 6) {
+            char t[160];
+            std::snprintf(t, sizeof(t), ok ? "HUD: the game's vectors are zeroed on the HUD (%.0f%% of the screen)"
+                                           : "HUD: the image before the HUD differs over %.0f%% of the screen: the game's "
+                                             "vectors are used as they are",
+                          share * 100.f);
+            Log(t);
+          }
+          hud_mask_ok_ = ok;
+        }
+      }
+      stats_written_[read_slot] = 0;
+    }
+    if (!hud) hud_mask_ok_ = false;
+    if (!cut_route && !hud) return;
+    Barrier(l, stats_.Get(), kRead, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    Dispatch(l, pso_stats_cs_.Get(), kUavStats, 1, 1, 1);
+    Barrier(l, stats_.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    D3D12_TEXTURE_COPY_LOCATION src{stats_.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+    D3D12_TEXTURE_COPY_LOCATION dst{stats_read_.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
+    dst.PlacedFootprint.Offset = write_slot * 256;
+    dst.PlacedFootprint.Footprint = {DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 1, 1, 256};
+    l->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    Barrier(l, stats_.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, kRead);
+    stats_written_[write_slot] = frame_index_ + 1;  // 0 stays "none"
+    stats_cut_route_[write_slot] = cut_route;
+  }
+
   // Everything made on the device, released, so the runtime can start again on another one.
   void Teardown() {
     if (fence_ && fence_value_ && fence_->GetCompletedValue() < fence_value_) {
@@ -1366,6 +1528,10 @@ class Runtime {
     pso_luma_cs_.Reset(); pso_coarse_cs_.Reset(); pso_fine_cs_.Reset(); pso_flat_cs_.Reset(); pso_calibrate_cs_.Reset();
     cs_luma_.Reset(); cs_coarse_.Reset(); cs_fine_.Reset(); cs_flat_.Reset(); cs_calibrate_.Reset();
     calib_.Reset(); calib_read_.Reset(); calib_pending_ = false;
+    stats_.Reset(); stats_read_.Reset(); masked_mv_.Reset(); masked_old_.Reset();  // 1.12.1 (N2, N3)
+    cs_hudmask_.Reset(); cs_stats_.Reset(); pso_hudmask_cs_.Reset(); pso_stats_cs_.Reset();
+    for (auto& w : stats_written_) w = 0;
+    hud_mask_ok_ = false;
     srv_heap_.Reset();
     rtv_heap_.Reset();
     for (auto& t : steady_) t.Reset();
@@ -1599,7 +1765,8 @@ class Runtime {
         !build("meter_cs", "cs_5_0", cs_meter_) || !build("compose_cs", "cs_5_0", cs_compose_) ||
         !build("luma_cs", "cs_5_0", cs_luma_) || !build("coarse_cs", "cs_5_0", cs_coarse_) ||
         !build("fine_cs", "cs_5_0", cs_fine_) || !build("flat_cs", "cs_5_0", cs_flat_) ||
-        !build("calibrate_cs", "cs_5_0", cs_calibrate_))
+        !build("calibrate_cs", "cs_5_0", cs_calibrate_) || !build("hudmask_cs", "cs_5_0", cs_hudmask_) ||
+        !build("stats_cs", "cs_5_0", cs_stats_))
       return Fail("shader compilation");
     D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kTable, 0, 0, 0};
     D3D12_DESCRIPTOR_RANGE uav_range{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 0};
@@ -1645,8 +1812,10 @@ class Runtime {
     pso_fine_cs_ = compute(cs_fine_.Get());
     pso_flat_cs_ = compute(cs_flat_.Get());
     pso_calibrate_cs_ = compute(cs_calibrate_.Get());
+    pso_hudmask_cs_ = compute(cs_hudmask_.Get());
+    pso_stats_cs_ = compute(cs_stats_.Get());
     if (!pso_reduce_cs_ || !pso_stabilize_cs_ || !pso_meter_cs_ || !pso_compose_cs_ || !pso_luma_cs_ || !pso_coarse_cs_ ||
-        !pso_fine_cs_ || !pso_flat_cs_ || !pso_calibrate_cs_)
+        !pso_fine_cs_ || !pso_flat_cs_ || !pso_calibrate_cs_ || !pso_hudmask_cs_ || !pso_stats_cs_)
       return Fail("pipeline");
     // Two tables, one per history parity (t3/t5 last frame's, t4/t6 this frame's), the passes' outputs,
     // then a ring of unordered-access views of the upscaler's output.
@@ -1731,8 +1900,9 @@ class Runtime {
     flat_depth_ = texture(motion_w_, motion_h_, DXGI_FORMAT_R32_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, kRead);
     flat_done_ = false;
     if (!calib_) calib_ = texture(2, 1, DXGI_FORMAT_R32G32B32A32_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, kRead);
+    if (!stats_) stats_ = texture(1, 1, DXGI_FORMAT_R32G32B32A32_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, kRead);
     if (!full_ || !low_ || !enhanced_ || !steady_[0] || !steady_[1] || !meter_[0] || !meter_[1] || !luma_[0] ||
-        !luma_[1] || !motion_coarse_ || !motion_ || !flat_depth_ || !calib_)
+        !luma_[1] || !motion_coarse_ || !motion_ || !flat_depth_ || !calib_ || !stats_)
       return false;
     const auto uav = [&](ID3D12Resource* r, DXGI_FORMAT f, UINT slot) {
       D3D12_UNORDERED_ACCESS_VIEW_DESC uv{};
@@ -1750,6 +1920,7 @@ class Runtime {
     uav(motion_.Get(), DXGI_FORMAT_R16G16_FLOAT, kUavMotion);
     uav(flat_depth_.Get(), DXGI_FORMAT_R32_FLOAT, kUavFlat);
     uav(calib_.Get(), DXGI_FORMAT_R32G32B32A32_FLOAT, kUavCalib);
+    uav(stats_.Get(), DXGI_FORMAT_R32G32B32A32_FLOAT, kUavStats);
     rtv_desc_ = {};
     rtv_desc_.Format = format;
     rtv_desc_.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
@@ -1801,7 +1972,7 @@ class Runtime {
                  (kBase + kTable * table_slot_);
     return table;
   }
-  void WriteTable(DXGI_FORMAT format, const TaaInputs* taa) {
+  void WriteTable(DXGI_FORMAT format, const TaaInputs* taa, const Guides* masked = nullptr) {
     table_slot_ = (table_slot_ + 1) % kTableRing;
     D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
     sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -1822,6 +1993,9 @@ class Runtime {
         {motion_coarse_.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT},
         {motion_.Get(), DXGI_FORMAT_R16G16_FLOAT},
         {taa ? taa->motion : nullptr, taa ? taa->motion_format : DXGI_FORMAT_R16G16_FLOAT},
+        // 1.12.1 (N2): the image before the HUD and the game's vectors, for the mask and the statistics.
+        {masked ? masked->hudless : nullptr, masked ? Unorm(masked->hudless->GetDesc().Format) : DXGI_FORMAT_R8G8B8A8_UNORM},
+        {masked ? masked->mvec : nullptr, masked ? VectorFormat(masked->mvec->GetDesc().Format) : DXGI_FORMAT_R16G16_FLOAT},
     };
     for (UINT i = 0; i < kTable; ++i) {
       sv.Format = views[i].f;
@@ -1932,12 +2106,13 @@ class Runtime {
   uint64_t frame_index_ = 0;
   // full, reduced, enhanced, steadied before/now, meter before/now, luma before/now, coarse and fine
   // estimated motion, the game's TAA motion.
-  static constexpr UINT kTable = 12;
+  static constexpr UINT kTable = 14;
   static constexpr UINT kTableRing = 8;
   static constexpr UINT kUavLow = kTableRing * kTable, kUavSteady = kUavLow + 1, kUavMeter = kUavSteady + 2;
   static constexpr UINT kUavLuma = kUavMeter + 2, kUavCoarse = kUavLuma + 2, kUavMotion = kUavCoarse + 1;
   static constexpr UINT kUavFlat = kUavMotion + 1, kUavCalib = kUavFlat + 1;
-  static constexpr UINT kUavRingStart = kUavCalib + 1;
+  static constexpr UINT kUavStats = kUavCalib + 1, kUavMasked = kUavStats + 1;  // 1.12.1 (N2, N3)
+  static constexpr UINT kUavRingStart = kUavMasked + 1;
   static constexpr UINT kUavRing = 8;  // views of the upscaler's output, one per frame in flight
   static constexpr UINT kBase = 0;  // where our views start in the heap
   // Our textures rest readable by compute only: the upscaler's command list can be a compute list, where
@@ -1965,6 +2140,15 @@ class Runtime {
   double pool_[7]{};
   TaaInputs taa_{};
   GameGuides game_{};  // 1.12.1 (D1)
+  // 1.12.1 (N2, N3): the statistics pass's texture and its readback ring, the HUD-masked vectors.
+  ComPtr<ID3D12Resource> stats_, stats_read_, masked_mv_, masked_old_;
+  ComPtr<ID3DBlob> cs_hudmask_, cs_stats_;
+  ComPtr<ID3D12PipelineState> pso_hudmask_cs_, pso_stats_cs_;
+  uint64_t stats_written_[4]{};  // the frame each readback slot was written in (0: none)
+  bool stats_cut_route_[4]{};    // whether that frame's route had no reset of the game's
+  bool hud_mask_ok_ = false;
+  int hud_reports_ = 0, cut_reports_ = 0;
+  uint64_t last_cut_ = 0;
   std::string version_, missing_;  // 1.12.1 (D4)
   uint64_t vram_before_ = 0;       // 1.12.1 (D6)
   bool vram_measured_ = false;
