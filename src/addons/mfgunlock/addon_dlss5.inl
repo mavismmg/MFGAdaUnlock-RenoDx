@@ -26,7 +26,7 @@ inline mfgunlock::nr::Encoding CurrentEncoding() { return static_cast<mfgunlock:
 enum Index : size_t {
   kEnabled, kNetwork, kStyle, kIntensity, kTone, kStructure, kSkin, kProtectHud, kScale, kStability, kHookPoint,
   kPaperWhite, kMotion, kTaaFinder, kToggleKey, kCompareKey, kKeyModifier, kVramMargin, kCoexist, kAllowUnsigned,
-  kPasses
+  kPasses, kBudget
 };
 inline int Setting(Index i) { return _wtoi(adv::Current(adv::kDlss5[i]).c_str()); }
 // Off by the on/off key: until pressed again, the session runs without NR (the setting stays).
@@ -34,6 +34,9 @@ inline std::atomic_bool g_bypassed{false};
 // When ReShade last rendered effects (Vulkan: NR runs in begin_effects then, else in Present).
 inline std::atomic<uint64_t> g_effects_tick{0};
 inline bool Enabled() { return Setting(kEnabled) != 0 && !g_bypassed.load(std::memory_order_relaxed); }
+// 1.12.1 (D3): the XeMFG backend. NR runs only after the game's DLSS SR there (the XeMFG engine's NGX hooks,
+// xemfg/nr_bridge.hpp): ReShade's Present may also carry XeFG's generated frames.
+inline std::atomic_bool g_xemfg{false};
 inline mfgunlock::nr::Look CurrentLook() {
   mfgunlock::nr::Look look;
   look.preset = Setting(kNetwork) == 1 ? 1u : 0u;
@@ -95,6 +98,38 @@ inline void Configure() {
   g_runtime.Coexist(Setting(kCoexist) == 0);
   g_runtime.Passes(std::clamp(Setting(kPasses), 1, 3));
   mfgunlock::nr::vk::Passes(std::clamp(Setting(kPasses), 1, 3));
+}
+// 1.12.1 (D5): NR's resolution (%) for D3D12. With [DLSS5] Budget (ms) set, it follows NR's measured GPU
+// time every 2 s: down 10 points (to 50%) above the budget, up 5 (to Scale) well below it. NR cost 5.2 ms
+// after the upscaler and 10.6 ms before Present in the same game (CONTROL, 1440p): one fixed scale fits
+// neither.
+inline std::atomic<int> g_budget_scale{0};
+inline std::atomic<uint64_t> g_budget_tick{0};
+inline int EffectiveScale() {
+  const int user = std::clamp(Setting(kScale), 25, 100);
+  const int budget = std::clamp(Setting(kBudget), 0, 20);
+  if (budget == 0) {
+    g_budget_scale.store(0, std::memory_order_relaxed);
+    return user;
+  }
+  int scale = g_budget_scale.load(std::memory_order_relaxed);
+  if (scale == 0 || scale > user) scale = user;
+  const uint64_t now = GetTickCount64();
+  if (g_runtime.state() == mfgunlock::nr::State::kRunning && now - g_budget_tick.load(std::memory_order_relaxed) >= 2000) {
+    g_budget_tick.store(now, std::memory_order_relaxed);
+    const double ms = g_runtime.gpu_ms();
+    const int before = scale;
+    if (ms > budget * 1.1 && scale > 50) scale = (std::max)(50, scale - 10);
+    else if (ms > 0.0 && ms < budget * 0.75 && scale < user) scale = (std::min)(user, scale + 5);
+    if (scale != before) {
+      char text[128];
+      std::snprintf(text, sizeof(text), "mfgunlock: DLSS 5: GPU budget %d ms: NR %.1f ms, resolution %d%% -> %d%%.",
+                    budget, ms, before, scale);
+      reshade::log::message(reshade::log::level::info, text);
+    }
+  }
+  g_budget_scale.store(scale, std::memory_order_relaxed);
+  return scale;
 }
 
 // ---- Phase F: the game's own TAA motion and depth (D3D12, before Present).
@@ -263,7 +298,7 @@ inline bool LocateFiles(std::wstring& runtime, std::wstring& shim) {
   Locate();
   using mfgunlock::nr::State;
   const State s = g_runtime.state();
-  if (s == State::kNoRuntime || s == State::kUnsigned || s == State::kNoShim) return false;
+  if (s == State::kNoRuntime || s == State::kUnsigned || s == State::kNoShim || s == State::kNotNr) return false;
   runtime = g_runtime.runtime_path();
   shim = g_runtime.shim_path();
   return !runtime.empty() && !shim.empty();
@@ -272,17 +307,47 @@ inline bool GameFrameGeneration() {
   return mfgunlock::framecount::g_actual_frames_presented.load(std::memory_order_relaxed) > 1 ||
          (mfgunlock::xmx::generator::Enabled() && mfgunlock::xmx::generator::Snapshot().generating);
 }
-inline void Run(ID3D12CommandQueue* queue, ID3D12Resource* backbuffer, mfgunlock::nr::Encoding encoding) {
+inline void Run(ID3D12CommandQueue* queue, ID3D12Resource* backbuffer, mfgunlock::nr::Encoding encoding,
+                const mfgunlock::nr::GameGuides* game = nullptr) {
   Configure();
   mfgunlock::nr::TaaInputs found;
   const auto desc = backbuffer->GetDesc();
-  const bool have = taa::g_registered && Setting(kMotion) != 2 &&
+  const bool have = game == nullptr && taa::g_registered && Setting(kMotion) != 2 &&
                     taa::Pick(static_cast<uint32_t>(desc.Width), desc.Height, found);
-  g_runtime.Apply(queue, backbuffer, D3D12_RESOURCE_STATE_PRESENT, CurrentLook(), std::clamp(Setting(kScale), 25, 100),
-                  encoding, have ? &found : nullptr);
+  g_runtime.Apply(queue, backbuffer, D3D12_RESOURCE_STATE_PRESENT, CurrentLook(), EffectiveScale(), encoding,
+                  have ? &found : nullptr, game);
+}
+// 1.12.1 (D1): the motion vectors and depth the game tagged to its Streamline this frame, as NR's guides
+// (scaled like before frame generation: Streamline's scale takes them to the screen's 0..1).
+inline bool TaggedGuides(mfgunlock::nr::GameGuides& out) {
+  if (Setting(kMotion) == 2) return false;
+  mfgunlock::nr::slguides::Guide motion, depth;
+  if (!mfgunlock::nr::slguides::Take(motion, depth)) return false;
+  auto& g = out.g;
+  g.mvec = motion.resource;
+  g.depth = depth.resource;
+  g.mv_x = motion.x; g.mv_y = motion.y; g.mv_w = motion.w; g.mv_h = motion.h;
+  g.depth_x = depth.x; g.depth_y = depth.y; g.depth_w = depth.w; g.depth_h = depth.h;
+  const float sx = mfgunlock::framecount::internal::g_sl_mvec_scale_x.load(std::memory_order_relaxed);
+  const float sy = mfgunlock::framecount::internal::g_sl_mvec_scale_y.load(std::memory_order_relaxed);
+  g.mv_scale_x = sx != 0.f ? sx * g.mv_w : 1.f;
+  g.mv_scale_y = sy != 0.f ? sy * g.mv_h : 1.f;
+  g.depth_inverted = mfgunlock::framecount::internal::g_sl_depth_inverted.load(std::memory_order_relaxed) == 1;
+  out.mvec_state = motion.state;
+  out.depth_state = depth.state;
+  static std::atomic_bool logged{false};
+  if (!logged.exchange(true)) {
+    char text[200];
+    std::snprintf(text, sizeof(text),
+                  "mfgunlock: DLSS 5: before Present with the motion vectors and depth the game gives its Streamline "
+                  "(%ux%u, depth %ux%u, vector scale %.3g x %.3g).",
+                  g.mv_w, g.mv_h, g.depth_w, g.depth_h, g.mv_scale_x, g.mv_scale_y);
+    reshade::log::message(reshade::log::level::info, text);
+  }
+  return true;
 }
 // The current back buffer of a swap chain (Streamline's proxy hands out the one the game rendered).
-inline void RunOn(IUnknown* chain, ID3D12CommandQueue* queue) {
+inline void RunOn(IUnknown* chain, ID3D12CommandQueue* queue, const mfgunlock::nr::GameGuides* game = nullptr) {
   static std::atomic_int reported{0};
   const auto report = [](int step, HRESULT hr) {
     if (reported.exchange(step) == step) return;
@@ -307,7 +372,7 @@ inline void RunOn(IUnknown* chain, ID3D12CommandQueue* queue) {
     if (FAILED(hr)) report(3, hr);
   }
   if (backbuffer != nullptr) {
-    Run(queue, backbuffer, CurrentEncoding());
+    Run(queue, backbuffer, CurrentEncoding(), game);
     backbuffer->Release();
   }
   if (own_queue) own_queue->Release();
@@ -354,11 +419,33 @@ inline bool ReframeworkLoaded() {
   return true;
 }
 inline bool PresentRoutes() {
+  if (g_xemfg.load(std::memory_order_relaxed)) return false;  // 1.12.1 (D3)
   const int point = Setting(kHookPoint);
   if (point == kHookAuto && ReframeworkLoaded()) return false;
-  const bool prefg = GetTickCount64() - g_prefg_seen.load(std::memory_order_relaxed) <= 1000;
-  if (point == kHookPresent) return !prefg;  // the real frame before frame generation stands for Present there
-  return point == kHookAuto && g_upscaled_tick.load(std::memory_order_relaxed) == 0 && !prefg;
+  if (point == kHookPresent) return true;  // with the real frame before frame generation (Claim below)
+  return point == kHookAuto && g_upscaled_tick.load(std::memory_order_relaxed) == 0;
+}
+// 1.12.1 (D2): one route at a time between "before the game's frame generation" and "before Present", kept
+// until it has not run for 5 s. Before, the route followed the game's frame generation within a second:
+// CONTROL Resonant turns it off in menus, and each change restarted NR's history (and its device object,
+// see nr_runtime.hpp's Prepare). With the game's own guides on the Present route too (D1), the two give
+// the same picture; the one that started keeps going.
+enum Route : int { kRouteNone = 0, kRoutePreFg = 1, kRoutePresent = 2 };
+inline std::atomic<int> g_route_owner{kRouteNone};
+inline std::atomic<uint64_t> g_route_tick{0};
+inline constexpr uint64_t kRouteHoldMs = 5000;
+inline bool Claim(int route) {
+  const uint64_t now = GetTickCount64();
+  int owner = g_route_owner.load(std::memory_order_relaxed);
+  if (owner != route) {
+    if (owner != kRouteNone && now - g_route_tick.load(std::memory_order_relaxed) < kRouteHoldMs) return false;
+    if (!g_route_owner.compare_exchange_strong(owner, route, std::memory_order_relaxed)) return false;
+    reshade::log::message(reshade::log::level::info,
+                          route == kRoutePreFg ? "mfgunlock: DLSS 5: route: before the game's frame generation."
+                                               : "mfgunlock: DLSS 5: route: before Present.");
+  }
+  g_route_tick.store(now, std::memory_order_relaxed);
+  return true;
 }
 // Why the route after the upscaler did not run, once per reason, for a tester's log.
 inline void Skipped(int reason, const char* why) {
@@ -416,13 +503,15 @@ inline void AfterUpscaler(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Param
   p->Get(NVSDK_NGX_Parameter_Reset, &reset);
   g.reset = reset != 0;
   Configure();
-  if (!g_runtime.ApplyAfterUpscale(list, output, g, CurrentLook(), std::clamp(Setting(kScale), 25, 100))) {
+  if (!g_runtime.ApplyAfterUpscale(list, output, g, CurrentLook(), EffectiveScale())) {
     char why[96];
     std::snprintf(why, sizeof(why), "the runtime declined (state %d, output format %d)", static_cast<int>(g_runtime.state()),
                   static_cast<int>(od.Format));
     return Skipped(4, why);
   }
   if (g_upscaled_tick.exchange(GetTickCount64(), std::memory_order_relaxed) == 0) {
+    // 1.12.1 (D1): NR runs here from now on; the tags' copies for the Present route are not needed.
+    mfgunlock::nr::slguides::g_wanted.store(false, std::memory_order_relaxed);
     char text[200];
     std::snprintf(text, sizeof(text),
                   "mfgunlock: DLSS 5: after the game's upscaler: output %llux%u (format %d), guides %ux%u, "
@@ -454,6 +543,7 @@ inline void BeforeFrameGeneration(ID3D12GraphicsCommandList* list, const NVSDK_N
   unsigned index = 0;
   p->Get("DLSSG.MultiFrameIndex", &index);
   if (index > 1) return;
+  if (!Claim(kRoutePreFg)) return;  // 1.12.1 (D2)
   mfgunlock::nr::Guides g;
   if (Setting(kMotion) != 2 && mvec && depth) {
     const auto md = mvec->GetDesc(), dd = depth->GetDesc();
@@ -476,7 +566,7 @@ inline void BeforeFrameGeneration(ID3D12GraphicsCommandList* list, const NVSDK_N
                                           ? D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
                                           : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
   Configure();
-  if (!g_runtime.ApplyAfterUpscale(list, backbuffer, g, CurrentLook(), std::clamp(Setting(kScale), 25, 100), state,
+  if (!g_runtime.ApplyAfterUpscale(list, backbuffer, g, CurrentLook(), EffectiveScale(), state,
                                    static_cast<int>(CurrentEncoding()), 4)) {
     char why[96];
     std::snprintf(why, sizeof(why), "before frame generation, the runtime declined (state %d)", static_cast<int>(g_runtime.state()));
@@ -500,13 +590,15 @@ inline void ProxyFrame(IUnknown* chain, IUnknown* queue_object) {
     g_runtime.Off();
     return;
   }
-  if (!PresentRoutes()) return;
+  if (!PresentRoutes() || !Claim(kRoutePresent)) return;
   if (!g_proxy_frames.exchange(true, std::memory_order_relaxed))
     reshade::log::message(reshade::log::level::info,
                           "mfgunlock: DLSS 5: on the game's Present to Streamline, before its frame generation.");
   ID3D12CommandQueue* queue = nullptr;
   if (queue_object != nullptr) queue_object->QueryInterface(IID_PPV_ARGS(&queue));
-  RunOn(chain, queue);
+  mfgunlock::nr::GameGuides game;
+  const bool tagged = TaggedGuides(game);
+  RunOn(chain, queue, tagged ? &game : nullptr);
   if (queue) queue->Release();
 }
 // The hosted Streamline's Present, before Streamline gets the frame (sl_host.hpp).
@@ -515,7 +607,7 @@ inline void HostFrame(IDXGISwapChain* chain, ID3D12CommandQueue* queue) {
     g_runtime.Off();
     return;
   }
-  if (!PresentRoutes()) return;
+  if (!PresentRoutes() || !Claim(kRoutePresent)) return;
   RunOn(chain, queue);
 }
 
@@ -649,6 +741,7 @@ inline void OnPresent(reshade::api::command_queue* queue, reshade::api::swapchai
     g_runtime.Pause(mfgunlock::nr::State::kWithGameFg);
     return;
   }
+  if (!Claim(kRoutePresent)) return;  // 1.12.1 (D2)
   Run(reinterpret_cast<ID3D12CommandQueue*>(queue->get_native()),
       reinterpret_cast<ID3D12Resource*>(swapchain->get_current_back_buffer().handle), CurrentEncoding());
 }
@@ -675,11 +768,14 @@ inline void Register() {
   }
   mfgunlock::slhost::internal::on_game_frame_nr.store(&internal::HostFrame, std::memory_order_release);
   mfgunlock::framecount::internal::g_on_proxy_present_nr.store(&internal::ProxyFrame, std::memory_order_release);
+  // 1.12.1 (D1): the game's Streamline tags, copied for NR's Present route (wanted at load).
+  mfgunlock::nr::slguides::g_wanted.store(internal::Setting(internal::kEnabled) != 0, std::memory_order_relaxed);
   mfgunlock::nr::upscaler::g_after.store(&internal::AfterUpscaler, std::memory_order_release);
   mfgunlock::nr::upscaler::g_before_fg.store(&internal::BeforeFrameGeneration, std::memory_order_release);
   reshade::register_event<reshade::addon_event::present>(&OnPresent);
   reshade::register_event<reshade::addon_event::reshade_begin_effects>(&OnBeginEffects);
   mfgunlock::nr::vk::g_locate.store(&internal::LocateFiles);
+  if (internal::g_xemfg.load()) return;  // 1.12.1 (D3): after the upscaler only
   // Vulkan: NR's device extensions go in when the game makes its device (wanted at load).
   if (internal::Setting(internal::kEnabled) != 0) mfgunlock::nr::vk::Hook();
   // The TAA finder watches the game's resources: only when wanted at load (DLSS 5 on, motion not off).
@@ -687,6 +783,32 @@ inline void Register() {
       internal::Setting(internal::kMotion) != 2)
     internal::taa::Register();
 }
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+// 1.12.1 (D3): the XeMFG backend. The DLSS 5 page always (to turn it on); NR's hooks when on at load.
+inline void DrawPage();
+inline void RegisterXemfg() {
+  namespace bridge = mfgunlock::xemfg::native::nrbridge;
+  internal::g_xemfg.store(true);
+  bridge::g_page.store(&DrawPage, std::memory_order_release);
+  if (internal::Setting(internal::kEnabled) == 0) return;
+  bridge::g_created.store(
+      [](int feature, const NVSDK_NGX_Parameter* params, const void* handle) {
+        mfgunlock::nr::upscaler::Created(feature, params, handle);
+      },
+      std::memory_order_release);
+  bridge::g_evaluated.store(
+      [](ID3D12GraphicsCommandList* list, const void* handle, const NVSDK_NGX_Parameter* params) {
+        mfgunlock::nr::upscaler::Evaluated(list, handle, params);
+      },
+      std::memory_order_release);
+  bridge::g_released.store([](const void* handle) { mfgunlock::nr::upscaler::Released(handle); },
+                           std::memory_order_release);
+  Register();
+  reshade::log::message(reshade::log::level::info,
+                        "mfgunlock: DLSS 5 with XeMFG: NR runs after the game's DLSS Super Resolution (XeMFG's "
+                        "DLSS SR input must be on).");
+}
+#endif
 inline void Unregister() {
   mfgunlock::slhost::internal::on_game_frame_nr.store(nullptr, std::memory_order_release);
   mfgunlock::framecount::internal::g_on_proxy_present_nr.store(nullptr, std::memory_order_release);
@@ -703,13 +825,16 @@ inline std::string Describe() {
   const auto& r = internal::g_runtime;
   static const char* kNames[] = {"off", "no runtime", "unsigned runtime refused", "shim missing", "runtime refused the GPU",
                                  "unsupported format", "game frame generation", "failed", "running", "paused for VRAM",
-                                 "standing aside for another DLSS 5 mod"};
+                                 "standing aside for another DLSS 5 mod", "not NVIDIA's NR runtime"};
   std::string text = kNames[static_cast<int>(r.state())];
   if (internal::g_bypassed.load()) text += " (off by key)";
   if (!r.runtime_path().empty()) {
     char path[MAX_PATH]{};
     std::snprintf(path, sizeof(path), "%ls", r.runtime_path().c_str());
     text += std::string("; runtime ") + path + (r.runtime_signed() ? " (signed by NVIDIA)" : " (unsigned)");
+    // 1.12.1 (D4)
+    if (!r.runtime_version().empty()) text += ", version " + r.runtime_version();
+    if (!r.missing_exports().empty()) text += ", lacks " + r.missing_exports();
   }
   if (r.state() == State::kRunning) {
     const auto& st = mfgunlock::nr::g_status;
@@ -720,6 +845,11 @@ inline std::string Describe() {
     std::snprintf(t, sizeof(t), "; %ux%u, %.1f ms GPU, %s, %s", r.width(), r.height(), r.gpu_ms(),
                   kRoutes[std::clamp(st.route.load(), 0, 4)], kGuides[std::clamp(st.guides.load(), 0, 3)]);
     text += t;
+    // 1.12.1 (D5, D6)
+    if (const int scale = internal::g_budget_scale.load(); scale != 0)
+      text += "; budget " + std::to_string(internal::Setting(internal::kBudget)) + " ms, resolution " +
+              std::to_string(scale) + "%";
+    if (r.vram_mib() > 0) text += "; NR video memory about " + std::to_string(r.vram_mib()) + " MiB";
   }
   return text;
 }
@@ -744,7 +874,10 @@ inline void DrawStatus() {
                          Str::kDlss5GuidesTaa_n80};
     char what[256];
     char cost[32] = "";
-    if (st.ms.load() > 0.f) std::snprintf(cost, sizeof(cost), " · %.1f ms", st.ms.load());
+    if (st.ms.load() > 0.f && r.vram_mib() > 0)  // 1.12.1 (D6)
+      std::snprintf(cost, sizeof(cost), " · %.1f ms · %d MiB", st.ms.load(), r.vram_mib());
+    else if (st.ms.load() > 0.f)
+      std::snprintf(cost, sizeof(cost), " · %.1f ms", st.ms.load());
     std::snprintf(what, sizeof(what), "%s, %s · %ux%u%s", T(routes[route]), T(kinds[guides]), st.width.load(), st.height.load(),
                   cost);
     char line[320];
@@ -765,11 +898,23 @@ inline void DrawStatus() {
            : s == State::kWithGameFg ? T(Str::kDlss5StateGameFg_n34)
            : s == State::kFailed     ? T(Str::kDlss5StateFailed_n35)
            : s == State::kVram       ? T(Str::kDlss5StateVram_n64)
+           : s == State::kNotNr      ? T(Str::kDlss5StateNotNr_n105)
            : mfgunlock::nr::vk::NeedsRestart() ? T(Str::kDlss5StateVulkanExt_n91)
                                      : T(Str::kDlss5StateOff_n27);
     color = s == State::kOff ? ui::Muted : ui::Warning;
   }
   ui::StatusChip(text.c_str(), color);
+  // 1.12.1 (D4): an unsigned runtime refused: allow this file here, without a restart.
+  if (Setting(kEnabled) != 0 && s == State::kUnsigned) {
+    ui::ButtonRow row(1);
+    if (row(T(Str::kDlss5AllowThisFile_n106), T(Str::kDlss5AllowUnsignedDesc_n4))) {
+      adv::Store(adv::kDlss5[kAllowUnsigned], L"1");
+      wchar_t configured[MAX_PATH]{};
+      GetPrivateProfileStringW(L"DLSS5", L"RuntimePath", L"", configured, MAX_PATH, Ini().c_str());
+      g_runtime.Locate(mfgunlock::backend::Directory(), configured, true);
+    }
+  }
+  if (s == State::kNotNr && !r.missing_exports().empty()) ui::Description(r.missing_exports().c_str());
   if (st.compare.load()) ui::Notice(T(Str::kDlss5Comparing_n82), ui::Accent);
   const std::string toggle = KeyName(Setting(kToggleKey)), compare = KeyName(Setting(kCompareKey));
   if (!toggle.empty() && !compare.empty()) {
@@ -828,6 +973,7 @@ inline void DrawPage() {
     ui::Card card("##dlss5_hero");
     adv::DrawOption(adv::kDlss5[kEnabled]);
     DrawStatus();
+    if (g_xemfg.load()) ui::Description(T(Str::kDlss5XemfgNote_n102));  // 1.12.1 (D3)
   }
   if (ui::SectionHeader(T(Str::kDlss5SectionLook_n67), true)) {
     ui::Card card("##dlss5_look_card");
@@ -836,7 +982,8 @@ inline void DrawPage() {
   }
   if (ui::SectionHeader(T(Str::kDlss5SectionQuality_n68), true)) {
     ui::Card card("##dlss5_quality_card");
-    for (Index i : {kScale, kPasses, kHookPoint, kMotion, kTaaFinder, kStability, kProtectHud}) adv::DrawOption(adv::kDlss5[i]);
+    for (Index i : {kScale, kBudget, kPasses, kHookPoint, kMotion, kTaaFinder, kStability, kProtectHud})
+      adv::DrawOption(adv::kDlss5[i]);
   }
   const bool hdr = CurrentEncoding() != mfgunlock::nr::Encoding::kSdr;
   if (ui::SectionHeader(T(Str::kDlss5SectionHdr_n69), hdr)) {

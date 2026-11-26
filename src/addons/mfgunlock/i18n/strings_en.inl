@@ -1122,3 +1122,8 @@
 /* kDlss5Pass2_n100 */ "2",
 /* kDlss5Pass3_n101 */ "3",
 /* kHostSwapChainOutside_s9 */ "The game created its window without passing through MFG Unlock's Streamline, so frame generation cannot be added. Another module took the swap chain's creation: %s. Remove it from the game's folder (turning its effect off is not enough) and restart the game.",
+/* kDlss5XemfgNote_n102 */ "With XeMFG, NR runs after the game's DLSS Super Resolution, before XeFG generates frames. Turn on XeMFG's DLSS SR input on the General tab, and use DLSS SR in the game.",
+/* kDlss5Budget_n103 */ "GPU budget (ms)",
+/* kDlss5BudgetDesc_n104 */ "A GPU time for NR per frame, in milliseconds. NR's resolution then follows it: lower when NR costs more, back up to Resolution when it costs less. 0 = off (Resolution is used as set).",
+/* kDlss5StateNotNr_n105 */ "The nvngx_dlssnr.dll found is not NVIDIA's neural rendering runtime: it lacks the functions NR needs (listed below). Use NVIDIA's own file.",
+/* kDlss5AllowThisFile_n106 */ "Allow this file",

@@ -206,6 +206,7 @@ the effective downstream request separately.
 | `[DLSS5]` | `ProtectHud` | `1` | Lets NR mask the HUD it recognizes |
 | `[DLSS5]` | `Scale` | `100` | NR's resolution in percent of the output, `25`–`100`; `50` costs about a quarter |
 | `[DLSS5]` | `Passes` | `1` | NR again on its own result, `1`–`3`; each pass costs about as much as the first |
+| `[DLSS5]` | `Budget` | `0` | 1.12.1: a GPU time for NR in ms, `0`–`20`; NR's resolution follows it (down to 50%, up to `Scale`). `0` off |
 | `[DLSS5]` | `HookPoint` | `0` | Where NR runs: `0` Auto, `1` after the game's upscaler only, `2` Present |
 | `[DLSS5]` | `Motion` | `0` | Motion for NR: `0` Auto (the game's vectors, else estimated from the image), `1` the game's only, `2` off |
 | `[DLSS5]` | `TaaFinder` | `0` | Before Present: looks for the game's own TAA motion vectors and depth (experimental; restart) |

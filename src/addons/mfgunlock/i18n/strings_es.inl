@@ -1124,3 +1124,8 @@
 /* kDlss5Pass2_n100 */ "2",
 /* kDlss5Pass3_n101 */ "3",
 /* kHostSwapChainOutside_s9 */ "El juego creó su ventana sin pasar por el Streamline de MFG Unlock, así que no se puede añadir la generación de fotogramas. Otro módulo tomó la creación de la swap chain: %s. Quítalo de la carpeta del juego (desactivar su efecto no basta) y reinicia el juego.",
+/* kDlss5XemfgNote_n102 */ "Con XeMFG, NR se aplica después del DLSS Super Resolution del juego, antes de que XeFG genere fotogramas. Activa la entrada DLSS SR de XeMFG en la pestaña General y usa DLSS SR en el juego.",
+/* kDlss5Budget_n103 */ "Presupuesto de GPU (ms)",
+/* kDlss5BudgetDesc_n104 */ "Un tiempo de GPU para NR por fotograma, en milisegundos. La resolución de NR lo sigue: baja cuando NR cuesta más y vuelve hasta Resolución cuando cuesta menos. 0 = desactivado (se usa Resolución tal cual).",
+/* kDlss5StateNotNr_n105 */ "El nvngx_dlssnr.dll encontrado no es el runtime de renderizado neuronal de NVIDIA: le faltan funciones que NR necesita (abajo). Usa el archivo de NVIDIA.",
+/* kDlss5AllowThisFile_n106 */ "Permitir este archivo",

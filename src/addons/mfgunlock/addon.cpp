@@ -113,6 +113,7 @@
 #include "xemfg/backend_api.hpp"
 #ifdef MFGUNLOCK_NATIVE_XEMFG
 #include "xemfg/native_bridge.hpp"
+#include "xemfg/nr_bridge.hpp"  // 1.12.1 (D3)
 #ifdef MFGUNLOCK_XEMFG_VULKAN
 #include "xemfg/native_vulkan.hpp"
 #endif
@@ -1662,6 +1663,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
           reshade::register_event<reshade::addon_event::destroy_swapchain>(
               [](reshade::api::swapchain*, bool resize) { mfgunlock::sessionexit::OnDestroySwapchain(resize); });
           perfosd::Register();  // 1.11.0 (O)
+          dlss5::RegisterXemfg();  // 1.12.1 (D3)
         }
 #endif
         reshade::register_overlay("MFG Unlock", OnRegisterOverlay);

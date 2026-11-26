@@ -83,6 +83,14 @@ struct Guides {
   bool reset = false;
 };
 
+// 1.12.1 (D1): the game's own guides on the Present route (tagged to its Streamline, nr_sl_guides.hpp),
+// with the states they are in at Present.
+struct GameGuides {
+  Guides g;
+  D3D12_RESOURCE_STATES mvec_state = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+  D3D12_RESOURCE_STATES depth_state = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+};
+
 enum class State : int {
   kOff = 0,          // [DLSS5] Enabled=0
   kNoRuntime,        // no nvngx_dlssnr.dll found
@@ -95,6 +103,7 @@ enum class State : int {
   kRunning,
   kVram,             // paused: the GPU's memory is nearly full ([DLSS5] VramMargin)
   kForeign,          // standing aside: another DLSS 5 mod runs NR in this game ([DLSS5] Coexist)
+  kNotNr,            // 1.12.1 (D4): the nvngx_dlssnr.dll found lacks NR's exports (not NVIDIA's NR runtime)
 };
 
 // For the performance overlay and the panel: what NR does now. Written by the runtime, read anywhere.
@@ -522,6 +531,11 @@ class Runtime {
   const std::wstring& runtime_path() const { return runtime_path_; }
   const std::wstring& shim_path() const { return shim_path_; }
   bool runtime_signed() const { return signed_; }
+  // 1.12.1 (D4): the runtime file's version ("" unknown), and the exports it lacks (kNotNr).
+  const std::string& runtime_version() const { return version_; }
+  const std::string& missing_exports() const { return missing_; }
+  // 1.12.1 (D6): about how much video memory NR took when it started (MiB; 0 unknown).
+  int vram_mib() const { return vram_mib_.load(std::memory_order_relaxed); }
   double gpu_ms() const { return gpu_ms_.load(std::memory_order_relaxed); }
   uint32_t width() const { return low_w_; }
   uint32_t height() const { return low_h_; }
@@ -540,6 +554,20 @@ class Runtime {
         break;
       }
     if (runtime_path_.empty()) return Set(State::kNoRuntime);
+    // 1.12.1 (D4): what the file is, before anything loads it (Once Human, 2026-11-24: an unsigned
+    // nvngx_dlssnr.dll without NR's exports, found only when NR started).
+    version_ = FileVersion(runtime_path_);
+    missing_ = MissingExports(runtime_path_);
+    {
+      char t[MAX_PATH + 160];
+      std::snprintf(t, sizeof(t), "runtime %ls, version %s", runtime_path_.c_str(),
+                    version_.empty() ? "unknown" : version_.c_str());
+      Log(t);
+    }
+    if (!missing_.empty()) {
+      Log("this nvngx_dlssnr.dll lacks " + missing_ + ": it is not NVIDIA's NR runtime (or of another kind)");
+      return Set(State::kNotNr);
+    }
     signed_ = SignedByNvidia(runtime_path_);
     if (!signed_ && !allow_unsigned) return Set(State::kUnsigned);
     // The add-on's own copy first (always of its version); MFGUnlock-DLSS5's only if it cannot be written.
@@ -550,6 +578,107 @@ class Runtime {
     }
     if (shim_path_.empty()) return Set(State::kNoShim);
     return Set(State::kOff);  // ready to start on the first frame
+  }
+
+  // 1.12.1 (D4): the exports NR needs that `path` lacks, read from its export table without loading it
+  // ("" when all are there or the file cannot be read: Start checks again).
+  static std::string MissingExports(const std::wstring& path) {
+    static const char* kNeeded[] = {"NVSDK_NGX_D3D12_Init_Ext", "NVSDK_NGX_D3D12_CreateFeature",
+                                    "NVSDK_NGX_D3D12_EvaluateFeature", "NVSDK_NGX_D3D12_ReleaseFeature"};
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return {};
+    LARGE_INTEGER size{};
+    GetFileSizeEx(file, &size);
+    HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    CloseHandle(file);
+    if (mapping == nullptr) return {};
+    const auto* base = static_cast<const uint8_t*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0));
+    CloseHandle(mapping);
+    if (base == nullptr) return {};
+    std::vector<std::string> names;
+    const bool read = ReadExports(base, static_cast<uint64_t>(size.QuadPart), names);
+    UnmapViewOfFile(base);
+    if (!read) return {};
+    std::string missing;
+    for (const char* n : kNeeded) {
+      bool found = false;
+      for (const auto& e : names) found = found || e == n;
+      if (!found) missing += (missing.empty() ? "" : ", ") + std::string(n);
+    }
+    return missing;
+  }
+  // A fault reading a damaged file is a file that cannot be read.
+  static bool ReadExports(const uint8_t* base, uint64_t length, std::vector<std::string>& names) {
+    __try {
+      return ExportNames(base, length, names);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+      return false;
+    }
+  }
+  static bool ExportNames(const uint8_t* base, uint64_t length, std::vector<std::string>& names) {
+    if (length < sizeof(IMAGE_DOS_HEADER)) return false;
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE || uint64_t(dos->e_lfanew) + sizeof(IMAGE_NT_HEADERS64) > length) return false;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE || nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) return false;
+    const auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    if (dir.VirtualAddress == 0) return true;  // no exports at all
+    const auto* sections = IMAGE_FIRST_SECTION(nt);
+    const WORD count = nt->FileHeader.NumberOfSections;
+    const auto offset = [&](uint32_t rva) -> uint64_t {
+      for (WORD i = 0; i < count; ++i) {
+        const auto& sec = sections[i];
+        const uint32_t span = sec.Misc.VirtualSize > sec.SizeOfRawData ? sec.Misc.VirtualSize : sec.SizeOfRawData;
+        if (rva >= sec.VirtualAddress && rva < sec.VirtualAddress + span)
+          return uint64_t(sec.PointerToRawData) + (rva - sec.VirtualAddress);
+      }
+      return UINT64_MAX;
+    };
+    const uint64_t at = offset(dir.VirtualAddress);
+    if (at == UINT64_MAX || at + sizeof(IMAGE_EXPORT_DIRECTORY) > length) return false;
+    const auto* exports = reinterpret_cast<const IMAGE_EXPORT_DIRECTORY*>(base + at);
+    const uint64_t list = offset(exports->AddressOfNames);
+    if (list == UINT64_MAX || list + uint64_t(exports->NumberOfNames) * 4 > length) return false;
+    const auto* rvas = reinterpret_cast<const uint32_t*>(base + list);
+    for (DWORD i = 0; i < exports->NumberOfNames && i < 4096; ++i) {
+      const uint64_t name = offset(rvas[i]);
+      if (name == UINT64_MAX || name >= length) continue;
+      const char* text = reinterpret_cast<const char*>(base + name);
+      size_t n = 0;
+      while (name + n < length && n < 256 && text[n]) ++n;
+      names.emplace_back(text, n);
+    }
+    return true;
+  }
+  static std::string FileVersion(const std::wstring& path) {
+    DWORD ignored = 0;
+    const DWORD size = GetFileVersionInfoSizeW(path.c_str(), &ignored);
+    if (size == 0) return {};
+    std::vector<uint8_t> data(size);
+    VS_FIXEDFILEINFO* info = nullptr;
+    UINT bytes = 0;
+    if (!GetFileVersionInfoW(path.c_str(), 0, size, data.data()) ||
+        !VerQueryValueW(data.data(), L"\\", reinterpret_cast<void**>(&info), &bytes) || info == nullptr)
+      return {};
+    char text[64];
+    std::snprintf(text, sizeof(text), "%u.%u.%u.%u", HIWORD(info->dwFileVersionMS), LOWORD(info->dwFileVersionMS),
+                  HIWORD(info->dwFileVersionLS), LOWORD(info->dwFileVersionLS));
+    return text;
+  }
+  // 1.12.1 (D6): the video memory this process uses on `device`'s adapter, in bytes (0 unknown).
+  static uint64_t LocalUsage(ID3D12Device* device) {
+    if (device == nullptr) return 0;
+    using FactoryFn = HRESULT(WINAPI*)(REFIID, void**);
+    const HMODULE dxgi = LoadLibraryExW(L"dxgi.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    const auto create = dxgi ? reinterpret_cast<FactoryFn>(GetProcAddress(dxgi, "CreateDXGIFactory1")) : nullptr;
+    ComPtr<IDXGIFactory4> factory;
+    ComPtr<IDXGIAdapter3> adapter;
+    DXGI_QUERY_VIDEO_MEMORY_INFO info{};
+    if (!create || FAILED(create(IID_PPV_ARGS(&factory))) ||
+        FAILED(factory->EnumAdapterByLuid(device->GetAdapterLuid(), IID_PPV_ARGS(&adapter))) ||
+        FAILED(adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info)))
+      return 0;
+    return info.CurrentUsage;
   }
 
   // The shim the add-on carries (resource MFGUNLOCK_NR_SHIM), written once to
@@ -592,7 +721,7 @@ class Runtime {
 
   // The game's back buffer, before Present: NR applied in place, on a list of MFG Unlock's own.
   bool Apply(ID3D12CommandQueue* queue, ID3D12Resource* backbuffer, D3D12_RESOURCE_STATES bb_state, const Look& look,
-             int scale_percent, Encoding encoding, const TaaInputs* taa = nullptr) {
+             int scale_percent, Encoding encoding, const TaaInputs* taa = nullptr, const GameGuides* game = nullptr) {
     if (queue == nullptr || backbuffer == nullptr) return false;
     std::lock_guard guard(lock_);
     struct Scope {
@@ -620,6 +749,8 @@ class Runtime {
     list_->Reset(f.allocator.Get(), nullptr);
     ID3D12GraphicsCommandList* l = list_.Get();
     taa_ = taa != nullptr && taa->motion != nullptr ? *taa : TaaInputs{};
+    game_on_ = game != nullptr && game->g.mvec != nullptr && game->g.depth != nullptr;
+    if (game_on_) game_ = *game;
     if (!Record(l, backbuffer, bb_state, format, look, nullptr, f)) {
       l->Close();
       return false;
@@ -668,6 +799,7 @@ class Runtime {
     Frame& f = frames_[frame_index_++ % kFrames];
     ReadTime(f);  // written three frames ago; the game's lists run in order
     taa_ = TaaInputs{};
+    game_on_ = false;
     DebugMessages();  // the game's lists of earlier frames ran: what the debug layer said of them
     const heaps::Seen game_heaps = heaps::t_seen;
     const bool recorded = Record(list, output, state, format, look, &guides, f);
@@ -727,7 +859,7 @@ class Runtime {
     const bool recorded_in_game_lists = route_after_upscale_;
     const State s = state();
     if (s == State::kNoRuntime || s == State::kUnsigned || s == State::kNoShim || s == State::kInitFailed ||
-        s == State::kFailed)
+        s == State::kFailed || s == State::kNotNr)
       return false;
     if (stand_aside_ && Foreign()) {
       Set(State::kForeign);
@@ -897,7 +1029,10 @@ class Runtime {
               const Look& look, const Guides* g, Frame& f) {
     Bury();
     const bool after_upscale = g != nullptr;  // the game's list and its upscaler's output
-    const bool inverted = (g != nullptr && g->depth_inverted) || (g == nullptr && taa_proved_ && taa_.depth_inverted);
+    // 1.12.1 (D1): the game's tagged guides on the Present route (unless motion is off).
+    const bool game_now = g == nullptr && game_on_ && motion_mode_ != 2;
+    const bool inverted = (g != nullptr && g->depth_inverted) || (game_now && game_.g.depth_inverted) ||
+                          (g == nullptr && !game_now && taa_proved_ && taa_.depth_inverted);
     if (!(look == look_) || !feature_ || inverted != created_inverted_ || passes_ != created_passes_) {
       Retire(false);
       look_ = look;
@@ -934,6 +1069,16 @@ class Runtime {
         created_passes_ = i + 2;
       }
       if (created_passes_ < passes_) passes_ = pass_cap_ = created_passes_;  // not again each frame
+      // 1.12.1 (D6): what NR took, from before Init to its first features and textures (the game may
+      // allocate meanwhile: "about").
+      if (!vram_measured_ && vram_before_ != 0) {
+        vram_measured_ = true;
+        const uint64_t now = LocalUsage(device_.Get());
+        if (now > vram_before_) {
+          vram_mib_.store(static_cast<int>((now - vram_before_) >> 20), std::memory_order_relaxed);
+          Log("about " + std::to_string((now - vram_before_) >> 20) + " MiB of video memory for NR");
+        }
+      }
       Log("NR feature created at " + std::to_string(low_w_) + "x" + std::to_string(low_h_) + " (preset " +
           std::to_string(look.preset) + ", style " + std::to_string(look.style) + ", intensity " +
           std::to_string(look.intensity) + "%, " + std::to_string(created_passes_) + " pass" +
@@ -950,8 +1095,9 @@ class Runtime {
     parity_ ^= 1;
     rate_ = fresh ? 1.f : 0.05f;
     // The Present route's motion: the game's TAA once proved, else estimated from the image.
-    const bool estimate = g == nullptr && motion_mode_ == 0;
-    const bool taa_now = g == nullptr && motion_mode_ != 2 && taa_.motion != nullptr && taa_.motion != taa_rejected_;
+    const bool estimate = g == nullptr && motion_mode_ == 0 && !game_now;
+    const bool taa_now = g == nullptr && !game_now && motion_mode_ != 2 && taa_.motion != nullptr &&
+                         taa_.motion != taa_rejected_;
     if (taa_.motion != taa_candidate_) {  // another texture: prove it again
       taa_candidate_ = taa_.motion;
       taa_proved_ = false;
@@ -959,7 +1105,7 @@ class Runtime {
       for (auto& v : pool_) v = 0;
     }
     const bool use_taa = taa_now && taa_proved_;
-    guides_kind_ = g != nullptr ? (g->mvec ? 1 : 0) : use_taa ? 3 : estimate ? 2 : 0;
+    guides_kind_ = g != nullptr ? (g->mvec ? 1 : 0) : game_now ? 1 : use_taa ? 3 : estimate ? 2 : 0;
     keep_ = (fresh || guides_kind_ != 0) ? 0.f : stability_ * 0.009f;  // 100% keeps 90% where nothing moved
     WriteTable(format, taa_now ? &taa_ : nullptr);
 
@@ -1028,7 +1174,11 @@ class Runtime {
       if (taa_.depth) Barrier(l, taa_.depth, taa_.depth_state, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     }
     Guides present_guides;
-    if (use_taa) {
+    if (game_now) {
+      Barrier(l, game_.g.mvec, game_.mvec_state, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+      Barrier(l, game_.g.depth, game_.depth_state, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+      g = &game_.g;
+    } else if (use_taa) {
       const auto md = taa_.motion->GetDesc();
       present_guides.mvec = taa_.motion;
       present_guides.mv_w = static_cast<uint32_t>(md.Width);
@@ -1102,6 +1252,10 @@ class Runtime {
     if (taa_now) {
       Barrier(l, taa_.motion, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, taa_.motion_state);
       if (taa_.depth) Barrier(l, taa_.depth, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, taa_.depth_state);
+    }
+    if (game_now) {
+      Barrier(l, game_.g.mvec, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, game_.mvec_state);
+      Barrier(l, game_.g.depth, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, game_.depth_state);
     }
 
     // 4. Compose into the target: a render target before Present, unordered access after upscaling.
@@ -1236,6 +1390,7 @@ class Runtime {
                         : s == State::kFormat    ? "the back buffer format is not one NR handles"
                         : s == State::kWithGameFg ? "paused: the game's frame generation is on without the hook before it"
                         : s == State::kVram       ? "paused for VRAM"
+                        : s == State::kNotNr      ? "nvngx_dlssnr.dll is not NVIDIA's NR runtime (see the line above)"
                                                   : nullptr;
       if (why) Log(why);
     }
@@ -1362,6 +1517,8 @@ class Runtime {
     }
     wchar_t temp[MAX_PATH]{};
     GetTempPathW(MAX_PATH, temp);
+    vram_before_ = LocalUsage(device);  // 1.12.1 (D6)
+    vram_measured_ = false;
     const int r = init(init_fn, 0x1000000ull, temp, device, 0x15, nullptr);
     if (r != 1) {
       Log("NR runtime refused this GPU or driver (Init 0x" + Hex(r) + ")");
@@ -1807,6 +1964,12 @@ class Runtime {
   float taa_scale_x_ = 1.f, taa_scale_y_ = 1.f;
   double pool_[7]{};
   TaaInputs taa_{};
+  GameGuides game_{};  // 1.12.1 (D1)
+  std::string version_, missing_;  // 1.12.1 (D4)
+  uint64_t vram_before_ = 0;       // 1.12.1 (D6)
+  bool vram_measured_ = false;
+  std::atomic<int> vram_mib_{0};
+  bool game_on_ = false;
   ID3D12Resource* taa_candidate_ = nullptr;
   ID3D12Resource* taa_rejected_ = nullptr;
   uint64_t uav_next_ = 0;

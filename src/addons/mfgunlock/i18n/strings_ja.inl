@@ -1124,3 +1124,8 @@
 /* kDlss5Pass2_n100 */ "2",
 /* kDlss5Pass3_n101 */ "3",
 /* kHostSwapChainOutside_s9 */ "ゲームは MFG Unlock の Streamline を通さずにウィンドウを作成したため、フレーム生成を追加できません。別のモジュールがスワップチェーンの作成を引き受けました: %s。ゲームのフォルダーから取り除き (効果をオフにするだけでは不十分です)、ゲームを再起動してください。",
+/* kDlss5XemfgNote_n102 */ "XeMFG では、NR はゲームの DLSS Super Resolution の後、XeFG がフレームを生成する前に実行されます。全般タブで XeMFG の DLSS SR 入力をオンにし、ゲームで DLSS SR を使ってください。",
+/* kDlss5Budget_n103 */ "GPU 予算 (ms)",
+/* kDlss5BudgetDesc_n104 */ "1 フレームあたりの NR の GPU 時間 (ミリ秒)。NR の解像度がこれに従います。NR の負荷が高いと下がり、低いと解像度の設定値まで戻ります。0 = オフ (解像度の設定値をそのまま使用)。",
+/* kDlss5StateNotNr_n105 */ "見つかった nvngx_dlssnr.dll は NVIDIA のニューラルレンダリング ランタイムではありません。NR に必要な関数がありません (下に表示)。NVIDIA のファイルを使ってください。",
+/* kDlss5AllowThisFile_n106 */ "このファイルを許可",

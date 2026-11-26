@@ -1124,3 +1124,8 @@
 /* kDlss5Pass2_n100 */ "2",
 /* kDlss5Pass3_n101 */ "3",
 /* kHostSwapChainOutside_s9 */ "게임이 MFG Unlock의 Streamline을 거치지 않고 창을 만들었으므로 프레임 생성을 추가할 수 없습니다. 다른 모듈이 스왑 체인 생성을 가져갔습니다: %s. 게임 폴더에서 제거하고(효과를 끄는 것만으로는 부족합니다) 게임을 다시 시작하세요.",
+/* kDlss5XemfgNote_n102 */ "XeMFG에서는 NR이 게임의 DLSS Super Resolution 다음, XeFG가 프레임을 생성하기 전에 실행됩니다. 일반 탭에서 XeMFG의 DLSS SR 입력을 켜고 게임에서 DLSS SR을 사용하세요.",
+/* kDlss5Budget_n103 */ "GPU 예산 (ms)",
+/* kDlss5BudgetDesc_n104 */ "프레임당 NR의 GPU 시간(밀리초)입니다. NR의 해상도가 이를 따릅니다. NR 비용이 크면 낮아지고, 작으면 해상도 설정값까지 다시 올라갑니다. 0 = 끔(해상도 설정값 그대로 사용).",
+/* kDlss5StateNotNr_n105 */ "찾은 nvngx_dlssnr.dll은 NVIDIA의 뉴럴 렌더링 런타임이 아닙니다. NR에 필요한 함수가 없습니다(아래 목록). NVIDIA의 파일을 사용하세요.",
+/* kDlss5AllowThisFile_n106 */ "이 파일 허용",

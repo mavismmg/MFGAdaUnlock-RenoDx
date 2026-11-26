@@ -3,6 +3,7 @@
 #include "backend_api.hpp"
 #include "dependency_manager.hpp"
 #include "native_ngx.hpp"
+#include "nr_bridge.hpp"
 #ifdef MFGUNLOCK_XEMFG_VULKAN
 #include "native_vulkan.hpp"
 #endif
@@ -145,15 +146,30 @@ void Draw() {
   else if(status.output && !status.enabled) ui::Description(status.detail);
   ui::SessionNotice(report,false);
   static PanelPage page=PanelPage::General;
+  // 1.12.1 (D3): the DLSS 5 page, when DLSS 5 is on (nr_bridge.hpp). The compact list is the DLSS-G
+  // panel's (General, Quality, Latency, DLSS 5, Diagnostics): 1.12.0 read its fourth entry as
+  // Diagnostics and its fifth as no page.
+  static bool dlss5_page=false;
+  const auto dlss5=nrbridge::g_page.load(std::memory_order_acquire);
+  if(!dlss5) dlss5_page=false;
   if(ImGui::GetContentRegionAvail().x<ImGui::GetFontSize()*26.f) {
-    int selected=int(page); ImGui::SetNextItemWidth(-1);
-    if(ImGui::Combo("##xe_page",&selected,T(Str::kGeneralQualityLatencyDiagnostics_b9c8))) page=PanelPage(selected);
-  } else if(const float tab=ui::TabWidth(4); ui::BeginTabs("##xemfg_pages")) {
-    if(ui::TabItem(T(Str::kGeneral_fd0b),tab)) { page=PanelPage::General; ImGui::EndTabItem(); }
-    if(ui::TabItem(T(Str::kQuality_bec6),tab)) { page=PanelPage::Quality; ImGui::EndTabItem(); }
-    if(ui::TabItem(T(Str::kLatency_5ef9),tab)) { page=PanelPage::Latency; ImGui::EndTabItem(); }
-    if(ui::TabItem(T(Str::kDiagnostics_1397),tab)) { page=PanelPage::Diagnostics; ImGui::EndTabItem(); }
+    int selected=dlss5_page?3:page==PanelPage::Diagnostics?4:int(page); ImGui::SetNextItemWidth(-1);
+    if(ImGui::Combo("##xe_page",&selected,T(Str::kGeneralQualityLatencyDiagnostics_b9c8))) {
+      dlss5_page=selected==3 && dlss5;
+      if(selected!=3) page=selected==4?PanelPage::Diagnostics:PanelPage(selected);
+    }
+  } else if(const float tab=ui::TabWidth(dlss5?5:4); ui::BeginTabs("##xemfg_pages")) {
+    if(ui::TabItem(T(Str::kGeneral_fd0b),tab)) { page=PanelPage::General; dlss5_page=false; ImGui::EndTabItem(); }
+    if(ui::TabItem(T(Str::kQuality_bec6),tab)) { page=PanelPage::Quality; dlss5_page=false; ImGui::EndTabItem(); }
+    if(ui::TabItem(T(Str::kLatency_5ef9),tab)) { page=PanelPage::Latency; dlss5_page=false; ImGui::EndTabItem(); }
+    if(dlss5 && ui::TabItem(T(Str::kDlss5Tab_n0),tab)) { dlss5_page=true; ImGui::EndTabItem(); }
+    if(ui::TabItem(T(Str::kDiagnostics_1397),tab)) { page=PanelPage::Diagnostics; dlss5_page=false; ImGui::EndTabItem(); }
     ui::EndTabs();
+  }
+  if(dlss5_page && dlss5) {
+    dlss5();
+    ui::Footer();
+    return;
   }
   if(page==PanelPage::General) {
     ui::Section(T(Str::kFrameGeneration_83ac),T(Str::kKeepFrameGenerationEnabledIn_1cbc));

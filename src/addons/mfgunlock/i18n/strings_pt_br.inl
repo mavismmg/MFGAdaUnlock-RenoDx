@@ -1124,3 +1124,8 @@
 /* kDlss5Pass2_n100 */ "2",
 /* kDlss5Pass3_n101 */ "3",
 /* kHostSwapChainOutside_s9 */ "O jogo criou a janela sem passar pelo Streamline do MFG Unlock, então a geração de quadros não pode ser adicionada. Outro módulo assumiu a criação da swap chain: %s. Tire-o da pasta do jogo (desligar o efeito dele não basta) e reinicie o jogo.",
+/* kDlss5XemfgNote_n102 */ "Com o XeMFG, o NR roda depois do DLSS Super Resolution do jogo, antes de o XeFG gerar quadros. Ligue a entrada DLSS SR do XeMFG na aba Geral e use DLSS SR no jogo.",
+/* kDlss5Budget_n103 */ "Orçamento de GPU (ms)",
+/* kDlss5BudgetDesc_n104 */ "Um tempo de GPU para o NR por quadro, em milissegundos. A resolução do NR passa a segui-lo: desce quando o NR custa mais e volta até a Resolução quando custa menos. 0 = desligado (usa a Resolução como está).",
+/* kDlss5StateNotNr_n105 */ "O nvngx_dlssnr.dll encontrado não é o runtime de renderização neural da NVIDIA: faltam funções que o NR precisa (abaixo). Use o arquivo da NVIDIA.",
+/* kDlss5AllowThisFile_n106 */ "Permitir este arquivo",

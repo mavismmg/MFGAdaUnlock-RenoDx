@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+#include "nr_bridge.hpp"
 #include "native_ngx.hpp"
 #include "native_frame_packet.hpp"
 #include "native_constants.hpp"
@@ -117,6 +118,9 @@ void Feed(ID3D12GraphicsCommandList* list,const NVSDK_NGX_Handle* handle,const N
 NVSDK_NGX_Result NVSDK_CONV CreateHook(ID3D12GraphicsCommandList* list,NVSDK_NGX_Feature feature,NVSDK_NGX_Parameter* params,
     NVSDK_NGX_Handle** out) {
   const auto result=create(list,feature,params,out);
+  // 1.12.1 (D3): every feature, for DLSS 5 (nr_bridge.hpp).
+  if(NVSDK_NGX_SUCCEED(result) && out && *out)
+    if(const auto created=nrbridge::g_created.load(std::memory_order_acquire)) created(int(feature),params,*out);
   if(NVSDK_NGX_SUCCEED(result) && feature==NVSDK_NGX_Feature_SuperSampling && out && *out) {
     const int flags=params?Read<int>(*params,NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags,0):0;
     { std::lock_guard guard(lock); superSampling[*out]=flags; }
@@ -129,11 +133,17 @@ NVSDK_NGX_Result NVSDK_CONV EvaluateHook(ID3D12GraphicsCommandList* list,const N
   // DLSS-SR itself runs first and unchanged; its inputs are still valid on
   // the same list afterwards, where the volatile copies are recorded.
   const auto result=evaluate(list,handle,params,callback);
-  if(NVSDK_NGX_SUCCEED(result) && list && handle && params) Feed(list,handle,*params);
+  if(NVSDK_NGX_SUCCEED(result) && list && handle && params) {
+    Feed(list,handle,*params);
+    // 1.12.1 (D3): DLSS 5 after the upscaler, on the same list, after XeFG's copies of the guides.
+    if(const auto evaluated=nrbridge::g_evaluated.load(std::memory_order_acquire)) evaluated(list,handle,params);
+  }
   return result;
 }
 NVSDK_NGX_Result NVSDK_CONV ReleaseHook(NVSDK_NGX_Handle* handle) {
   if(handle) { std::lock_guard guard(lock); superSampling.erase(handle); }
+  if(handle)
+    if(const auto released=nrbridge::g_released.load(std::memory_order_acquire)) released(handle);
   return release(handle);
 }
 }

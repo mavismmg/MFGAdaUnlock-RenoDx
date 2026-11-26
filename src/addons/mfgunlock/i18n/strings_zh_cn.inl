@@ -1124,3 +1124,8 @@
 /* kDlss5Pass2_n100 */ "2",
 /* kDlss5Pass3_n101 */ "3",
 /* kHostSwapChainOutside_s9 */ "游戏在创建窗口时没有经过 MFG Unlock 的 Streamline，因此无法添加帧生成。另一个模块接管了交换链的创建：%s。请将它从游戏文件夹中移除（仅关闭其效果不够），然后重启游戏。",
+/* kDlss5XemfgNote_n102 */ "使用 XeMFG 时，NR 在游戏的 DLSS 超分辨率之后、XeFG 生成帧之前运行。请在“常规”选项卡中开启 XeMFG 的 DLSS SR 输入，并在游戏中使用 DLSS SR。",
+/* kDlss5Budget_n103 */ "GPU 预算 (ms)",
+/* kDlss5BudgetDesc_n104 */ "每帧给 NR 的 GPU 时间（毫秒）。NR 的分辨率随之调整：NR 开销高时降低，开销低时回升到“分辨率”设定值。0 = 关闭（按“分辨率”设定使用）。",
+/* kDlss5StateNotNr_n105 */ "找到的 nvngx_dlssnr.dll 不是 NVIDIA 的神经渲染运行时：缺少 NR 需要的函数（见下方）。请使用 NVIDIA 的文件。",
+/* kDlss5AllowThisFile_n106 */ "允许此文件",

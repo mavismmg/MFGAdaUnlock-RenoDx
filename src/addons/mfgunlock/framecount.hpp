@@ -71,6 +71,7 @@
 #include "./stability_policy.hpp"
 #include "./runtime_version.hpp"
 #include "./tag_states.hpp"
+#include "./nr_sl_guides.hpp"
 
 namespace mfgunlock::framecount {
 
@@ -2016,6 +2017,7 @@ inline sl::Result HookedSetTag(const sl::ViewportHandle& viewport,
                                sl::CommandBuffer* command_buffer) {
   if (g_real_set_tag == nullptr) return sl::Result::eErrorNotInitialized;
   RecordTagStates(tags, count);
+  ::mfgunlock::nr::slguides::Observe(tags, count, command_buffer);  // 1.12.1 (D1, DLSS 5)
   inputdiag::ObserveTags(static_cast<uint32_t>(viewport), tags, count, false, 0,
                          static_cast<uint32_t>(g_format_api.load(
                              std::memory_order_relaxed)));
@@ -2030,6 +2032,7 @@ inline sl::Result HookedSetTagForFrame(const sl::FrameToken& frame,
                                        sl::CommandBuffer* command_buffer) {
   if (g_real_set_tag_for_frame == nullptr) return sl::Result::eErrorNotInitialized;
   RecordTagStates(tags, count);
+  ::mfgunlock::nr::slguides::Observe(tags, count, command_buffer);  // 1.12.1 (D1, DLSS 5)
   inputdiag::ObserveTags(static_cast<uint32_t>(viewport), tags, count, true,
                          static_cast<uint32_t>(frame),
                          static_cast<uint32_t>(g_format_api.load(
