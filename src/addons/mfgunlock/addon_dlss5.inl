@@ -736,6 +736,12 @@ inline void OnPresent(reshade::api::command_queue* queue, reshade::api::swapchai
   // The host's Present and the game's Present on Streamline's proxy run it for those games.
   if (mfgunlock::slhost::Hosting() || g_proxy_frames.load(std::memory_order_relaxed) || !PresentRoutes()) return;
   if (queue->get_device()->get_api() != reshade::api::device_api::d3d12) return;
+  // 1.12.1 (D2): the route before the game's frame generation has NR: nothing to do or report here. Without
+  // this, each Present paused NR (TLOU2, test build 2: "the game's frame generation is on..." on the panel
+  // while NR ran, and NR's history reset every frame).
+  if (g_route_owner.load(std::memory_order_relaxed) == kRoutePreFg &&
+      GetTickCount64() - g_route_tick.load(std::memory_order_relaxed) < kRouteHoldMs)
+    return;
   if (GameFrameGeneration()) {
     // Here ReShade also sees the generated frames: NR needs the hook on the game's Present, set at load.
     g_runtime.Pause(mfgunlock::nr::State::kWithGameFg);
